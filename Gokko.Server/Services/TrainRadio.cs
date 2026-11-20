@@ -99,7 +99,7 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
         var list = new List<Member>();
         foreach (var p in players.Snapshot())
         {
-            if (p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)) continue;
+            if (PlayerRegistry.IsVirtual(p.ConnectionId)) continue;
             list.Add(new Member(p.ConnectionId, p.CrewId, TrainLabel(p.TrainNumber, "運転士"), false));
         }
 

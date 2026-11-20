@@ -59,6 +59,8 @@ public static class AdminEndpoints
 
     public sealed record PassingRequest(int? MarginSeconds, int? ToleranceSeconds);
     public sealed record ConnectionCutRequest(string? Key, bool Cut);
+    public sealed record AiTrainRequest(string? Train, int? Cars, string? Station, string? Id);
+    public sealed record AiTrainModeRequest(bool On);
 
     /// <summary>駅の出発順序（Direction は使わない。上下まとめて1つの順序）。</summary>
     public sealed record OrderRequest(string Station, string? Direction, List<string>? Trains);
@@ -760,6 +762,26 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示と、そこからできる操作（管理画面と、ダイヤグラムの設定画面で共通）。</summary>
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
+        // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
+        // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
+        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List() }));
+        g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
+        {
+            ai.SetEnabled(req.On);
+            return Results.Ok(new { ok = true, enabled = ai.Enabled });
+        });
+        g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { ok = false, message = "列車番号を入れてください" });
+            var (ok, message) = ai.Add(req.Train, req.Cars ?? 6, req.Station?.Trim());
+            return ok ? Results.Ok(new { ok, message }) : Results.BadRequest(new { ok, message });
+        });
+        g.MapPost("/ai-trains/remove", (AiTrainRequest req, AiTrains ai) =>
+        {
+            if (req.Id == null) { ai.RemoveAll(); return Results.Ok(new { ok = true }); }
+            return ai.Remove(req.Id) ? Results.Ok(new { ok = true }) : Results.NotFound(new { ok = false, message = "その列車はもういません" });
+        });
+
         // 駅の扱い（列車扱い・集中扱い）と自動退避の数値（管理画面・ダイヤグラムの設定画面の両方から）
         g.MapPost("/route/station-mode", (StationModeRequest req, CentralControl central, RailData rail) =>
         {
@@ -850,7 +872,7 @@ public static class AdminEndpoints
                 foreach (var c in p.TrackCircuits)
                 {
                     if (!occupants.TryGetValue(c, out var l)) occupants[c] = l = new List<string>();
-                    var train = (p.TrainNumber.Length > 0 ? p.TrainNumber : "（列番なし）") + (p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix) ? "（継続乗務）" : "");
+                    var train = (p.TrainNumber.Length > 0 ? p.TrainNumber : "（列番なし）") + (p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix) ? "（継続乗務）" : p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix) ? "（にぎやかし）" : "");
                     if (!l.Contains(train)) l.Add(train);
                 }
 
@@ -1008,7 +1030,7 @@ public static class AdminEndpoints
             diaMode = central.DiaMode,
             turnVersion = rail.Turns.Version, // 後運用を差し替えたら増える（計画の線を読み直す合図）
             // つながっている参加者（強制切断の一覧用）
-            players = players.Snapshot().Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)).OrderBy(p => p.JoinedUtc).Select(p => new
+            players = players.Snapshot().Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)).OrderBy(p => p.JoinedUtc).Select(p => new
             {
                 id = p.ConnectionId,
                 train = p.TrainNumber,

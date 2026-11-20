@@ -1427,5 +1427,73 @@
     };
   }
 
-  window.GokkoDia = { openPopup, closePopup, isOpen: popupOpen, orderEditor, trainEditor, diagramView, queuePanel, continuePanel, blockSignalPanel, modePanel, stationModePanel, passingPanel, manualRoutePanel, ask, TYPE_COLORS, esc, hhmm };
+  // 自動運転列車（にぎやかし。サーバーだけで走る列車）: アリ/ナシの切り替え・手で出す・一覧（管理画面と司令用管理画面で共通）。
+  // showSpeed: 走っている速さを出すか（管理画面だけ）。api(method, path, body) はその画面の API（/api/admin か /api/dia）を呼ぶ
+  let aiPanelSeq = 0;
+  function aiTrainPanel({ el, api, showSpeed = false, onMessage = () => {} }) {
+    const name = "aiMode" + (++aiPanelSeq);
+    el.innerHTML = `<h2>自動運転列車（にぎやかし）</h2>
+      <p class="muted">サーバーだけで走る列車です。進路・信号・TID（札の右上に *）・ほかの列車の信号に、ふつうの列車として出ます（ゲームの画面には映りません）。ロープレ時刻が動いている間だけ走ります。</p>
+      <div class="row"><b>自動運転列車</b>
+        <label><input type="radio" name="${name}" value="on"> アリ</label>
+        <label><input type="radio" name="${name}" value="off"> ナシ</label>
+        <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
+      </div>
+      <div class="row">
+        <input data-ai="train" placeholder="列番（例: 1651）" size="12">
+        <input data-ai="cars" type="number" value="6" min="1" max="10" style="width:4em"><span>両</span>
+        <input data-ai="station" placeholder="出す駅（空なら次に発車する駅）" size="22">
+        <button data-ai="add" class="primary">手で出す</button>
+        <button data-ai="clear">全部消す</button>
+      </div>
+      <div data-ai="list"></div>`;
+    const q = (k) => el.querySelector(`[data-ai="${k}"]`);
+    let last = "";
+
+    async function refresh() {
+      try {
+        const d = await api("GET", "/ai-trains");
+        for (const r of el.querySelectorAll(`input[name="${name}"]`)) r.checked = (r.value === "on") === !!d.enabled;
+        const list = d.trains || [];
+        const html = list.length === 0 ? `<div class="muted">走っていません</div>`
+          : `<table>${list.map((t) => `<tr><td><b>${esc(t.train)}</b>${t.auto ? ` <span class="muted">自動</span>` : ""}</td><td class="muted">${t.cars}両</td>`
+            + `<td>${esc(t.where)}</td>${showSpeed ? `<td style="text-align:right">${Number(t.speedKmh).toFixed(0)}km/h</td>` : ""}`
+            + `<td class="muted">${esc(t.status)}</td><td><button data-ai-remove="${esc(t.id)}">消す</button></td></tr>`).join("")}</table>`;
+        if (html !== last) { q("list").innerHTML = html; last = html; }
+      } catch (e) { /* 接続の失敗は画面の上の表示に出る */ }
+    }
+
+    async function call(method, path, body) {
+      try { const r = await api(method, path, body); onMessage((r && r.message) || ""); }
+      catch (e) { onMessage(e.message); }
+      refresh();
+    }
+
+    el.addEventListener("change", async (ev) => {
+      if (ev.target.name !== name) return;
+      const on = ev.target.value === "on";
+      if (!on && !(await ask("自動運転列車をナシにしますか？", "走っている自動運転の列車は、全部すぐに消えます。"))) { refresh(); return; }
+      await call("POST", "/ai-trains/mode", { on });
+    });
+    q("add").onclick = async () => {
+      const train = q("train").value.trim();
+      if (!train) return;
+      await call("POST", "/ai-trains/add", { train, cars: Number(q("cars").value) || 6, station: q("station").value.trim() || null });
+      q("train").value = "";
+    };
+    q("train").addEventListener("keydown", (ev) => { if (ev.key === "Enter") q("add").click(); });
+    q("clear").onclick = async () => {
+      if (await ask("自動運転の列車を全部消しますか？", "在線もすぐ消えます（アリのままなら、時刻が来た列車はまた出ます）。")) await call("POST", "/ai-trains/remove", {});
+    };
+    el.addEventListener("click", async (ev) => {
+      const b = ev.target.closest("button[data-ai-remove]");
+      if (b) await call("POST", "/ai-trains/remove", { id: b.dataset.aiRemove });
+    });
+
+    refresh();
+    setInterval(refresh, 1000);
+    return { refresh };
+  }
+
+  window.GokkoDia = { openPopup, closePopup, isOpen: popupOpen, orderEditor, trainEditor, diagramView, queuePanel, continuePanel, blockSignalPanel, modePanel, stationModePanel, passingPanel, manualRoutePanel, aiTrainPanel, ask, TYPE_COLORS, esc, hhmm };
 })();

@@ -30,12 +30,14 @@ public sealed class StateBroadcaster : BackgroundService
     private readonly BlockSignals _blocks;
     private readonly OccupancyLog _occupancy;
     private readonly OnboardAudio _onboard;
+    private readonly AiTrains _ai;
 
     public StateBroadcaster(IHubContext<GameHub> hub, PlayerRegistry players, IncidentManager incidents, GameClock clock,
         GameData data, RouteEngine routes, SignalCalculator signals, ServerOptions options, CentralControl central, ProtectionRadio radio,
         CrewRelay crew, TrainRadio trainRadio, DispatcherProtection dispatcherProtection, BlockSignals blocks, OccupancyLog occupancy, OnboardAudio onboard,
-        ILogger<StateBroadcaster> logger)
+        AiTrains ai, ILogger<StateBroadcaster> logger)
     {
+        _ai = ai;
         _onboard = onboard;
         _blocks = blocks;
         _occupancy = occupancy;
@@ -120,7 +122,7 @@ public sealed class StateBroadcaster : BackgroundService
             list.Add((id, view));
         }
         int AgeMs(DateTime utc) => (int)Math.Clamp((utcNow - utc).TotalMilliseconds, 0, int.MaxValue);
-        foreach (var p in players.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)))
+        foreach (var p in players.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)))
             AddPeer(p.ConnectionId, p.TrainNumber, new CrewPeerView
             {
                 Role = CrewRole.Driver, TrainCrewConnected = p.TrainCrewConnected, InGame = p.InGame, ReportAgeMs = AgeMs(p.LastReportUtc),
@@ -206,7 +208,14 @@ public sealed class StateBroadcaster : BackgroundService
                 }
             }
 
-            if (p.TrainNumber.Length > 0 && !p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix))
+            // にぎやかしの列車: 配信をクライアントの代わりに受け取る（信号・進路）
+            if (p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix))
+            {
+                _ai.Receive(p.ConnectionId, state);
+                continue;
+            }
+
+            if (p.TrainNumber.Length > 0 && !PlayerRegistry.IsVirtual(p.ConnectionId))
             {
                 state.Conductors = conductorCount.GetValueOrDefault(p.TrainNumber);
                 state.Riders = riderCount.GetValueOrDefault(p.TrainNumber);

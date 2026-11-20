@@ -48,10 +48,14 @@ builder.Services.AddSingleton<CrewRelay>();
 builder.Services.AddSingleton<OnboardAudio>(); // 列車ごとの放送装置（車内放送・車外放送・インターホン）
 builder.Services.AddSingleton<BlockSignals>(); // 閉塞信号機の定期解除と強制進行
 builder.Services.AddSingleton<OccupancyLog>(); // 在線の記録（logs/occupancy-*.log）
+builder.Services.AddSingleton(sp => new AiTrains(dataDir, rail, sp.GetRequiredService<PlayerRegistry>(), sp.GetRequiredService<GameClock>(),
+    sp.GetRequiredService<RouteEngine>(), sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<IncidentManager>(),
+    sp.GetRequiredService<CrewRoster>(), sp.GetRequiredService<DutyRosters>(), sp.GetRequiredService<CrewRelay>(), sp.GetService<ILogger<AiTrains>>())); // にぎやかしの列車（サーバーだけで走る。Data/AiTrains.json）
 builder.Services.AddSingleton<StateBroadcaster>();
 builder.Services.AddSingleton<RelayPanels>(); // 信号制御盤（relaypanel.html）。盤の状態はサーバーだけが持ち、開いている全員に配る
 builder.Services.AddSingleton(sp => new ArrivalBoards(dataDir, sp.GetRequiredService<IWebHostEnvironment>(), rail, sp.GetService<ILogger<ArrivalBoards>>())); // 駅の接近案内（tablet-arrivals.html）で見る回路
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StateBroadcaster>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AiTrains>());
 builder.Services.AddHostedService<RandomTokuhatsuService>();
 builder.Services.AddHostedService<PhoneRadioTicker>();
 builder.Services.AddSingleton(sp => new ExtensionBook(dataDir, sp.GetService<ILogger<ExtensionBook>>())); // 内線番号（Data/Extensions.json。管理画面で決める）

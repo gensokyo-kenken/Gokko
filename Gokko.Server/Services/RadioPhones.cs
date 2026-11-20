@@ -69,7 +69,7 @@ public sealed class RadioPhones(PlayerRegistry players, CrewRelay relay)
         }
 
         foreach (var p in players.Snapshot())
-            if (!p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)) Consider(p.CrewId, p.ConnectionId, p.JoinedUtc);
+            if (!PlayerRegistry.IsVirtual(p.ConnectionId)) Consider(p.CrewId, p.ConnectionId, p.JoinedUtc);
         foreach (var c in relay.Conductors()) Consider(c.CrewId, c.ConnectionId, c.JoinedUtc);
         return best.ToDictionary(kv => kv.Key, kv => kv.Value.Id);
     }

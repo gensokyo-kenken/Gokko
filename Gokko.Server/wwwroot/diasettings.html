@@ -90,6 +90,9 @@
     <div id="continues"></div>
   </section>
   <section class="wide">
+    <div id="aiTrains"></div>
+  </section>
+  <section class="wide">
     <div id="blockSignals"></div>
   </section>
   <section>
@@ -315,6 +318,9 @@
     if (ev.origin === location.origin && ev.data && ev.data.gokkoTidHeight) $("circuitMap").style.height = ev.data.gokkoTidHeight + "px";
     if (ev.origin === location.origin && ev.data && ev.data.gokkoDiagramHeight) $("diagramFrame").style.height = ev.data.gokkoDiagramHeight + "px"; // ダイヤグラム（diagrammarker.html）
   });
+
+  // 自動運転列車（にぎやかし）。速さは管理画面だけに出す
+  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, onMessage: (m) => { $("error").textContent = m; } });
 
   refresh();
   setInterval(refresh, 1000);

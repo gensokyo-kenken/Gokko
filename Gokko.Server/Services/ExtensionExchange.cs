@@ -132,7 +132,7 @@ public sealed class ExtensionExchange(
 
         foreach (var p in players.Snapshot())
         {
-            if (p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)) continue;
+            if (PlayerRegistry.IsVirtual(p.ConnectionId)) continue;
             var train = p.TrainNumber.Trim();
             var stopped = Math.Abs(p.ReportedSpeed) < StoppedKmh;
             list[p.ConnectionId] = train.Length == 0

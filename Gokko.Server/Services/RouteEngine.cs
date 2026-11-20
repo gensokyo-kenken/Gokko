@@ -3333,6 +3333,7 @@ public sealed partial class RouteEngine
                     train = r.Train,
                     type = r.Type,
                     direction = r.Dir.Label(),
+                    ai = r.ConnId.StartsWith(PlayerRegistry.AiPrefix), // にぎやかしの列車（札の右上に * を付ける）
                     circuits = r.Player.TrackCircuits.ToList(),
                     // 少し前（1分以内）に踏んでいた回路。在線をどの枝で塗るかの手がかり（通ってきた側の枝を選ぶ）
                     recent = r.SeenCircuits.Keys.Where(c => !r.Player.TrackCircuits.Contains(c)).ToList(),

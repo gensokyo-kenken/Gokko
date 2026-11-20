@@ -93,6 +93,7 @@
 
   // 軌道回路名の画面は、札の中に遅れ（+3）も書くので横を広く取る
   const CHIP = { w: NAMES ? 80 : 66, h: 18, row: 20, stair: 14, max: 5 };
+  let aiTrains = new Set(); // にぎやかしの列車（サーバーだけで走る）の列番。札の右上に小さく * を付ける
   let delays = new Map(); // 列番 → 遅れ（分）。在線している列車の分（軌道回路名の画面で、順序の表の札に書く）
   // 駅の到着・出発の順序の表の大きさ（px）。札5つぶんの枠を段々にずらして並べ、上に題を置く
   const BOX = { w: CHIP.w + CHIP.stair * (CHIP.max - 1), title: 16, h: CHIP.row * CHIP.max };
@@ -446,16 +447,17 @@
   // 列番の札（種別の色・角は丸めない）。左上が (px, py)。押すと時刻表
   function chip(px, py, train) {
     const c = typeColor(train);
+    const ai = aiTrains.has(train) ? (fill) => `<text x="${px + CHIP.w - 1.5}" y="${py + 7.5}" class="aiMark" fill="${fill}">*</text>` : () => "";
     // 軌道回路名の画面: 背景は透明にして、種別の色を文字の色にする（回送・試運転などの灰色は目立たないので白）。遅れは札の右端に書く
     if (NAMES) {
       const fg = c.bg === "#bebebe" ? "#ffffff" : c.bg, d = delays.get(train);
       const text = d
         ? `<text x="${px + 4}" y="${py + 13}" class="chip" style="text-anchor:start" fill="${fg}">${esc(train)}</text><text x="${px + CHIP.w - 4}" y="${py + 13}" class="chipDelay">+${d}</text>`
         : `<text x="${px + CHIP.w / 2}" y="${py + 13}" class="chip" fill="${fg}">${esc(train)}</text>`;
-      return `<g class="chipg" data-train="${esc(train)}"><rect x="${px}" y="${py}" width="${CHIP.w}" height="${CHIP.h}" fill="transparent" stroke="#5a606b" stroke-width="1"/>${text}</g>`;
+      return `<g class="chipg" data-train="${esc(train)}"><rect x="${px}" y="${py}" width="${CHIP.w}" height="${CHIP.h}" fill="transparent" stroke="#5a606b" stroke-width="1"/>${text}${ai(fg)}</g>`;
     }
     return `<g class="chipg" data-train="${esc(train)}"><rect x="${px}" y="${py}" width="${CHIP.w}" height="${CHIP.h}" fill="${c.bg}" stroke="#30363f" stroke-width="1"/>`
-      + `<text x="${px + CHIP.w / 2}" y="${py + 13}" class="chip" fill="${c.fg}">${esc(train)}</text></g>`;
+      + `<text x="${px + CHIP.w / 2}" y="${py + 13}" class="chip" fill="${c.fg}">${esc(train)}</text>${ai(c.fg)}</g>`;
   }
 
   // 順序の札の並び（最大5件）。左上が (px, py)。
@@ -566,6 +568,7 @@
     const w = (maxX - minX + PAD.left + PAD.right) * layout.unit, h = (maxY - minY + PAD.top + PAD.bottom) * layout.unitY;
     const p = [];
     delays = new Map(s.tid.trains.filter((t) => t.delay).map((t) => [t.train, t.delay]));
+    aiTrains = new Set(s.tid.trains.filter((t) => t.ai).map((t) => t.train));
     p.push(`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block">`);
     p.push(`<style>
       .track { fill: none; stroke: var(--track); stroke-width: 3; stroke-linecap: butt; stroke-linejoin: miter; }
@@ -587,6 +590,7 @@
       .lever.on { fill: var(--route); font-weight: 700; }
       .arrow { font-size: 14px; fill: var(--text); text-anchor: middle; }
       .chip { font-size: 12px; font-weight: 700; text-anchor: middle; }
+      .aiMark { font-size: 10px; font-weight: 700; text-anchor: end; pointer-events: none; }
       .delay { font-size: 12px; font-weight: 700; fill: #c62828; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
       .chipg { cursor: pointer; }
       .chipDelay { font-size: 11px; font-weight: 700; fill: #ff5b5b; text-anchor: end; }

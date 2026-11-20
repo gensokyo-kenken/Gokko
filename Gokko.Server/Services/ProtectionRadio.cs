@@ -81,7 +81,7 @@ public sealed class ProtectionRadio(GameData data, PlayerRegistry players, Incid
                 }
 
             if (_active.Count == 0) return (new HashSet<string>(), new HashSet<string>());
-            var receivers = snapshot.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)
+            var receivers = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)
                                                 && CurrentZones(p, now).Any(z => _active.Values.Any(tx => z >= tx.First && z <= tx.Last)))
                 .Select(p => p.ConnectionId).ToHashSet();
             return (receivers, _active.Keys.ToHashSet());
