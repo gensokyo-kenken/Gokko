@@ -135,7 +135,8 @@ public sealed class OccupancyLog(GameClock clock)
         {
             if (p.Mode != ShareMode.Shared || !p.InGame || p.TrackCircuits.Count == 0) continue;
             var ghost = p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix);
-            var train = (p.TrainNumber.Length > 0 ? p.TrainNumber : "（列番なし）") + (ghost ? "（継続乗務）" : "");
+            var ai = p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix);
+            var train = (p.TrainNumber.Length > 0 ? p.TrainNumber : "（列番なし）") + (ghost ? "（継続乗務）" : ai ? "（にぎやかし）" : "");
             current[p.ConnectionId] = $"{train} {string.Join(" ", p.TrackCircuits.Order(StringComparer.Ordinal))}";
             if (!ghost && p.CircuitsChangedDistance is { } d)
                 where[p.ConnectionId] = string.Create(CultureInfo.InvariantCulture, $" @{d:0.0} v{p.CircuitsChangedSpeed:0.0}");

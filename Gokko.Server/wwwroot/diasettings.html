@@ -90,6 +90,18 @@
     <div id="continues"></div>
   </section>
   <section class="wide">
+    <h2>にぎやかしの列車</h2>
+    <p class="muted">サーバーだけで走る列車です。ダイヤの列番で出します。進路・信号・TID・ほかの列車の信号に、ふつうの列車として出ます（ゲームの画面には映りません）。ロープレ時刻が動いている間だけ走ります。</p>
+    <div class="row">
+      <input id="aiTrain" placeholder="列番（例: 1651）" size="12">
+      <input id="aiCars" type="number" value="6" min="1" max="10" style="width:4em"><span>両</span>
+      <input id="aiStation" placeholder="出す駅（空なら次に発車する駅）" size="22">
+      <button id="aiAdd" class="primary">出す</button>
+      <button id="aiClear">全部消す</button>
+    </div>
+    <div id="aiList"></div>
+  </section>
+  <section class="wide">
     <div id="blockSignals"></div>
   </section>
   <section>
@@ -316,8 +328,43 @@
     if (ev.origin === location.origin && ev.data && ev.data.gokkoDiagramHeight) $("diagramFrame").style.height = ev.data.gokkoDiagramHeight + "px"; // ダイヤグラム（diagrammarker.html）
   });
 
+  // ---- にぎやかしの列車 ----
+  async function refreshAi() {
+    try {
+      const list = await api("GET", "/ai-trains");
+      const html = list.length === 0 ? `<div class="muted">走っていません</div>`
+        : `<table>${list.map((t) => `<tr><td><b>${GokkoDia.esc(t.train)}</b></td><td class="muted">${t.cars}両</td><td>${GokkoDia.esc(t.where)}</td>`
+          + `<td>${t.speedKmh.toFixed(0)}km/h</td><td class="muted">${GokkoDia.esc(t.status)}</td><td><button data-ai="${GokkoDia.esc(t.id)}">消す</button></td></tr>`).join("")}</table>`;
+      setHtml($("aiList"), html);
+    } catch (e) { /* 接続の失敗は上の表示に出る */ }
+  }
+  $("aiAdd").onclick = async () => {
+    const train = $("aiTrain").value.trim();
+    if (!train) return;
+    try {
+      const r = await api("POST", "/ai-trains/add", { train, cars: Number($("aiCars").value) || 6, station: $("aiStation").value.trim() || null });
+      $("error").textContent = r.message || "";
+      $("aiTrain").value = "";
+    } catch (e) { $("error").textContent = e.message; }
+    refreshAi();
+  };
+  $("aiTrain").addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("aiAdd").click(); });
+  $("aiClear").onclick = async () => {
+    if (!(await GokkoDia.ask("にぎやかしの列車を全部消しますか？", "在線もすぐ消えます。"))) return;
+    await act("POST", "/ai-trains/remove", {});
+    refreshAi();
+  };
+  $("aiList").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-ai]");
+    if (!b) return;
+    await act("POST", "/ai-trains/remove", { id: b.dataset.ai });
+    refreshAi();
+  });
+
   refresh();
   setInterval(refresh, 1000);
+  refreshAi();
+  setInterval(refreshAi, 1000);
 })();
 </script>
 </body>

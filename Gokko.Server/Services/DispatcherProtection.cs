@@ -107,7 +107,7 @@ public sealed class DispatcherProtection(GameData data, TrainRadio trainRadio, I
             ranges = _ranges.Select(r => (r.First, r.Last)).ToList();
         }
 
-        return snapshot.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)
+        return snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)
                                    && p.InGame && p.TrainCrewConnected && now - p.LastReportUtc <= Freshness
                                    && data.Line.ZonesOf(p.TrackCircuits).Any(z => ranges.Any(r => z >= r.First && z <= r.Last)))
             .Select(p => p.ConnectionId).ToHashSet();

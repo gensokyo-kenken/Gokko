@@ -138,8 +138,19 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             list.AddRange(_ghosts.Values.Select(g => g.Info.Clone()));
         }
 
+        if (VirtualTrains?.Invoke() is { } ai) list.AddRange(ai);
         return list;
     }
+
+    // ---- にぎやかしの列車（AiTrains。接続IDが AiPrefix で始まる） ----
+
+    public const string AiPrefix = "AI/";
+
+    /// <summary>にぎやかしの列車の在線（AiTrains が入れる）。Snapshot に混ぜる。</summary>
+    public Func<IEnumerable<PlayerInfo>>? VirtualTrains { get; set; }
+
+    /// <summary>人のいない参加者（継続乗務の残した在線・にぎやかしの列車）か。</summary>
+    public static bool IsVirtual(string connectionId) => connectionId.StartsWith(GhostPrefix) || connectionId.StartsWith(AiPrefix);
 
     // ---- 継続乗務: 運転画面を出たあとも、最後の在線位置を5分間残す ----
 

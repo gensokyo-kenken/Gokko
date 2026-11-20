@@ -46,7 +46,7 @@ public sealed class OnboardAudio(PlayerRegistry players, CrewRelay relay, CrewRo
         var list = new Dictionary<string, Person>();
         foreach (var p in players.Snapshot())
         {
-            if (p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix) || p.TrainNumber.Length == 0) continue;
+            if (PlayerRegistry.IsVirtual(p.ConnectionId) || p.TrainNumber.Length == 0) continue;
             list[p.ConnectionId] = new Person(p.ConnectionId, CrewRole.Driver, p.TrainNumber, p.CrewId, false);
         }
 
