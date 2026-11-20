@@ -23,23 +23,23 @@
   #beat { color: var(--yellow); visibility: hidden; }
   #beat.live { visibility: visible; animation: beat 1s steps(1) infinite; }
   @keyframes beat { 50% { visibility: hidden; } }
-  header { flex: none; display: flex; align-items: baseline; gap: 18px; padding: 10px 24px 6px; border-bottom: 2px solid #4a4a4a; font-size: 20px; }
+  header { flex: none; display: flex; align-items: baseline; gap: 18px; padding: 10px 24px 6px; border-bottom: 2px solid #4a4a4a; font-size: 16px; }
   /* 上の欄は ＊ と時計だけ（題・駅名・案内の文字は出さない） */
   header .title, header #name, header .guide { display: none; }
   header #beat { flex: 1; }
-  header .clock { color: var(--cyan); font-size: 24px; letter-spacing: .05em; }
-  #view { flex: 1; min-height: 0; width: 100%; display: block; }
+  header .clock { color: var(--cyan); font-size: 32px; letter-spacing: .05em; }
+  #view { flex: 1; min-height: 0; width: 100%; display: block; will-change: transform; }   /* 文字を色のにじむ ClearType でなく白黒の濃淡で描かせて、ドットをくっきり */
   /* 画面の下の帯（ソフトキー）。押せるものは四角い枠、選んでいる間は反転 */
   footer { flex: none; display: flex; align-items: stretch; gap: 12px; padding: 10px 24px 14px; border-top: 2px solid #4a4a4a; flex-wrap: wrap; }
-  footer button { font: inherit; font-size: 19px; min-width: 132px; padding: 8px 14px; background: transparent; color: var(--text); border: 2px solid var(--free); border-radius: 0; cursor: pointer; text-align: left; }
+  footer button { font: inherit; font-size: 16px; min-width: 132px; padding: 8px 14px; background: transparent; color: var(--text); border: 2px solid var(--free); border-radius: 0; cursor: pointer; text-align: left; }
   footer button:hover { border-color: var(--text); }
   footer button.on { background: var(--yellow); color: #000; border-color: var(--yellow); }
-  footer button small { display: block; font-size: 15px; color: var(--dim); margin-top: 2px; }
+  footer button small { display: block; font-size: 16px; color: var(--dim); margin-top: 2px; }
   footer button.local small { color: var(--route); }
   footer button.wait small { color: #d9a56a; }
   footer .gap { flex: 1; }
-  footer .sub { min-width: 0; font-size: 15px; padding: 6px 12px; align-self: flex-end; color: var(--dim); border-color: #5a5a5a; }
-  #login { position: fixed; right: 40px; bottom: 120px; z-index: 5; background: #000; color: var(--text); border: 2px solid var(--free); padding: 10px 12px; font-size: 15px; display: none; }
+  footer .sub { min-width: 0; font-size: 16px; padding: 6px 12px; align-self: flex-end; color: var(--dim); border-color: #5a5a5a; }
+  #login { position: fixed; right: 40px; bottom: 120px; z-index: 5; background: #000; color: var(--text); border: 2px solid var(--free); padding: 10px 12px; font-size: 16px; display: none; }
   #login.open { display: block; }
   #login input { display: block; width: 190px; margin: 4px 0 8px; padding: 4px; font: inherit; background: #111; color: var(--text); border: 1px solid var(--free); border-radius: 0; }
   #login button { font: inherit; background: transparent; color: var(--text); border: 2px solid var(--free); border-radius: 0; padding: 2px 10px; cursor: pointer; }
@@ -98,8 +98,8 @@
   let blink = false;
 
   const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; };
-  const X = x => L.grid.x0 + x * L.grid.dx;
-  const Y = y => L.grid.y0 + y * L.grid.dy;
+  const X = x => Math.round(L.grid.x0 + x * L.grid.dx);   // 座標は整数（1 = 文字の1ドット）にして、線や丸の角を文字のドットにそろえる
+  const Y = y => Math.round(L.grid.y0 + y * L.grid.dy);
 
   // ---- ログイン（駅扱いの切り換えに使う。信号制御盤と同じく、役職「信号扱い」の人だけ） ----
   const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }, del(k) { try { localStorage.removeItem(k); } catch (e) {} } };
@@ -244,17 +244,25 @@
     const xs = L.segments.flatMap(s => s.p.map(p => X(p[0])));
     const ys = [...L.segments.flatMap(s => s.p.map(p => Y(p[1]))), ...L.texts.map(t => Y(t.at[1]))];
     const minX = Math.min(...xs) - 60, maxX = Math.max(...xs) + 60, minY = Math.min(...ys) - 60, maxY = Math.max(...ys) + 80;
-    svg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
+    // 1ドット（座標の1）を画面の画素のちょうど整数倍に。半端な倍率だとドットの大きさがばらつくので、収まるいちばん大きい整数倍で描き、余りは周りの黒
+    const fit = () => {
+      const r = svg.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      const kf = Math.min(r.width * dpr / (maxX - minX), r.height * dpr / (maxY - minY)), k = kf >= 1 ? Math.floor(kf) : kf;   // 1倍に収まらない狭い画面だけは縮める
+      const w = r.width * dpr / k, h = r.height * dpr / k;
+      svg.setAttribute('viewBox', `${Math.round((minX + maxX - w) / 2)} ${Math.round((minY + maxY - h) / 2)} ${w} ${h}`);
+    };
+    fit();
+    window.addEventListener('resize', fit);
     el('rect', { x: minX - 2000, y: minY - 2000, width: maxX - minX + 4000, height: maxY - minY + 4000, fill: 'transparent' }).addEventListener('click', clickBlank);
-    const root = el('g', {});
+    const root = el('g', { 'shape-rendering': 'crispEdges' });   // ぼかさずに描く（斜めの線や丸がドットの段々になる）
     const g0 = el('g', { 'shape-rendering': 'crispEdges' }, root);
 
-    for (const [x, y, w] of L.platforms) el('rect', { x: X(x), y: Y(y) - 7, width: w * L.grid.dx, height: 14, fill: 'none', stroke: '#6a6a6a', 'stroke-width': 2 }, g0);
+    for (const [x, y, w] of L.platforms) el('rect', { x: X(x), y: Y(y) - 7, width: Math.round(w * L.grid.dx), height: 14, fill: 'none', stroke: '#6a6a6a', 'stroke-width': 2 }, g0);
     for (const t of L.texts) { const e = el('text', { x: X(t.at[0]), y: Y(t.at[1]), 'font-size': t.size, fill: t.dim ? C.dim : t.size >= 24 ? C.text : C.cyan, 'text-anchor': 'middle' }, root); e.textContent = t.t; e.style.pointerEvents = 'none'; }
 
     for (const s of L.segments) {
       const pts = s.p.map(p => `${X(p[0])},${Y(p[1])}`).join(' ');
-      const line = el('polyline', { points: pts, fill: 'none', stroke: C.free, 'stroke-width': 5, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, g0);
+      const line = el('polyline', { points: pts, fill: 'none', stroke: C.free, 'stroke-width': 4, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, g0);
       line.style.pointerEvents = 'none';
       segEls.push({ s, line });
       if (TEST) {
@@ -273,7 +281,7 @@
       el('rect', { x: x - 30, y: y - 18, width: 60, height: 36, fill: 'transparent' }, g);
       const box = el('rect', { x: x - 9, y: y - 9, width: 18, height: 18, fill: '#000', stroke: C.free, 'stroke-width': 2, 'shape-rendering': 'crispEdges' }, g);
       // 名前は信号機と反対の側（上り線は線の下、下り線は線の上。いちばん上の番線だけ線の上）
-      const t = el('text', { x, y: d.at[1] === 0 ? y + 30 : y - 18, 'font-size': 15, fill: C.cyan, 'text-anchor': 'middle' }, g); t.textContent = d.name;
+      const t = el('text', { x, y: d.at[1] === 0 ? y + 30 : y - 18, 'font-size': 16, fill: C.cyan, 'text-anchor': 'middle' }, g); t.textContent = d.name;
       g.addEventListener('click', e => { e.stopPropagation(); clickDest(d); });
       destEls.push({ d, box, t });
     }
@@ -297,7 +305,7 @@
       const ax = x + s * 16, r = 16;
       if (sg.kind === 'shunt') {
         const cy = y - s * 8;
-        lamp = el('path', { d: `M${ax},${cy} L${ax + s * r},${cy} A${r},${r} 0 0 1 ${ax},${cy + s * r} Z`, fill: C.occ, stroke: C.free, 'stroke-width': 1.5, 'stroke-linejoin': 'round' }, g);
+        lamp = el('path', { d: `M${ax},${cy} L${ax + s * r},${cy} A${r},${r} 0 0 1 ${ax},${cy + s * r} Z`, fill: C.occ, stroke: C.free, 'stroke-width': 1 }, g);
         el('rect', { x: Math.min(x - s * 4, ax + s * r), y: y - 12, width: Math.abs(ax + s * r - (x - s * 4)), height: 24, fill: 'transparent' }, g);
       } else {
         const cx = mate ? ax + s * (r + 9) : x + s * 24;
@@ -306,7 +314,7 @@
       }
       // 信号機名は柱の地面の側（根元の外）。1本の柱に2つあるときは、主信号機を上、入換を下に2段で
       const ty = !mate ? y + 6 : sg.kind === 'shunt' ? y + 15 : y - 2;
-      const t = el('text', { x: x - s * 10, y: ty, 'font-size': mate ? 15 : 16, fill: C.text, 'text-anchor': s > 0 ? 'end' : 'start' }, g); t.textContent = sg.name;
+      const t = el('text', { x: x - s * 10, y: ty, 'font-size': 16, fill: C.text, 'text-anchor': s > 0 ? 'end' : 'start' }, g); t.textContent = sg.name;
       g.addEventListener('click', e => { e.stopPropagation(); clickSignal(sg); });
 
       const [bx, by] = sg.btn ? [X(sg.btn[0]), Y(sg.btn[1])] : [x, Y(sg.at[1])];
@@ -318,7 +326,7 @@
     }
 
     for (const d of L.directions) {
-      const t = el('text', { x: X(d.at[0]), y: Y(d.at[1]), 'font-size': 20, fill: C.route, 'text-anchor': 'middle' }, root);
+      const t = el('text', { x: X(d.at[0]), y: Y(d.at[1]), 'font-size': 16, fill: C.route, 'text-anchor': 'middle' }, root);
       t.style.pointerEvents = 'none';
       dirEls.push({ d, t });
     }
@@ -386,7 +394,7 @@
       const x = X((a[0] + b[0]) / 2), y = Y((a[1] + b[1]) / 2) + (tr.direction === '上り' ? -46 : 46);
       const w = Math.max(60, tr.train.length * 12 + 16);
       el('rect', { x: x - w / 2, y: y - 14, width: w, height: 28, fill: '#000', stroke: C.cyan, 'stroke-width': 2, 'shape-rendering': 'crispEdges' }, trainLayer);
-      const t = el('text', { x, y: y + 7, 'font-size': 18, fill: C.yellow, 'text-anchor': 'middle' }, trainLayer); t.textContent = tr.train;
+      const t = el('text', { x, y: y + 7, 'font-size': 16, fill: C.yellow, 'text-anchor': 'middle' }, trainLayer); t.textContent = tr.train;
     }
 
     for (const st of L.stations) {
