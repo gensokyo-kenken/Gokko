@@ -137,9 +137,10 @@ internal abstract class CrewDialogBase : Form
 internal static class DiscordLogin
 {
     /// <param name="token">紐づけ（mode "link"）のとき、ログインしている本人の合い札。</param>
-    public static async Task<JsonNode> RunAsync(string mode, string? token, Action<string> status, CancellationToken cancel)
+    /// <param name="passphrase">ログイン（mode "login"）のとき、参加の合言葉。</param>
+    public static async Task<JsonNode> RunAsync(string mode, string? token, Action<string> status, CancellationToken cancel, string? passphrase = null)
     {
-        var begin = await CrewApi.SendAsync(HttpMethod.Post, "/api/auth/discord/begin", new { mode, poll = true }, token);
+        var begin = await CrewApi.SendAsync(HttpMethod.Post, "/api/auth/discord/begin", new { mode, poll = true, passphrase = passphrase ?? "" }, token);
         var url = begin["url"]?.GetValue<string>() ?? throw new InvalidOperationException("Discord のページを開けませんでした");
         var poll = begin["poll"]?.GetValue<string>() ?? throw new InvalidOperationException("Discord のページを開けませんでした");
         CrewApi.OpenBrowser(url);
@@ -167,6 +168,7 @@ internal static class DiscordLogin
 /// </summary>
 internal sealed class LoginDialog : CrewDialogBase
 {
+    private readonly TextBox _passphrase = new() { PlaceholderText = "運転会の合言葉", UseSystemPasswordChar = true };
     private readonly TextBox _id = new() { PlaceholderText = "8桁（例: 10103200）", MaxLength = 12 };
     private readonly TextBox _password = new() { PlaceholderText = "例: k7mq-3xwp", UseSystemPasswordChar = true };
     private readonly CheckBox _remember = new() { Text = "ログインを記憶する", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
@@ -183,6 +185,7 @@ internal sealed class LoginDialog : CrewDialogBase
         _config = config;
         _savedPassword = config.LoadCrewPassword();
         _id.Text = config.CrewId;
+        _passphrase.Text = config.Password; // 接続の合言葉と同じもの。ログインにも要る
         _password.Text = _savedPassword;
         _remember.Checked = config.RememberPassword;
         var resume = new Button { Text = "続ける", AutoSize = true, Visible = false };
@@ -190,6 +193,7 @@ internal sealed class LoginDialog : CrewDialogBase
         var login = new Button { Text = "ログイン", AutoSize = true };
         var pwNote = Note("移行のあいだは、社員番号とパスワードでも入れます。");
         Wide(Note("Discord でログインしてください（ブラウザが開きます）。まだ紐づけていない人は、そのあとのブラウザの画面で、社員番号とパスワードを入れればその場で紐づけられます（承認は要りません）。はじめての人は、そこから申請できます。"));
+        Row("合言葉", _passphrase);
         Wide(Buttons(resume, discord));
         Wide(pwNote);
         Row("社員番号", _id);
@@ -215,7 +219,8 @@ internal sealed class LoginDialog : CrewDialogBase
 
         discord.Click += async (_, _) => await Run(discord, async () =>
         {
-            var r = await DiscordLogin.RunAsync("login", null, s => Message.Text = s, _cancel.Token);
+            SavePassphrase();
+            var r = await DiscordLogin.RunAsync("login", null, s => Message.Text = s, _cancel.Token, _passphrase.Text);
             Finish(new CrewSession(r["id"]!.GetValue<string>(), r["token"]!.GetValue<string>()), "");
         });
 
@@ -225,7 +230,8 @@ internal sealed class LoginDialog : CrewDialogBase
             JsonNode j;
             try
             {
-                j = await CrewApi.SendAsync(HttpMethod.Post, "/login", new { id = _id.Text.Trim(), password });
+                SavePassphrase();
+                j = await CrewApi.SendAsync(HttpMethod.Post, "/login", new { id = _id.Text.Trim(), password, passphrase = _passphrase.Text });
             }
             catch (InvalidOperationException ex) when (_savedPassword.Length > 0 && password == _savedPassword && ex.Message.Contains("ちがいます"))
             {
@@ -305,6 +311,14 @@ internal sealed class LoginDialog : CrewDialogBase
                 }
             }
         };
+    }
+
+    /// <summary>入れた合言葉を、接続の合言葉としても覚える（接続の画面と同じもの）。</summary>
+    private void SavePassphrase()
+    {
+        if (_config.Password == _passphrase.Text) return;
+        _config.Password = _passphrase.Text;
+        _config.Save();
     }
 
     /// <summary>ログインできた。社員番号と、記憶するなら合い札とパスワード（新しくなっていれば入れ替える）を保存する。</summary>

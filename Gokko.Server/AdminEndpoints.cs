@@ -27,7 +27,7 @@ public static class AdminEndpoints
     public sealed record TurnRequest(string Train, string? Next);
 
     /// <param name="Id">社員番号。</param>
-    public sealed record CrewLoginRequest(string? Id, string? Password);
+    public sealed record CrewLoginRequest(string? Id, string? Password, string? Passphrase = null);
 
     /// <param name="Role">役職（司令員・信号扱い）。</param>
     /// <param name="On">出勤なら true（省略も出勤）、退勤なら false。</param>
@@ -315,8 +315,10 @@ public static class AdminEndpoints
             var (id, token) = crew.RedeemHandoff(req.Code);
             return id != null ? Results.Ok(new { id, token }) : Results.Json(new { message = "引き継ぎの札が使えません（30秒で切れ、1回しか使えません）" }, statusCode: 401);
         });
+        // ログインには参加の合言葉も要る（アカウントがあっても、合言葉を知らない人は入れない）
         view.MapPost("/login", (CrewLoginRequest req, CrewRoster crew) =>
         {
+            if (!options.PassphraseMatches(req.Passphrase)) return Bad("合言葉が違います");
             var (id, token, error) = crew.Login(req.Id, req.Password);
             if (error != null) return Bad(error);
             var l = LinkInfo(crew, id!);

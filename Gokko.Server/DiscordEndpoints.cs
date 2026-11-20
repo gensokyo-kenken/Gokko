@@ -12,7 +12,7 @@ namespace Gokko.Server;
 /// </summary>
 public static class DiscordEndpoints
 {
-    public sealed record BeginRequest(string? Mode, string? ReturnTo, bool? Poll);
+    public sealed record BeginRequest(string? Mode, string? ReturnTo, bool? Poll, string? Passphrase = null);
     public sealed record PollRequest(string? Code);
     public sealed record LinkRequest(string? Ticket, string? Id, string? Password);
     public sealed record ApplyRequest(string? Ticket, string? Name, int? JoinYear, string? Depot, string? ExistingId);
@@ -34,13 +34,16 @@ public static class DiscordEndpoints
 
         g.MapGet("", (CrewRoster crew) => Results.Ok(new
         {
-            enabled = options.Discord.Enabled, passwordUntil = options.Discord.PasswordUntil, passwordClosed = crew.PasswordClosed
+            enabled = options.Discord.Enabled, passwordUntil = options.Discord.PasswordUntil, passwordClosed = crew.PasswordClosed,
+            passphrase = !string.IsNullOrEmpty(options.Password), // ログインに参加の合言葉が要るか
         }));
 
         g.MapPost("/begin", (HttpRequest http, BeginRequest req, DiscordAuth discord, CrewRoster crew) =>
         {
             if (!discord.Enabled) return Off();
             var link = req.Mode == "link";
+            // ログインには参加の合言葉も要る（紐づけは、もうログインしている本人なので要らない）
+            if (!link && !options.PassphraseMatches(req.Passphrase)) return Results.BadRequest(new { message = "合言葉が違います" });
             string? user = null;
             if (link)
             {
