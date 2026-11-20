@@ -1,0 +1,61 @@
+{
+  "_": "西赤山（TH59）の信号制御盤のデータ（下書き。盤面の元データと連動データから自動で組んだもの）。進路てこ式: 進路に dest を書かず、てこを R・L に倒すだけで進路を構成する。座標は盤の画素。回路・進路・接近区間は Data/Interlockings.json に合わせる",
+  "id": "TH59",
+  "name": "西赤山",
+  "interlock": "西赤山連動装置",
+  "face": "relaypanel/parts/TH59-face.svg",
+  "size": [1920, 1080],
+  "approachTime": 60,
+  "releaseKey": {"at": [1686, 900], "lamp": [1686, 814]},
+  "allStop": {"at": [1456, 170]},
+  "areas": [
+    {"id": "99", "lever": [1616, 170]}
+  ],
+  "directions": [
+    {"n": "14", "area": "99", "at": [1730, 530], "circuits": ["NA1T", "NA2T"], "section": ["TH59", "TH58"], "L": "下り", "lampsL": [[1656, 505, -45], [1656, 555, 45]], "lampsR": [[1804, 505, 45], [1804, 555, -45]], "out": ["13R"], "in": ["13L"]}
+  ],
+  "statusLamps": [[90, 114], [200, 114], [300, 114]],
+  "points": [
+    {"n": "21", "at": [1300, 170], "circuit": "TH59_21ロT"}
+  ],
+  "signalLevers": [
+    {"n": "11", "side": "R", "kind": "main", "at": [500, 390]},
+    {"n": "12", "side": "L", "kind": "main", "at": [772, 530]},
+    {"n": "13", "side": "LR", "kind": "main", "at": [1198, 390]}
+  ],
+  "destButtons": [],
+  "routes": [
+    {"name": "13R", "lever": "13", "side": "R", "points": {"21": "R"}, "circuits": ["TH59_21イT", "TH59_21ロT"], "departure": true, "approach": ["上り238T", "上り242T", "上り246T", "上り250T", "TH59_11RT"], "approachTime": 60, "stops": []},
+    {"name": "11R", "lever": "11", "side": "R", "points": {}, "circuits": ["TH59_11RT"], "approach": ["上り238T", "上り242T", "上り246T", "上り250T"], "approachTime": 60, "stops": []},
+    {"name": "13L", "lever": "13", "side": "L", "points": {"21": "N"}, "circuits": ["TH59_21ロT", "TH59_13LT"], "approach": ["TH58_2RT", "NA2T", "NA1T"], "approachTime": 60, "stops": []},
+    {"name": "12L", "lever": "12", "side": "L", "points": {}, "circuits": ["TH59_12LT"], "departure": true, "approach": ["NA2T", "NA1T", "TH59_21ロT", "TH59_13LT"], "approachTime": 60, "stops": []}
+  ],
+  "signalHeads": [
+    {"routes": ["11R"], "type": "4yg", "at": [330, 356], "dir": 1},
+    {"routes": ["13R"], "type": "4yg", "at": [1380, 356], "dir": 1},
+    {"routes": ["12L"], "type": "4yg", "at": [640, 564], "dir": -1},
+    {"routes": ["13L"], "type": "4yg", "at": [1600, 496], "dir": -1}
+  ],
+  "approachBells": [
+    {"id": "up", "label": "館浜方", "at": [480, 1000], "circuits": ["上り250T", "上り246T"]},
+    {"id": "down", "label": "新大路方", "at": [1440, 1000], "circuits": ["NA1T", "NA2T"]}
+  ],
+  "trackLamps": [
+    {"c": "上り250T", "at": [193, 390]},
+    {"c": "TH59_11RT", "at": [438, 390]},
+    {"c": "TH59_11RT", "at": [654, 390]},
+    {"c": "TH59_11RT", "at": [870, 390]},
+    {"c": "TH59_11RT", "at": [1104, 390]},
+    {"c": "TH59_11RT", "at": [1288, 390]},
+    {"c": "TH59_21イT", "at": [1470, 390]},
+    {"c": "TH59_21イT", "at": [1442, 425], "rot": 57.26},
+    {"c": "下り249T", "at": [193, 530]},
+    {"c": "TH59_12LT", "at": [485, 530]},
+    {"c": "TH59_13LT", "at": [809, 530]},
+    {"c": "TH59_13LT", "at": [1104, 530]},
+    {"c": "TH59_13LT", "at": [1288, 530]},
+    {"c": "TH59_21ロT", "at": [1490, 530]},
+    {"c": "TH59_21ロT", "at": [1488, 495], "rot": 57.26},
+    {"c": "NA1T", "at": [1732, 530]}
+  ]
+}

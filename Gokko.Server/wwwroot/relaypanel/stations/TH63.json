@@ -1,0 +1,76 @@
+{
+  "_": "水越（TH63）の信号制御盤のデータ（下書き。盤面の元データと連動データから自動で組んだもの）。進路てこ式: 進路に dest を書かず、てこを R・L に倒すだけで進路を構成する。座標は盤の画素。回路・進路・接近区間は Data/Interlockings.json に合わせる",
+  "id": "TH63",
+  "name": "水越",
+  "interlock": "水越連動装置",
+  "face": "relaypanel/parts/TH63-face.svg",
+  "size": [1920, 1080],
+  "approachTime": 60,
+  "releaseKey": {"at": [1686, 900], "lamp": [1686, 814]},
+  "allStop": {"at": [1456, 170]},
+  "areas": [
+    {"id": "98", "lever": [1616, 170]},
+    {"id": "99", "lever": [1756, 170]}
+  ],
+  "directions": [
+    {"n": "11", "area": "98", "at": [186, 530], "circuits": ["FMT"], "section": ["TH63", "TH64"], "L": "上り", "lampsL": [[260, 505, 45], [260, 555, -45]], "lampsR": [[112, 505, -45], [112, 555, 45]], "out": ["12L", "13L"], "in": ["13R", "12R"]},
+    {"n": "16", "area": "99", "at": [1730, 530], "circuits": ["MT1T", "MT2T"], "section": ["TH63", "TH62"], "L": "下り", "lampsL": [[1656, 505, -45], [1656, 555, 45]], "lampsR": [[1804, 505, 45], [1804, 555, -45]], "out": ["14R", "15R"], "in": ["15L", "14L"]}
+  ],
+  "statusLamps": [[90, 114], [200, 114], [300, 114]],
+  "points": [
+    {"n": "21", "at": [470, 170], "circuit": "TH63_21イT"},
+    {"n": "22", "at": [1300, 170], "circuit": "TH63_22ロT"}
+  ],
+  "signalLevers": [
+    {"n": "12", "side": "LR", "kind": "main", "at": [772, 390]},
+    {"n": "13", "side": "LR", "kind": "main", "at": [772, 530]},
+    {"n": "14", "side": "LR", "kind": "main", "at": [1198, 390]},
+    {"n": "15", "side": "LR", "kind": "main", "at": [1198, 530]}
+  ],
+  "destButtons": [],
+  "routes": [
+    {"name": "13R", "lever": "13", "side": "R", "points": {"21": "R"}, "circuits": ["TH63_21イT", "TH63_21ロT", "TH63_15LT"], "approach": ["TH64_21T", "TH62_21T", "TH64_13LT", "TH62_13LT", "TH64_15LT", "TH62_15LT", "TH64_14RT", "TH62_14RT", "TH64_15RT", "TH62_15RT", "TH64_22T", "TH62_22T", "FMT"], "approachTime": 60, "stops": ["12R", "15L", "12L"]},
+    {"name": "12R", "lever": "12", "side": "R", "points": {"21": "N"}, "circuits": ["TH63_21イT", "TH63_12RT", "TH63_21ロT"], "approach": ["TH64_21T", "TH62_21T", "TH64_13LT", "TH62_13LT", "TH64_15LT", "TH62_15LT", "TH64_14RT", "TH62_14RT", "TH64_15RT", "TH62_15RT", "TH64_22T", "TH62_22T", "FMT"], "approachTime": 60, "stops": ["13R", "14L", "13L"]},
+    {"name": "14R", "lever": "14", "side": "R", "points": {"22": "R"}, "circuits": ["TH63_22イT", "TH63_22ロT"], "departure": true, "approach": ["TH64_14RT", "TH62_14RT", "TH64_15RT", "TH62_15RT", "TH64_22T", "TH62_22T", "FMT", "TH63_21イT", "TH63_12RT"], "approachTime": 60, "stops": ["15R", "15L", "12L"]},
+    {"name": "15R", "lever": "15", "side": "R", "points": {"22": "N"}, "circuits": ["TH63_22ロT"], "departure": true, "approach": ["TH64_14RT", "TH62_14RT", "TH64_15RT", "TH62_15RT", "TH64_22T", "TH62_22T", "FMT", "TH63_21イT", "TH63_21ロT", "TH63_15LT"], "approachTime": 60, "stops": ["14R", "14L", "13L"]},
+    {"name": "15L", "lever": "15", "side": "L", "points": {"22": "N"}, "circuits": ["TH63_22ロT", "TH63_15LT"], "approach": ["TH64_12LT", "TH62_12LT", "TH64_13LT", "TH62_13LT", "TH64_21T", "TH62_21T", "MT1T", "MT2T"], "approachTime": 60, "stops": ["13R", "14R", "14L"]},
+    {"name": "14L", "lever": "14", "side": "L", "points": {"22": "R"}, "circuits": ["TH63_22ロT", "TH63_22イT", "TH63_12RT"], "approach": ["TH64_12LT", "TH62_12LT", "TH64_13LT", "TH62_13LT", "TH64_21T", "TH62_21T", "MT1T", "MT2T"], "approachTime": 60, "stops": ["12R", "15R", "15L"]},
+    {"name": "12L", "lever": "12", "side": "L", "points": {"21": "N"}, "circuits": ["TH63_21イT", "TH63_21ロT"], "departure": true, "approach": ["MT2T", "MT1T", "TH63_22ロT", "TH63_22イT", "TH63_12RT"], "approachTime": 60, "stops": ["13R", "14R", "13L"]},
+    {"name": "13L", "lever": "13", "side": "L", "points": {"21": "R"}, "circuits": ["TH63_21ロT", "TH63_21イT"], "departure": true, "approach": ["MT2T", "MT1T", "TH63_22ロT", "TH63_15LT"], "approachTime": 60, "stops": ["12R", "15R", "12L"]}
+  ],
+  "signalHeads": [
+    {"routes": ["12R"], "type": "3", "at": [320, 564], "dir": 1},
+    {"routes": ["13R"], "type": "5", "at": [330, 598], "dir": 1},
+    {"routes": ["12L"], "type": "3", "at": [640, 356], "dir": -1},
+    {"routes": ["13L"], "type": "4yg", "at": [640, 564], "dir": -1},
+    {"routes": ["14R"], "type": "3", "at": [1380, 356], "dir": 1},
+    {"routes": ["15R"], "type": "4yg", "at": [1380, 564], "dir": 1},
+    {"routes": ["14L"], "type": "4yy", "at": [1610, 462], "dir": -1},
+    {"routes": ["15L"], "type": "4yg", "at": [1600, 496], "dir": -1}
+  ],
+  "approachBells": [
+    {"id": "up", "label": "館浜方", "at": [480, 1000], "circuits": ["FMT"]},
+    {"id": "down", "label": "新大路方", "at": [1440, 1000], "circuits": ["MT1T", "MT2T"]}
+  ],
+  "trackLamps": [
+    {"c": "FMT", "at": [193, 530]},
+    {"c": "TH63_21イT", "at": [475, 530], "when": {"21": "R"}},
+    {"c": "TH63_21イT", "at": [385, 530]},
+    {"c": "TH63_21イT", "at": [485, 460], "rot": -57.26, "when": {"21": "N"}},
+    {"c": "TH63_21イT", "at": [585, 390], "when": {"21": "N"}},
+    {"c": "TH63_21ロT", "at": [528, 530], "when": {"21": "R"}},
+    {"c": "TH63_21ロT", "at": [592, 530]},
+    {"c": "TH63_21ロT", "at": [522, 565], "rot": -57.26, "when": {"21": "N"}},
+    {"c": "TH63_12RT", "at": [809, 390]},
+    {"c": "TH63_12RT", "at": [1104, 390]},
+    {"c": "TH63_12RT", "at": [1288, 390]},
+    {"c": "TH63_15LT", "at": [809, 530]},
+    {"c": "TH63_15LT", "at": [1104, 530]},
+    {"c": "TH63_15LT", "at": [1288, 530]},
+    {"c": "TH63_22イT", "at": [1470, 390]},
+    {"c": "TH63_22イT", "at": [1442, 425], "rot": 57.26},
+    {"c": "TH63_22ロT", "at": [1490, 530]},
+    {"c": "TH63_22ロT", "at": [1488, 495], "rot": 57.26},
+    {"c": "MT1T", "at": [1732, 530]}
+  ]
+}
