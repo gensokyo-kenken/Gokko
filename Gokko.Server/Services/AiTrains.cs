@@ -851,19 +851,55 @@ public sealed class AiTrains : BackgroundService
         return result;
     }
 
-    /// <summary>次の停車駅の停止位置（道筋の上で分かれば）。</summary>
+    /// <summary>
+    /// 次の停車駅の停止位置（道筋の上で分かれば）。
+    /// ・番線ごとの表（AiTrains.json の stops）にあれば、その信号機からの距離
+    /// ・表にない番線・駅は、とりあえず列車が軌道回路の中に収まる位置: 進路を扱う駅はその番線の軌道回路、
+    ///   進路を扱わない駅はその駅の区間の軌道回路の、終わりの 5m 手前（最後尾が分岐などにはみ出さないように）
+    /// </summary>
     private double? StopX(Train t, PlanStop p)
     {
-        var track = p.Track ?? 0;
-        var spec = FindStop(p.Name, t.Dir, track);
+        var st = _rail.Stations.TryGetValue(p.StationId, out var sd) ? sd : null;
+        // 番線: 道筋に入っているその駅の番線の回路から（自動進路構成が番線を変えていれば、そちら）。なければダイヤの番線
+        int? track = p.Track;
+        SegCircuit? platform = null;
+        if (st != null)
+            foreach (var c in t.Path.SelectMany(s => s.Circuits))
+            {
+                if (c.End <= t.Head - 1) continue;
+                var k = st.TrackCircuit.FirstOrDefault(kv => kv.Value == c.Name);
+                if (k.Value == null) continue;
+                (track, platform) = (k.Key, c);
+                break;
+            }
+
+        var spec = st != null && st.RouteControl
+            ? _stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == (track ?? -1))
+            : FindStop(p.Name, t.Dir, 0);
         if (spec != null && BoundaryOf(t, spec.Signal) is { } b)
             return spec.After is { } after ? b + after : b - spec.Before;
-        // 表にない番線: その駅の出発信号機の 20m 手前
+
+        // 表にない: 軌道回路の中に収める
+        const double Margin = 5;
+        if (platform != null) return Math.Max(platform.Start + 1, platform.End - Margin);
+        if (st == null || !st.RouteControl)
+        {
+            var zone = _rail.Line.ZoneOfStation(p.StationId);
+            var inZone = t.Path.SelectMany(s => s.Circuits).Where(c => c.End > t.Head - 1 && _rail.Line.ZoneOfCircuit(c.Name) == zone).ToList();
+            // その駅の区間のうち、いちばん手前から続いている回路の終わり
+            if (inZone.Count > 0)
+            {
+                var last = inZone[0];
+                var all = t.Path.SelectMany(s => s.Circuits).ToList();
+                for (var i = all.IndexOf(last) + 1; i < all.Count && _rail.Line.ZoneOfCircuit(all[i].Name) == zone; i++) last = all[i];
+                // 道筋がまだ駅の区間の先まで延びていなければ（先の信号機が停止）、決めずに待つ（その手前では信号で止まる）
+                var idx = all.IndexOf(last);
+                if (idx < all.Count - 1 || !t.Blocked) return Math.Max(last.Start + 1, last.End - Margin);
+            }
+        }
+
+        // 出発信号機の手前で止まっている（番線の回路が分からない）: 20m 手前
         if (t.Blocked && t.EndSignal is { } e && e.StartsWith(p.Name) && e.Contains("出発")) return t.PathEnd - 20;
-        // 終着で出発信号機がない: 番線の軌道回路の終わりの手前
-        if (t.Blocked && _rail.Stations.Values.FirstOrDefault(s => s.Name == p.Name) is { } st && p.Track is { } tr && st.TrackCircuit.TryGetValue(tr, out var tc)
-            && t.Path[^1].Circuits[^1].Name == tc)
-            return t.PathEnd - 20;
         return null;
     }
 
