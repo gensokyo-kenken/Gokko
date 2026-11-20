@@ -343,8 +343,17 @@ public sealed class RailData
                     list.Add(r.Circuits[^1]);
                 }
 
+                // 同じ数なら、その番線から出るすべての進路の接近に入っている回路（ホームの回路）。
+                // 水越1番線は 12R→21ロT・14L→12RT が1本ずつ。21ロT は列車が通らない回路で、出発の接近にあるのは 12RT（赤山町2番線も 23ロT と 2RBT で 2RBT）
                 foreach (var (t, list) in lastByTrack)
-                    st.TrackCircuit[t] = list.GroupBy(x => x).OrderByDescending(g => g.Count()).First().Key;
+                {
+                    var counts = list.GroupBy(x => x).Select(g => (Name: g.Key, Count: g.Count())).ToList();
+                    var top = counts.Max(c => c.Count);
+                    var tied = counts.Where(c => c.Count == top).Select(c => c.Name).ToList();
+                    var departApproach = data.Routes.Values
+                        .Where(r => r.Interlock == st.Interlock && r.From == $"{t}番線" && r.Approach.Count > 0).Select(r => r.Approach).ToList();
+                    st.TrackCircuit[t] = tied.FirstOrDefault(c => departApproach.Count > 0 && departApproach.All(a => a.Contains(c))) ?? tied[0];
+                }
             }
         }
 
