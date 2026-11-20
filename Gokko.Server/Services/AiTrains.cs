@@ -41,6 +41,7 @@ public sealed class AiTrains : BackgroundService
     private readonly Dictionary<string, HashSet<string>> _adj;
     private readonly Dictionary<string, List<RouteDef>> _routesBySignal;
     private readonly List<Dictionary<string, double>> _signalRuns = new();
+    private readonly List<List<(double Pos, double Kmh)>> _limitRuns = new(); // _signalRuns と同じ並び。制限速度が変わった地点
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
 
@@ -273,6 +274,13 @@ public sealed class AiTrains : BackgroundService
                     return;
                 }
 
+                // ダイヤの「折返」があれば、その列番に変えて、反対向きに同じ番線から出る
+                if (TurnBack(t, utcNow))
+                {
+                    UpdateInfo(t);
+                    return;
+                }
+
                 t.FinishedUtc ??= utcNow;
                 t.Status = $"{stopNow.Name} に到着（終着）";
                 return;
@@ -314,8 +322,11 @@ public sealed class AiTrains : BackgroundService
             var remain = (due - ng).TotalSeconds;
             var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
             if (dist is { } dd && dd > 0)
-                cruise = remain <= 10 ? 100 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 100 / 3.6);
+                cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
         }
+
+        // 線路の制限速度（走ったときの記録がある所だけ）
+        if (LimitCap(t) is { } cap) cruise = Math.Min(cruise, cap);
 
         var room = Math.Max(0, target - t.Head);
         var allowed = Math.Sqrt(2 * Decel * room);
@@ -341,6 +352,60 @@ public sealed class AiTrains : BackgroundService
         t.Status = t.Speed > 0 ? "走行中" : t.Blocked ? $"{t.EndSignal} の手前で停止" : "停止";
         Release(t);
         UpdateInfo(t);
+    }
+
+    /// <summary>
+    /// 終着で、ダイヤの「折返」の列車に変わる。列番・向き・停車駅を入れ替え、道筋は今の番線の軌道回路から作り直す
+    /// （停止位置は、反対向きの出発信号機の手前）。進路は、列番が変わったので RouteEngine が新しい列車として作る。
+    /// </summary>
+    private bool TurnBack(Train t, DateTime utcNow)
+    {
+        var here = t.Plan[t.DwellIndex];
+        if (t.Dia.Turn is not { Kind: "折返", Number: { Length: > 0 } number } || _rail.DiaOf(number) is not { } nd) return false;
+        if (_routes.DirOfTrain(number) is not { } dir || !_rail.Stations.TryGetValue(here.StationId, out var st)) return false;
+        var i = nd.Stops.FindIndex(s => s.StationId == here.StationId);
+        if (i < 0 || i == nd.Stops.Count - 1) return false;
+        var track = here.Track is { } ht && st.TrackCircuit.ContainsKey(ht) ? ht
+            : st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? -1;
+        if (!st.TrackCircuit.TryGetValue(track, out var platform)) return false;
+
+        var old = t.Number;
+        t.Number = number;
+        t.Dia = nd;
+        t.Dir = dir;
+        t.Shown = null;
+        t.StartStation = st.Name;
+        t.StartTrack = track;
+        t.Plan.Clear();
+        var first = nd.Stops[i];
+        t.Plan.Add(new PlanStop(first.Name, here.StationId, true, track, null, Time(first.Dep) ?? Time(t.Dia.Turn?.Time)));
+        foreach (var s in nd.Stops.Skip(i + 1))
+        {
+            if (s.StationId == null || !InArea(s.StationId)) continue;
+            t.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
+        }
+
+        var before = FindStop(st.Name, dir, track)?.Before ?? 20;
+        var len = Math.Max(LengthOf(platform), t.Length + before + 10);
+        t.Path.Clear();
+        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(platform, 0, len)]));
+        t.Head = len - before;
+        t.StartHead = t.Head;
+        t.Speed = 0;
+        t.PlanIndex = 0;
+        t.DwellIndex = 0;
+        t.Dwelling = true;
+        t.ArrivedUtc = utcNow;
+        t.DepartureAsked = false;
+        t.Blocked = true;
+        t.EndSignal = null;
+        t.Info.TrainNumber = number;
+        t.Info.GameRoutes.Clear();
+        t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
+        t.Info.LastCenter = null;
+        t.Status = $"{st.Name} {track}番線で折り返し（{old} → {number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} で折り返して {number} になりました");
+        return true;
     }
 
     /// <summary>ゲームの線区（進路を扱う駅のいちばん端からいちばん端まで）の中の駅か。</summary>
@@ -546,6 +611,52 @@ public sealed class AiTrains : BackgroundService
         return rear is { } r && (r - zone) * t.Dir.Step() > 0;
     }
 
+    /// <summary>
+    /// 線路の制限速度から決める上限（m/s）。道筋の信号機を目印に、ゲームの自動運転で走ったときの記録の位置へ置き換えて、
+    /// 今いる所（最後尾まで）の制限と、この先 1500m の制限の手前で減速するための速さの、低い方。記録がなければ null。
+    /// 記録の制限は、前の信号機が G の間の値だけ（信号の現示による制限は除いてある。R の手前で止まるのは、信号を見て別に決める）
+    /// </summary>
+    private double? LimitCap(Train t)
+    {
+        // 目印の信号機: 過ぎた信号機のうちいちばん新しいもの、なければ前の信号機
+        Seg? refSeg = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head) ?? t.Path.FirstOrDefault(s => s.Signal != null);
+        var refSignal = refSeg?.Signal ?? t.EndSignal;
+        var refX = refSeg?.Start ?? t.PathEnd;
+        if (refSignal == null) return null;
+        for (var i = 0; i < _signalRuns.Count; i++)
+        {
+            if (!_signalRuns[i].TryGetValue(refSignal, out var at) || _limitRuns[i].Count == 0) continue;
+            var lims = _limitRuns[i];
+            var p0 = at + (t.Head - refX);
+            double LimitAt(double p)
+            {
+                var v = double.PositiveInfinity;
+                foreach (var (pos, kmh) in lims)
+                    if (pos <= p) v = kmh; else break;
+                return v;
+            }
+
+            // 今の制限: 先頭から最後尾までのうち、いちばん低いもの（上がるのは最後尾が抜けてから）
+            var now = LimitAt(p0);
+            foreach (var (pos, kmh) in lims)
+                if (pos > p0 - t.Length && pos <= p0) now = Math.Min(now, kmh);
+            now = Math.Min(now, LimitAt(p0 - t.Length));
+            var cap = now / 3.6;
+            foreach (var (pos, kmh) in lims)
+            {
+                if (pos <= p0) continue;
+                if (pos > p0 + 1500) break;
+                var l = kmh / 3.6;
+                if (double.IsInfinity(l)) continue;
+                cap = Math.Min(cap, Math.Sqrt(l * l + 2 * Decel * (pos - p0)));
+            }
+
+            return double.IsInfinity(cap) ? null : cap;
+        }
+
+        return null;
+    }
+
     /// <summary>最後尾が抜けた進路は、ゲームと同じく解く（道筋からも外す）。</summary>
     private void Release(Train t)
     {
@@ -608,7 +719,12 @@ public sealed class AiTrains : BackgroundService
             if (root.TryGetProperty("signalRuns", out var runs))
                 foreach (var r in runs.EnumerateArray())
                     if (r.TryGetProperty("signals", out var s))
+                    {
                         _signalRuns.Add(s.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.GetDouble()));
+                        _limitRuns.Add(r.TryGetProperty("limits", out var lim)
+                            ? lim.EnumerateArray().Select(x => (x[0].GetDouble(), x[1].GetDouble())).ToList()
+                            : new List<(double, double)>());
+                    }
             if (root.TryGetProperty("stops", out var stops))
                 foreach (var s in stops.EnumerateArray())
                     _stops.Add(new StopSpec(s.GetProperty("station").GetString()!, s.GetProperty("dir").GetString() == "down" ? Dir.Down : Dir.Up,
@@ -663,13 +779,13 @@ public sealed class AiTrains : BackgroundService
     {
         public required string Id { get; init; }
         public int Seq { get; init; }
-        public required string Number { get; init; }
+        public required string Number { get; set; }
         public required DiaTrain Dia { get; set; }
         public string? Shown { get; set; }
-        public Dir Dir { get; init; }
+        public Dir Dir { get; set; }
         public int Cars { get; init; }
         public double Length { get; init; }
-        public required string StartStation { get; init; }
+        public required string StartStation { get; set; }
         public int StartTrack { get; set; }
         public PlayerInfo Info { get; set; } = null!;
         public List<Seg> Path { get; } = new();
