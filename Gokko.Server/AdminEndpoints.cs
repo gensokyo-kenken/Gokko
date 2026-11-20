@@ -479,6 +479,7 @@ public static class AdminEndpoints
         admin.MapPost("/crew/discord/unlink", (CrewLoginRequest req, CrewRoster crew) =>
             crew.UnlinkDiscord(req.Id) is { } err ? Results.BadRequest(new { message = err }) : Results.Ok(new { ok = true }));
         // Discord で申請した人（承認すると名簿に入る。社員番号を入れて申請した人は、その人に紐づく）
+        admin.MapGet("/load", (ServerLoad load) => Results.Ok(load.View())); // サーバーの負荷（直近1時間）
         admin.MapGet("/crew/applications", (CrewRoster crew) => Results.Ok(new { applications = crew.Applications() }));
         admin.MapPost("/crew/applications/approve", (CrewApplicationRequest req, CrewRoster crew) =>
         {

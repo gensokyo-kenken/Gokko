@@ -31,13 +31,15 @@ public sealed class StateBroadcaster : BackgroundService
     private readonly OccupancyLog _occupancy;
     private readonly OnboardAudio _onboard;
     private readonly AiTrains _ai;
+    private readonly ServerLoad _load;
 
     public StateBroadcaster(IHubContext<GameHub> hub, PlayerRegistry players, IncidentManager incidents, GameClock clock,
         GameData data, RouteEngine routes, SignalCalculator signals, ServerOptions options, CentralControl central, ProtectionRadio radio,
         CrewRelay crew, TrainRadio trainRadio, DispatcherProtection dispatcherProtection, BlockSignals blocks, OccupancyLog occupancy, OnboardAudio onboard,
-        AiTrains ai, ILogger<StateBroadcaster> logger)
+        AiTrains ai, ServerLoad load, ILogger<StateBroadcaster> logger)
     {
         _ai = ai;
+        _load = load;
         _onboard = onboard;
         _blocks = blocks;
         _occupancy = occupancy;
@@ -87,8 +89,10 @@ public sealed class StateBroadcaster : BackgroundService
 
             try
             {
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 _routes.Tick();
                 await BroadcastAsync();
+                _load.RecordBroadcast(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds); // 負荷の記録（管理画面・logs/load-*.log）
             }
             catch (Exception ex)
             {
