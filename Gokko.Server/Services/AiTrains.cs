@@ -35,6 +35,15 @@ public sealed class AiTrains : BackgroundService
     private const double DefaultLineCircuit = 450;
     private const int MinDwellSeconds = 15;
     private const double ShuntSpeed = 25 / 3.6; // 入換の速さ
+
+    // ---- 赤山町（ゲームの線区の三郷方の端） ----
+    /// <summary>上りがここに入ったら、ExitSeconds（ロープレ時刻の秒）で消す: 9LT（三郷方の出口）・2RAT（1番線）。</summary>
+    private static readonly HashSet<string> ExitCircuits = new() { "TH58_9LT", "TH58_2RAT" };
+    private const double ExitSeconds = 20;
+    /// <summary>赤山町を2番線で通過する下りは、通過時刻の EntryLeadSeconds 前に 3番線（9LCT）に出す。</summary>
+    private const string EntryStation = "TH58";
+    private const int EntryTrack = 3;
+    private const double EntryLeadSeconds = 20;
     private static readonly TimeSpan TerminalLinger = TimeSpan.FromSeconds(60);
 
     private readonly RailData _rail;
@@ -123,7 +132,7 @@ public sealed class AiTrains : BackgroundService
     /// <summary>ダイヤの列車を、これから発車する最初の駅（時刻が来ていない、進路を扱う駅）に出す。</summary>
     public (bool Ok, string Message) Add(string number, int cars, string? stationName) => Add(number, cars, stationName, false);
 
-    private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto)
+    private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto, int? forceTrack = null)
     {
         number = RailData.NormalizeTrain(number);
         if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
@@ -161,9 +170,10 @@ public sealed class AiTrains : BackgroundService
             foreach (var key in p.GameRoutes)
                 if (_rail.Routes.TryGetValue(key, out var rd)) occupied.UnionWith(rd.Circuits);
             var options = new List<int>();
-            if (start.Track is { } dt) options.Add(dt);
-            // ダイヤ運転モードでは、ダイヤの番線だけ（番線を変えない。空くまで待つ）
-            if (!_central.DiaMode || options.Count == 0) options.AddRange(st.Routes[dir.Value].Depart.Keys.Order().Where(k => !options.Contains(k)));
+            if (forceTrack is { } ft) options.Add(ft);
+            else if (start.Track is { } dt) options.Add(dt);
+            // ダイヤ運転モードでは、ダイヤの番線だけ（番線を変えない。空くまで待つ）。番線の指定があれば、その番線だけ
+            if (forceTrack == null && (!_central.DiaMode || options.Count == 0)) options.AddRange(st.Routes[dir.Value].Depart.Keys.Order().Where(k => !options.Contains(k)));
             if (options.Count == 0) options.AddRange(st.Routes[dir.Value].Arrive.Keys.Order());
             var track = options.FirstOrDefault(k => st.TrackCircuit.TryGetValue(k, out var c) && !occupied.Contains(c), -1);
             if (track < 0) return (false, $"{st.Name}: 出せる番線がありません（ほかの列車・進路があります）");
@@ -288,6 +298,16 @@ public sealed class AiTrains : BackgroundService
                     foreach (var t in _trains.Values.ToList())
                     {
                         // ユーザーがその列番で出てきたら、自動運転の列車は消して、ユーザーに運転してもらう（途中駅からでも）
+                        // 上りが赤山町の 9LT（三郷方の出口）か 2RAT（1番線）に入ったら、20秒で消す（その先はゲームの線区の外）
+                        if (t.Dir == Dir.Up && t.ExitUtc == null && t.Info.TrackCircuits.Any(ExitCircuits.Contains))
+                            t.ExitUtc = now + TimeSpan.FromSeconds(ExitSeconds / Math.Max(0.1, _clock.Speed));
+                        if (t.ExitUtc is { } ex && now >= ex)
+                        {
+                            _trains.Remove(t.Id);
+                            _log.Note($"にぎやかし: {t.Number} は赤山町から線区の外へ出たので消しました");
+                            continue;
+                        }
+
                         if (inGame.Contains(t.Number))
                         {
                             _trains.Remove(t.Id);
@@ -346,11 +366,22 @@ public sealed class AiTrains : BackgroundService
             var terminal = !t.Plan.Skip(t.DwellIndex + 1).Any();
             if (terminal)
             {
-                // ダイヤではまだ先へ行く（線区の外へ出ていく）: 発車時刻になったら消す
+                // ダイヤではまだ先へ行く（線区の外へ出ていく）: 出発の進路が開いたら出ていく（赤山町は 9LT に入って20秒で消える）。
+                // 進路が開かないまま発車時刻から60秒たったら消す
                 if (t.Dia.Stops.LastOrDefault()?.StationId != stopNow.StationId)
                 {
-                    t.Status = ready ? $"{stopNow.Name} から線区の外へ" : $"{stopNow.Name} に停車中（{(depAt is { } d0 ? d0.ToString(@"hh\:mm\:ss") : "")}発。この先は線区の外）";
-                    if (ready) t.FinishedUtc ??= utcNow - TerminalLinger;
+                    if (ready && !t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; }
+                    if (ready && t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
+                    {
+                        t.Dwelling = false;
+                        t.PlanIndex = t.DwellIndex + 1;
+                        t.Status = $"{stopNow.Name} から線区の外へ";
+                        UpdateInfo(t);
+                        return;
+                    }
+
+                    if (ready && (depAt == null || nowGame == null || nowGame - depAt > TimeSpan.FromSeconds(60))) t.FinishedUtc ??= utcNow - TerminalLinger;
+                    t.Status = ready ? $"{stopNow.Name} で出発の進路待ち（この先は線区の外）" : $"{stopNow.Name} に停車中（{(depAt is { } d0 ? d0.ToString(@"hh\:mm\:ss") : "")}発。この先は線区の外）";
                     UpdateInfo(t);
                     return;
                 }
@@ -658,7 +689,7 @@ public sealed class AiTrains : BackgroundService
                     var open = defs.FirstOrDefault(d => t.Info.GameRoutes.Contains((d.Interlock, d.Name)) && d.Circuits.Count > 0 && Adjacent(lastCircuit, d.Circuits));
                     open ??= defs.FirstOrDefault(d => t.Info.GameRoutes.Contains((d.Interlock, d.Name)) && d.Circuits.Count > 0);
                     if (open == null) continue;
-                    seg = MakeSeg(name, open, Order(open.Circuits, lastCircuit), last.End);
+                    seg = MakeSeg(name, open, RoutePath(open, lastCircuit), last.End);
                 }
                 else if (_rail.Signals.TryGetValue(name, out var sig) && sig.Protects.Count > 0)
                 {
@@ -693,7 +724,7 @@ public sealed class AiTrains : BackgroundService
             if (!_rail.Routes.TryGetValue(key, out var d) || d.Circuits.Count == 0 || t.RedSignals.Contains(d.Signal)) continue;
             if (t.Path.Any(s => s.Route == d) || d.Circuits.Any(inPath.Contains)) continue;
             if (!near.Contains(d.Circuits[0]) && !near.Contains(d.Circuits[^1])) continue;
-            return MakeSeg(d.Signal, d, Order(d.Circuits, lastCircuit), last.End);
+            return MakeSeg(d.Signal, d, RoutePath(d, lastCircuit), last.End);
         }
 
         return null;
@@ -750,6 +781,60 @@ public sealed class AiTrains : BackgroundService
         circuits.Count > 0 && (circuits.Contains(from) || (_adj.TryGetValue(from, out var a) && circuits.Any(a.Contains)));
 
     /// <summary>軌道回路を、from につながる順に並べる（つながりが分からなければ、書いてある順）。</summary>
+    /// <summary>
+    /// 進路の軌道回路のうち、列車が実際に通るものを、通る順に。入る所（from につながる回路）から出る所までを、回路のつながりでたどる。
+    /// 出る所は、行き先が番線ならその番線の回路、そうでなければ次の信号機の回路につながる回路。
+    /// 進路のデータには、列車が通らない回路が入っていることがある（水越の 12R・12L の 21ロT）。
+    /// それも在線にすると、その回路を守る信号機（水越の 13L）が停止になり、ほかの列車が動けなくなる。
+    /// たどれなければ、全部をつながる順に並べる（<see cref="Order"/>）。
+    /// </summary>
+    private List<string> RoutePath(RouteDef def, string from)
+    {
+        var set = def.Circuits.Where(c => c != from).Distinct().ToHashSet();
+        if (set.Count == 0) return new List<string>();
+        bool Near(string a, string b) => _adj.TryGetValue(a, out var n) && n.Contains(b);
+
+        // 出る所
+        var targets = new HashSet<string>();
+        var m = System.Text.RegularExpressions.Regex.Match(def.To, @"^(\d+)番線$");
+        if (m.Success && _rail.Stations.TryGetValue(def.StationId, out var st) && st.TrackCircuit.TryGetValue(int.Parse(m.Groups[1].Value), out var tc) && set.Contains(tc))
+            targets.Add(tc);
+        else if (_rail.Signals.TryGetValue(def.Signal, out var sig))
+        {
+            var after = sig.Next.SelectMany(FirstCircuits).Where(c => !set.Contains(c)).ToHashSet();
+            foreach (var c in set)
+                if (after.Any(a => Near(c, a))) targets.Add(c);
+        }
+
+        // 入る所から出る所まで（いちばん短い道）
+        var starts = set.Where(c => Near(from, c)).ToList();
+        if (targets.Count > 0 && starts.Count > 0)
+        {
+            var prev = new Dictionary<string, string?>();
+            var q = new Queue<string>();
+            foreach (var c in starts) { prev[c] = null; q.Enqueue(c); }
+            while (q.Count > 0)
+            {
+                var c = q.Dequeue();
+                if (targets.Contains(c))
+                {
+                    var path = new List<string>();
+                    for (string? x = c; x != null; x = prev[x]) path.Add(x);
+                    path.Reverse();
+                    return path;
+                }
+
+                foreach (var n in set.Where(n => !prev.ContainsKey(n) && Near(c, n)))
+                {
+                    prev[n] = c;
+                    q.Enqueue(n);
+                }
+            }
+        }
+
+        return Order(def.Circuits, from);
+    }
+
     private List<string> Order(IReadOnlyList<string> circuits, string from)
     {
         var rest = circuits.Where(c => c != from).Distinct().ToList();
@@ -940,7 +1025,7 @@ public sealed class AiTrains : BackgroundService
     private void AutoSpawn(HashSet<string> users)
     {
         var now = _clock.Now;
-        List<(string Number, string Station)> todo = new();
+        List<(string Number, string Station, int? Track)> todo = new();
         lock (_lock)
         {
             if (!_enabled || now is not { } n || !_clock.IsRunning) return;
@@ -972,11 +1057,19 @@ public sealed class AiTrains : BackgroundService
                 var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30));
                 if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
                 if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
-                todo.Add((number, start.Name));
+                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
+                if (start.StationId == EntryStation && start.Stop != "停" && start.Track == 2 && _routes.DirOfTrain(number) == Dir.Down)
+                {
+                    if (dep - n > TimeSpan.FromSeconds(EntryLeadSeconds)) continue;
+                    todo.Add((number, start.Name, EntryTrack));
+                    continue;
+                }
+
+                todo.Add((number, start.Name, null));
             }
         }
 
-        foreach (var (number, station) in todo) Add(number, 6, station, true);
+        foreach (var (number, station, track) in todo) Add(number, 6, station, true, track);
     }
 
     /// <summary>最後尾が抜けた進路は、ゲームと同じく解く（道筋からも外す）。</summary>
@@ -1135,6 +1228,7 @@ public sealed class AiTrains : BackgroundService
         public DateTime? FinishedUtc { get; set; }
         public string Status { get; set; } = "";
         public bool Auto { get; init; }
+        public DateTime? ExitUtc { get; set; }    // 赤山町から線区の外へ出て消す時刻
         public bool Shunting { get; set; }        // 入換（引上げ）中
         public double ShuntStartHead { get; set; }
         public PlanStop? ShuntStation { get; set; }
