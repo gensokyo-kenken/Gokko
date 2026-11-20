@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 66" width="520" height="66">
+  <!-- 駅名の札（白い枠の二段）。字は重ねて書く。上の段 (260,24) に駅名、下の段 (260,52) に距離など -->
+  <rect x="2" y="2" width="516" height="62" fill="none" stroke="#eff1ef" stroke-width="2.5"/>
+  <line x1="2" y1="40" x2="518" y2="40" stroke="#eff1ef" stroke-width="2.5"/>
+</svg>

@@ -1,0 +1,29 @@
+/* ダイヤグラムを単体で開いたとき（diagrammarker.html・diagramview.html）の上のメニュー。
+   信号制御盤（relaypanel.html）の右上の道具と同じ見た目: 右上に浮かぶ暗い帯に、ボタンを区切り線で並べ、右端にログイン。
+   ふだんは薄く、近づくと濃くなる。ログインは帯の下に出る小窓。relaypanel.html の値を写したもの（あちらを変えたら合わせる） */
+#tools { position: fixed; top: 6px; right: 8px; z-index: 50; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; align-items: center;
+         max-width: calc(100vw - 16px);
+         background: rgba(20,24,23,.82); color: #dfe6e2; border: 1px solid #4d5c57; border-radius: 6px; padding: 4px 8px;
+         font-size: 13px; opacity: .35; transition: opacity .2s; }
+#tools:hover, #tools.open, #tools:focus-within { opacity: 1; }
+@media (hover: none) { #tools { opacity: .9; } #tools button { padding: 5px 9px; } }
+#tools button { white-space: nowrap; background: #2d3633; color: #e6ece8; border: 1px solid #56655f; border-radius: 4px; padding: 3px 8px; font: inherit; cursor: pointer; }
+#tools button:hover { background: #3a4642; }
+#tools button.primary { background: #4f6a61; border-color: #8fb3a6; color: #fff; }
+#tools .sep { width: 1px; align-self: stretch; background: #4d5c57; }
+
+/* ダイヤグラムの絞り込み・大きさのボタン（diapanel.js が書く）を帯の中に並べる。枠の付いたまとまりは、区切り線にする */
+#tools #diagramFilter { display: contents; }
+#tools #diagramFilter > span { border: none !important; border-radius: 0 !important; padding: 0 0 0 6px !important; border-left: 1px solid #4d5c57 !important; }
+#tools #diagramFilter > span:first-child { border-left: none !important; padding-left: 0 !important; }
+#tools #diagramFilter > span > span:first-child { color: #9fb0a9 !important; }
+#tools .dg-set b { color: #fff; }
+
+/* ログインの小窓（帯の下） */
+#login { position: fixed; top: 44px; right: 8px; z-index: 55; background: #1c2220; color: #e6ece8; border: 1px solid #56655f; border-radius: 6px;
+         padding: 10px 12px; font-size: 13px; display: none; }
+#login.open { display: block; }
+#login input { display: block; width: 180px; margin: 4px 0 8px; padding: 4px; font: inherit; color: #111; background: #fff; border: 1px solid #56655f; border-radius: 3px; }
+#login button { background: #2d3633; color: #e6ece8; border: 1px solid #56655f; border-radius: 4px; padding: 3px 8px; font: inherit; cursor: pointer; }
+#login p { margin: 6px 0 0; color: #ffb7a8; max-width: 190px; }
+#login p:empty { display: none; }

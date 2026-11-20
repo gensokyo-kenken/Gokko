@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 48" width="128" height="48">
+  <!-- 信号表示灯（4yy-nog-top・off）。入換信号機と同じ柱に付く主信号機（4灯YY式で進行のないもの。丸の中は斜線1本と、柱と直角の線）。丸だけで、足と柱は描いていない。
+       入換信号機の信号表示灯（signal-head-shunt-*）と、左上をそろえて同じ倍率で重ねて置く（横が 128 ある）。扇形の先に丸がつながり、1本の柱に 入換・主信号機 が並んで見える。
+       足は (10,24)（入換の灯の足と同じ所）、灯の中心は (87.5,24)。右へ進む向き。左へ進む向きは、入換の灯と足が同じ所に来るように 180 度回す（左右は返さない） -->
+  <defs><filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="3"/></filter><clipPath id="b"><circle cx="87.5" cy="24" r="6"/></clipPath></defs>
+  <g stroke="#f5f6f7" stroke-width="2" fill="none" stroke-linecap="round">
+    <circle cx="87.5" cy="24" r="15.5"/>
+    <path d="M76.54,13.04 L98.46,34.96 M87.5,8.5 V39.5"/>
+  </g>
+  <circle cx="87.5" cy="24" r="10" fill="#3d424c" opacity="0" filter="url(#glow)"/>
+  <circle cx="87.5" cy="24" r="7.4" fill="#3c5360"/>
+  <circle cx="87.5" cy="24" r="6" fill="#20242d"/>
+  <g clip-path="url(#b)"><circle cx="88.46" cy="25.32" r="6" fill="#3d424c"/></g>
+  <circle cx="87.5" cy="24" r="6" fill="none" stroke="#15181e" stroke-width="1"/>
+</svg>

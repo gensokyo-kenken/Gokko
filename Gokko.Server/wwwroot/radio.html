@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111820">
+<title>列車無線（スマホ）</title>
+<style>
+  /* スマホの列車無線。PC のクライアントで参加している本人の「受話器」になる */
+  :root {
+    --bg: #111820; --card: #1a2430; --line: #2c3a4a; --fg: #e9eff6; --muted: #8fa1b5;
+    --accent: #2f7fe0; --ok: #23a35a; --warn: #d99a1c; --ng: #d33b3b; --lcd: #b9e3a0; --lcd-bg: #18241a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    font-size: 15px; line-height: 1.5; padding: max(14px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 17px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  h1 .who { margin-left: auto; font-size: 12px; font-weight: normal; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .note { color: var(--muted); font-size: 12.5px; margin: 0; padding-left: 1.2em; }
+  .note li { margin: 2px 0; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  input[type=text], input[type=password] {
+    width: 100%; font: inherit; font-size: 17px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #0d141b; color: var(--fg);
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 14px 10px; color: #fff; background: var(--accent); cursor: pointer;
+    touch-action: manipulation;
+  }
+  button:disabled { opacity: .35; cursor: default; }
+  button.sub { background: #2a3746; color: var(--fg); font-weight: normal; padding: 10px; }
+  button.link { background: none; color: var(--muted); font-weight: normal; padding: 4px 6px; text-decoration: underline; font-size: 13px; }
+  .wide { width: 100%; margin-top: 12px; font-size: 17px; }
+  .error { color: #ff8a80; font-size: 13.5px; min-height: 1.2em; margin-top: 8px; }
+  .lcd { background: var(--lcd-bg); color: var(--lcd); border-radius: 12px; padding: 12px 14px; border: 1px solid #2c4130; }
+  .lcd .status { font-size: 26px; font-weight: 700; letter-spacing: .04em; }
+  .lcd .detail { font-size: 14px; min-height: 1.4em; }
+  .lcd .mic { font-size: 12.5px; margin-top: 4px; opacity: .85; }
+  .lcd.calling .status { color: #ffd27a; }
+  .lcd.talking .status { color: #8ef59a; }
+  .lcd.off { color: #7f9c86; }
+  .linked { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #55606c; flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.wait { background: var(--warn); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .buttons button { padding: 22px 8px; font-size: 19px; }
+  #callBtn { background: var(--ok); }
+  #callBtn.ringing { animation: blink 1s steps(2, start) infinite; }
+  #endBtn { background: var(--ng); }
+  #muteBtn.on { background: var(--warn); color: #111; }
+  @keyframes blink { 50% { background: #157a40; } }
+  .meters { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; font-size: 12.5px; color: var(--muted); }
+  .meter { height: 8px; border-radius: 4px; background: #0d141b; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok), #c8e05a 70%, var(--ng)); transition: width .08s linear; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row input[type=range] { flex: 1; }
+  .hidden { display: none !important; }
+  .menu-link { display: inline-block; margin-bottom: 6px; color: inherit; opacity: .75; text-decoration: none; font-size: 14px; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+<script src="menulink.js"></script>
+<script src="crewsession.js"></script>
+</head>
+<body>
+<main>
+  <a href="menu.html" data-menu-link class="menu-link">‹ メニュー</a>
+  <h1>📻 列車無線 <span class="who" id="who"></span></h1>
+
+  <!-- ログイン（乗務タブレットと同じ社員番号とパスワード。合い札はタブレットと共用） -->
+  <section class="card hidden" id="loginView">
+    <div class="muted">PC のクライアントと同じ社員番号でログインしてください。</div>
+    <div id="pwPart" style="display:contents"><label for="loginId">社員番号</label>
+    <input type="text" id="loginId" inputmode="numeric" autocomplete="username">
+    <label for="loginPw">パスワード</label>
+    <input type="password" id="loginPw" autocomplete="current-password">
+    <button class="wide" id="loginBtn">ログイン</button></div>
+    <div class="error" id="loginError"></div>
+  </section>
+
+  <!-- 受話器を開く（音を出す・マイクを使うには、最初にボタンを押す必要がある） -->
+  <section class="card hidden" id="startView">
+    <div>このスマホを、PC のクライアントで参加しているあなたの<b>受話器</b>にします。</div>
+    <ul class="note">
+      <li>PC で運転士・車掌として参加していると、つながります（司令員は対象外）。</li>
+      <li>つないでいる間、PC のマイクは使わず、声はこのスマホから送ります。司令の声もこのスマホから聞こえます。</li>
+      <li>マイクの使用を許可してください。</li>
+      <li><b>画面を消したり、ほかのアプリに切り替えたりすると止まります。</b>使う間は、この画面を開いたままにしてください。</li>
+    </ul>
+    <button class="wide" id="startBtn">受話器を開く</button>
+    <div class="error" id="startError"></div>
+    <div style="text-align:right"><button class="link" id="logoutBtn">ログアウト</button></div>
+  </section>
+
+  <!-- 無線機 -->
+  <section class="hidden" id="radioView" style="display:flex;flex-direction:column;gap:12px">
+    <div class="linked"><span class="dot" id="linkDot"></span><span id="linkText">接続しています…</span></div>
+    <div class="lcd off" id="lcd">
+      <div class="status" id="status">未接続</div>
+      <div class="detail" id="detail"></div>
+      <div class="mic" id="micText">MIC CLOSED</div>
+    </div>
+    <div class="buttons">
+      <button id="callBtn" disabled>司令呼出</button>
+      <button id="endBtn" disabled>終 了</button>
+    </div>
+    <div class="card">
+      <div class="meters">
+        <span>送話</span><div class="meter"><i id="micMeter"></i></div>
+        <span>受話</span><div class="meter"><i id="rxMeter"></i></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <span class="muted">音量</span><input type="range" id="volume" min="0" max="2" step="0.05" value="1">
+        <button class="sub" id="muteBtn">マイク 入</button>
+      </div>
+    </div>
+    <div class="error" id="radioError"></div>
+    <!-- 内線電話（携帯電話）。列車無線とは別の回線。マイクと音は列車無線と共有する（extension/extphone.js） -->
+    <button class="sub" id="extToggle">📱 内線電話（携帯）を開く</button>
+    <div id="extBox" class="hidden"></div>
+    <button class="sub hidden" id="resumeBtn">音が止まりました。押して再開</button>
+    <ul class="note">
+      <li>画面を消すと止まります。使う間は開いたままにしてください。</li>
+      <li>通話は、PC の無線機（F6）からも操作できます。</li>
+    </ul>
+    <div style="text-align:right"><button class="link" id="closeBtn">受話器を閉じる</button></div>
+  </section>
+</main>
+
+<script>
+  // スマホの列車無線。
+  // ・ログイン（/api/tid/login）の合い札で /phone に参加すると、サーバーが同じ社員番号の PC の参加を探して結ぶ
+  // ・音声は Opus（16kHz・モノラル・40ms ごと・24kbps）。PC のクライアント（Concentus）と同じ形式。
+  //   圧縮と展開は libopus の WebAssembly（libopus-wasm）で行う（iPhone の Safari でも同じように動くように、WebCodecs は使わない）
+  // ・マイクは getUserMedia（エコー除去・雑音除去・自動音量を入）。AudioWorklet で 16kHz に変換して 40ms ずつ圧縮する
+  // ・合い札と社員番号は、乗務タブレット（tablet.html）と同じ場所に覚える
+  const OPUS_URL = "https://cdn.jsdelivr.net/npm/libopus-wasm@0.4.1/dist/index.js";
+  const RATE = 16000, FRAME = 640, BITRATE = 24000, MAX_PACKET = 400;
+  const GATE = 0.02, GATE_HOLD = 400; // 小さい音は送らない（PC のノイズゲートと同じ考え）
+  const $ = (id) => document.getElementById(id);
+
+  // ログインはこのタブの中だけ（crewsession.js）。乗務メニューから開けば引き継ぎ、URL を直接開いたタブではログインを求める
+  // PC のクライアントから開いたとき（#crew=社員番号&token=合い札）も crewsession.js が受け取る
+  let user = GokkoCrew.id(), token = GokkoCrew.token();
+  function setUser(id, tok, how) {
+    user = id || ""; token = id ? tok || "" : "";
+    if (how === "login") GokkoCrew.login(user, token); else GokkoCrew.logout();
+  }
+
+  function show(view) {
+    for (const v of ["loginView", "startView", "radioView"]) $(v).classList.toggle("hidden", v !== view);
+    $("who").textContent = user ? `ID:${user}` : "";
+  }
+
+  // ---- ログイン ----
+  $("loginBtn").onclick = async () => {
+    $("loginError").textContent = "";
+    try {
+      const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.message || "ログインできませんでした");
+      setUser(j.id, j.token, "login");
+      $("loginPw").value = "";
+      show("startView");
+    } catch (e) { $("loginError").textContent = e.message; }
+  };
+  $("loginPw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("loginBtn").click(); });
+  GokkoCrew.discordButton($("loginView"), $("loginError")); // Discord でログイン（戻ってきたら crewsession.js が受け取る）
+  $("logoutBtn").onclick = async () => {
+    try { await fetch("/api/tid/logout", { method: "POST", headers: { "X-Crew-Token": token } }); } catch (e) {}
+    setUser("", ""); show("loginView");
+  };
+
+  // ---- 音 ----
+  let ctx = null, opus = null, encoder = null, stream = null, micNode = null, outGain = null;
+  let conn = null, status = null, closed = false;
+  let muted = false, gateUntil = 0, micLevel = 0, rxLevel = 0;
+  const voices = new Map(); // 話した人の接続ID → { decoder, next, last }
+  let volume = 1;
+  try { volume = Number(localStorage.getItem("gokkoRadioVolume") || "1"); } catch (e) {}
+  if (!(volume >= 0 && volume <= 2)) volume = 1;
+  $("volume").value = volume;
+  $("volume").oninput = () => {
+    volume = Number($("volume").value);
+    if (outGain) outGain.gain.value = volume;
+    try { localStorage.setItem("gokkoRadioVolume", String(volume)); } catch (e) {}
+  };
+
+  // マイクの音を 16kHz・640 サンプル（40ms）ずつにまとめる（AudioWorklet。入力の速さは端末による）
+  const CAPTURE = `
+    class Capture extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.ratio = sampleRate / ${RATE};
+        // 折り返し雑音を防ぐ低域通過（7kHz、2次のバターワース）
+        const w = 2 * Math.PI * Math.min(7000, sampleRate * 0.45) / sampleRate, q = Math.SQRT1_2;
+        const a = Math.sin(w) / (2 * q), c = Math.cos(w), a0 = 1 + a;
+        this.b0 = (1 - c) / 2 / a0; this.b1 = (1 - c) / a0; this.b2 = this.b0; this.a1 = -2 * c / a0; this.a2 = (1 - a) / a0;
+        this.x1 = this.x2 = this.y1 = this.y2 = 0;
+        this.pos = 0; this.prev = 0;
+        this.out = new Float32Array(${FRAME}); this.n = 0;
+      }
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (!ch) return true;
+        for (let i = 0; i < ch.length; i++) {
+          const x = ch[i];
+          const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+          this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y;
+          // 入力 1 サンプルぶん進むあいだに、出力の位置（pos）を越えたら、前後をつないで 1 つ取る
+          while (this.pos <= 1) {
+            this.out[this.n++] = this.prev + (y - this.prev) * this.pos;
+            this.pos += this.ratio;
+            if (this.n === ${FRAME}) { this.port.postMessage(this.out, [this.out.buffer]); this.out = new Float32Array(${FRAME}); this.n = 0; }
+          }
+          this.pos -= 1; this.prev = y;
+        }
+        return true;
+      }
+    }
+    registerProcessor("gokko-capture", Capture);`;
+
+  async function openAudio() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
+    // 先に無音を鳴らして、iPhone で音が出る状態にする
+    const silent = ctx.createBufferSource(); silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); silent.connect(ctx.destination); silent.start();
+
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    opus = await import(OPUS_URL);
+    encoder = await opus.createEncoder({
+      sampleRate: RATE, channels: 1, frameSize: FRAME, application: opus.Application.Voip, signal: opus.Signal.Voice,
+      bitrate: BITRATE, vbr: true, complexity: 5
+    });
+    const url = URL.createObjectURL(new Blob([CAPTURE], { type: "application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const source = ctx.createMediaStreamSource(stream);
+    micNode = new AudioWorkletNode(ctx, "gokko-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    micNode.port.onmessage = (e) => onFrame(e.data);
+    const sink = ctx.createGain(); sink.gain.value = 0; // 処理を動かし続けるため、無音で出力につなぐ
+    source.connect(micNode); micNode.connect(sink); sink.connect(ctx.destination);
+    ctx.onstatechange = updateResume;
+  }
+
+  // 話してよい人: 司令員・呼び出した人・一斉通告に応答した人
+  function speaks(call, id) { return id === call.dispatcher.id || (call.caller && id === call.caller.id) || (call.responders || []).some((r) => r.id === id); }
+  function broadcastCall() { const radio = status && status.linked ? status.radio : null; return radio ? (radio.audible || []).find((c) => c.isBroadcast) : null; }
+
+  function myCall() { return status && status.linked && status.radio ? status.radio.myCall : null; }
+
+  const frameTaps = new Set(); // 内線電話（携帯）にもマイクの音を渡す
+  function onFrame(pcm) {
+    for (const f of frameTaps) f(pcm);
+    let peak = 0;
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+    micLevel = Math.max(micLevel, Math.min(peak, 1));
+    const now = performance.now();
+    if (peak >= GATE) gateUntil = now + GATE_HOLD;
+    const call = myCall();
+    if (!call || muted || now >= gateUntil || !conn || conn.state !== signalR.HubConnectionState.Connected) return;
+    let packet;
+    try { packet = encoder.encodeFloat(pcm, { maxPacketBytes: MAX_PACKET }); } catch (e) { $("radioError").textContent = "音声を圧縮できません: " + e.message; return; }
+    if (!packet || packet.length === 0) return;
+    conn.send("SendRadioAudio", { sessionId: call.id, senderId: "", opus: toBase64(packet) }).catch(() => {});
+  }
+
+  function toBase64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+  function fromBase64(text) { const s = atob(text); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+
+  function receive(packet) {
+    const radio = status && status.linked ? status.radio : null;
+    if (!radio || !ctx || !opus || !packet || !packet.opus || packet.senderId === radio.selfId) return;
+    const call = (radio.audible || []).find((c) => c.id === packet.sessionId);
+    if (!call || !speaks(call, packet.senderId)) return;
+    const bytes = fromBase64(packet.opus);
+    if (bytes.length === 0 || bytes.length > MAX_PACKET) return;
+    let v = voices.get(packet.senderId);
+    if (!v) {
+      // 展開器は話す人ごと（前の音を覚えている）。できるまでに届いたものは貯めておく
+      v = { decoder: null, waiting: [bytes], next: 0, last: performance.now() };
+      voices.set(packet.senderId, v);
+      opus.createDecoder({ sampleRate: RATE, channels: 1 }).then((d) => {
+        v.decoder = d;
+        for (const b of v.waiting.splice(0)) play(v, b);
+      }).catch(() => voices.delete(packet.senderId));
+      return;
+    }
+    if (!v.decoder) { if (v.waiting.length < 10) v.waiting.push(bytes); return; }
+    play(v, bytes);
+  }
+
+  function play(v, bytes) {
+    if (!ctx) return;
+    let pcm;
+    try { pcm = v.decoder.decodeFloat(bytes); } catch (e) { return; }
+    if (!pcm || pcm.length === 0) return;
+    let peak = 0;
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+    rxLevel = Math.max(rxLevel, Math.min(peak * volume, 1));
+    const buffer = ctx.createBuffer(1, pcm.length, RATE);
+    buffer.getChannelData(0).set(pcm);
+    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(outGain);
+    // 少し貯めてから流す（届く間隔のゆれを吸収する）。遅れすぎたら詰め直す
+    const t = ctx.currentTime;
+    if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;
+    src.start(v.next);
+    v.next += buffer.duration;
+    v.last = performance.now();
+  }
+
+  // 呼出音・応答音（短い電子音）
+  function beep(freqs) {
+    if (!ctx) return;
+    let t = ctx.currentTime + 0.02;
+    for (const f of freqs) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.18, t + 0.01); g.gain.setValueAtTime(0.18, t + 0.11); g.gain.linearRampToValueAtTime(0, t + 0.13);
+      o.connect(g); g.connect(outGain); o.start(t); o.stop(t + 0.14); t += 0.16;
+    }
+  }
+
+  // ---- 接続 ----
+  async function connect() {
+    conn = new signalR.HubConnectionBuilder().withUrl("/phone")
+      .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (c) => closed ? null : Math.min(10000, [0, 1000, 2000, 5000][c.previousRetryCount] ?? 10000) })
+      .build();
+    conn.on("ReceivePhoneStatus", onStatus);
+    conn.on("ReceiveRadioAudio", receive);
+    conn.onreconnecting(() => { setLink("wait", "つなぎ直しています…"); });
+    conn.onreconnected(() => { join(); });
+    conn.onclose(() => { if (!closed) { setLink("", "切れました。受話器を開き直してください"); status = null; render(); } });
+    await conn.start();
+    await join();
+  }
+
+  async function join() {
+    const r = await conn.invoke("Join", token);
+    if (!r.ok) {
+      closed = true; await conn.stop().catch(() => {});
+      stopAudio();
+      setUser("", ""); show("loginView");
+      $("loginError").textContent = r.message;
+    }
+  }
+
+  let lastCallId = null;
+  function onStatus(s) {
+    if (s.replaced) {
+      closed = true;
+      conn.stop().catch(() => {});
+      stopAudio();
+      status = null;
+      setLink("", s.message);
+      render();
+      return;
+    }
+    const before = lastCallId;
+    status = s;
+    const call = myCall();
+    lastCallId = call ? call.id : null;
+    if (call && before == null) beep([880, 1320]);
+    if (!call && before != null) beep([660]);
+    render();
+  }
+
+  function setLink(kind, text) { $("linkDot").className = "dot " + kind; $("linkText").textContent = text; }
+
+  function render() {
+    const radio = status && status.linked ? status.radio : null;
+    const call = radio ? radio.myCall : null;
+    const others = radio ? (radio.audible || []).filter((c) => !call || c.id !== call.id) : [];
+    const other = others.find((c) => c.isBroadcast) || others[0];
+    let text, detail, cls = "";
+    if (!status) { text = "未接続"; detail = ""; cls = "off"; }
+    else if (!status.linked) { text = "参加していません"; detail = status.message; cls = "off"; setLink("wait", "PC の参加を待っています"); }
+    else {
+      setLink("on", `${status.label} とつないでいます`);
+      if (call && call.isBroadcast) { text = "通告 応答中"; detail = `${call.dispatcher.label}（全員に聞こえます）`; cls = "talking"; }
+      else if (call) { text = call.isPrivate ? "個別通話" : "共通通話"; detail = call.dispatcher.label; cls = "talking"; }
+      else if (radio.ownRequestPending) { text = "司令 呼出中"; detail = "司令員の応答を待っています"; cls = "calling"; }
+      else if (other) { text = other.isBroadcast ? "一斉通告 受信中" : "共通受信"; detail = other.isBroadcast ? `${other.dispatcher.label}（「通告応答」で話せます）` : `${other.dispatcher.label} ⇔ ${other.caller.label}`; }
+      else { text = "待 受"; detail = radio.dispatcherCount > 0 ? "「司令呼出」で司令を呼び出します" : "司令員が参加していません"; }
+    }
+    $("status").textContent = text;
+    $("detail").textContent = detail;
+    $("lcd").className = "lcd " + cls;
+    $("micText").textContent = !call ? "MIC CLOSED" : muted ? "マイク 切（送っていません）" : "● MIC OPEN  /  話すと送ります";
+
+    const busy = !radio;
+    const canRespond = !busy && !call && !!broadcastCall();
+    $("callBtn").disabled = busy || !!call || (!canRespond && (radio.ownRequestPending || radio.dispatcherCount === 0));
+    $("callBtn").classList.toggle("ringing", !!radio && radio.ownRequestPending && !canRespond);
+    $("callBtn").textContent = canRespond ? "通告応答" : radio && radio.ownRequestPending ? "呼出中…" : "司令呼出";
+    $("endBtn").disabled = busy || !(call || radio.ownRequestPending);
+    $("endBtn").textContent = call && call.isBroadcast ? "応答終了" : call ? "終 了" : "取 消";
+  }
+
+  async function command(name, ...args) {
+    $("radioError").textContent = "";
+    try {
+      const r = await conn.invoke(name, ...args);
+      if (!r.ok) $("radioError").textContent = r.message;
+    } catch (e) { $("radioError").textContent = "送れませんでした: " + e.message; }
+  }
+  $("callBtn").onclick = () => {
+    const b = broadcastCall();
+    if (b && !myCall()) command("RespondRadioBroadcast", b.id); // 一斉通告の間は、応答して話す
+    else command("RequestRadioCall");
+  };
+  $("endBtn").onclick = () => {
+    const call = myCall();
+    if (call) command("EndRadioCall", call.id);
+    else command("CancelRadioCall");
+  };
+  $("muteBtn").onclick = () => {
+    muted = !muted;
+    $("muteBtn").textContent = muted ? "マイク 切" : "マイク 入";
+    $("muteBtn").classList.toggle("on", muted);
+    render();
+  };
+
+  // ---- 画面を消さない・音が止まったら再開 ----
+  let wakeLock = null;
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator && !closed) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  }
+  function updateResume() { $("resumeBtn").classList.toggle("hidden", !ctx || ctx.state === "running" || closed); }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !ctx || closed) return;
+    keepAwake();
+    ctx.resume().catch(() => {}).finally(updateResume);
+  });
+  $("resumeBtn").onclick = async () => { try { await ctx.resume(); } catch (e) {} updateResume(); };
+
+  setInterval(() => {
+    $("micMeter").style.width = (micLevel * 100).toFixed(0) + "%";
+    $("rxMeter").style.width = (rxLevel * 100).toFixed(0) + "%";
+    micLevel *= 0.75; rxLevel *= 0.75;
+    // しばらく声の来ない人の展開器を片づける
+    const now = performance.now();
+    for (const [id, v] of voices) if (v.decoder && now - v.last > 30000) { try { v.decoder.free(); } catch (e) {} voices.delete(id); }
+  }, 80);
+
+  function stopAudio() {
+    try { stream && stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    try { micNode && micNode.disconnect(); } catch (e) {}
+    try { ctx && ctx.close(); } catch (e) {}
+    try { encoder && encoder.free(); } catch (e) {}
+    for (const v of voices.values()) { try { v.decoder && v.decoder.free(); } catch (e) {} }
+    voices.clear();
+    try { wakeLock && wakeLock.release(); } catch (e) {}
+    ctx = null; stream = null; micNode = null; encoder = null; wakeLock = null;
+    updateResume();
+  }
+
+  $("startBtn").onclick = async () => {
+    $("startError").textContent = "";
+    $("startBtn").disabled = true;
+    try {
+      if (!window.isSecureContext) throw new Error("https:// で開いてください（マイクは https でないと使えません）");
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("このブラウザではマイクを使えません");
+      closed = false;
+      await openAudio();
+      show("radioView");
+      render();
+      keepAwake();
+      await connect();
+    } catch (e) {
+      stopAudio();
+      if (conn) { closed = true; conn.stop().catch(() => {}); }
+      show("startView");
+      $("startError").textContent = (e && e.name === "NotAllowedError") ? "マイクの使用が許可されませんでした。ブラウザの設定で許可してください" : "開けませんでした: " + (e && e.message || e);
+    } finally { $("startBtn").disabled = false; }
+  };
+
+  $("closeBtn").onclick = async () => {
+    closed = true;
+    if (conn) await conn.stop().catch(() => {});
+    stopAudio();
+    status = null; lastCallId = null;
+    show("startView");
+  };
+
+  show(token ? "startView" : "loginView");
+</script>
+<script src="extension/extphone.js"></script>
+<script>
+  // 内線電話（携帯）。PC のクライアントで参加している本人の受話器として、内線にも出る（司令員も使える）
+  (() => {
+    const box = $("extBox"), toggle = $("extToggle");
+    const phone = GokkoExtPhone.create({
+      el: box, skin: "keitai", kind: "handset", token: () => token, keyboard: false,
+      host: async () => ({ ctx, out: outGain, opus, tap: (fn) => { frameTaps.add(fn); return () => frameTaps.delete(fn); } })
+    });
+    function setOpen(open) {
+      box.classList.toggle("hidden", !open);
+      toggle.textContent = open ? "📱 内線電話（携帯）をしまう" : "📱 内線電話（携帯）を開く";
+    }
+    toggle.onclick = async () => {
+      if (!phone.running) {
+        try { await phone.start(); } catch (e) { $("radioError").textContent = "内線電話を開けません: " + (e && e.message || e); return; }
+      }
+      setOpen(box.classList.contains("hidden"));
+    };
+    $("closeBtn").addEventListener("click", () => { phone.stop(); setOpen(false); });
+    // 着信したら携帯電話を出す
+    let was = false;
+    setInterval(() => { const r = phone.running && phone.ringing; if (r && !was) setOpen(true); was = r; }, 300);
+  })();
+</script>
+</body>
+</html>

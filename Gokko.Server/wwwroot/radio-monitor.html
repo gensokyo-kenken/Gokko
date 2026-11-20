@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#cfc9be">
+<title>列車無線モニター</title>
+<style>
+  /* 列車無線のモニター（受信だけ）。壁に取り付けた灰色の箱形の受信機を模す */
+  :root {
+    --wall: #d6d0c5; --wall2: #c7c0b3; --ink: #3a3a38; --muted: #6d6a63;
+    --body: #8d9094; --body-dark: #6f7276; --face: #b8babd; --face-dark: #a2a5a9; --slit: #55585c;
+    --lcd: #9fae8a; --lcd-ink: #1d2617; --yellow: #f2c81c;
+    --u: min(300px, 78vw, calc((100vh - 120px) * 0.6));
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--wall), var(--wall2)); color: var(--ink);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; font-size: 14px; line-height: 1.5;
+    padding: max(10px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom));
+    min-height: 100vh;
+  }
+  main { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .top { align-self: stretch; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .top a { color: inherit; text-decoration: none; }
+  .top .who { margin-left: auto; }
+  .top button.link { background: none; border: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
+  .hidden { display: none !important; }
+
+  /* ---- 受信機 ---- */
+  .unit { position: relative; width: var(--u); margin-top: calc(var(--u) * 0.34); }
+  /* アンテナ（左上）とケーブル（右上） */
+  .antenna { position: absolute; left: 22%; bottom: 100%; width: calc(var(--u) * 0.055); height: calc(var(--u) * 0.32);
+    background: linear-gradient(90deg, #1b1b1b, #3b3b3b 45%, #141414); border-radius: 40% 40% 3px 3px; transform-origin: bottom; transform: rotate(-4deg); }
+  .antenna::after { content: ""; position: absolute; left: -35%; right: -35%; bottom: -2px; height: 22%;
+    background: repeating-linear-gradient(180deg, #2a2a2a 0 3px, #4a4a4a 3px 5px); border-radius: 3px; }
+  .cable { position: absolute; right: 14%; bottom: 100%; width: calc(var(--u) * 0.05); height: calc(var(--u) * 0.34);
+    background: linear-gradient(90deg, #8f9092, #cfd0d1 50%, #8a8b8d); border-radius: 4px 4px 0 0; }
+  .cable::after { content: ""; position: absolute; left: -30%; right: -30%; bottom: 0; height: 18%; background: linear-gradient(90deg, #5d6064, #9a9da1, #5d6064); border-radius: 3px 3px 0 0; }
+  .box { position: relative; width: 100%; aspect-ratio: 0.78; border-radius: calc(var(--u) * 0.035);
+    background: linear-gradient(90deg, var(--body-dark), var(--body) 12%, var(--body) 88%, var(--body-dark));
+    box-shadow: calc(var(--u) * 0.03) calc(var(--u) * 0.04) calc(var(--u) * 0.06) rgba(60, 50, 40, .45), inset 0 2px 0 rgba(255,255,255,.18);
+    padding: calc(var(--u) * 0.075) calc(var(--u) * 0.06) calc(var(--u) * 0.05); }
+  /* 上ぶた（少し濃い）と前面の板 */
+  .box::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: calc(var(--u) * 0.05); border-radius: calc(var(--u) * 0.035) calc(var(--u) * 0.035) 0 0;
+    background: linear-gradient(180deg, #a3a6aa, #7b7e82); }
+  .face { position: relative; height: 100%; border-radius: calc(var(--u) * 0.02);
+    background: linear-gradient(180deg, #c6c8ca, var(--face) 30%, var(--face-dark));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px rgba(0,0,0,.15), 0 0 0 1px rgba(0,0,0,.18);
+    display: flex; flex-direction: column; padding: calc(var(--u) * 0.045) calc(var(--u) * 0.06) calc(var(--u) * 0.04); gap: calc(var(--u) * 0.035); }
+  .lamps { display: flex; justify-content: flex-end; gap: calc(var(--u) * 0.045); }
+  .lamp { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: calc(var(--u) * 0.034); color: #4a4c4f; letter-spacing: .05em; }
+  .lamp i { width: calc(var(--u) * 0.05); height: calc(var(--u) * 0.05); border-radius: 50%; border: 1px solid rgba(0,0,0,.35);
+    background: radial-gradient(circle at 35% 30%, #8a8c8e, #4b4d50); box-shadow: inset 0 1px 2px rgba(0,0,0,.5); }
+  .lamp.g.on i { background: radial-gradient(circle at 35% 30%, #e9ffd9, #49d34d 45%, #1e8b2a); box-shadow: 0 0 calc(var(--u) * 0.03) #5cff6a; }
+  .lamp.g.blink i { animation: blink 1s steps(2, start) infinite; }
+  .lamp.r.on i { background: radial-gradient(circle at 35% 30%, #ffe2d6, #ff5132 45%, #b2160a); box-shadow: 0 0 calc(var(--u) * 0.035) #ff5a3a; }
+  @keyframes blink { 50% { background: radial-gradient(circle at 35% 30%, #8a8c8e, #4b4d50); box-shadow: none; } }
+  /* 横スリットのスピーカー */
+  .grille { flex: 1; display: flex; flex-direction: column; justify-content: space-evenly; padding: 0 calc(var(--u) * 0.01); }
+  .grille span { display: block; height: calc(var(--u) * 0.022); border-radius: 99px;
+    background: linear-gradient(180deg, #3d4044, var(--slit) 60%, #7a7d81); box-shadow: 0 1px 0 rgba(255,255,255,.55); }
+  .grille.rx span { animation: hum .16s ease-in-out infinite alternate; }
+  @keyframes hum { to { background: linear-gradient(180deg, #2c2f33, #464a4e 60%, #6d7074); } }
+  /* 下の段: 表示窓とボタン */
+  .lower { display: flex; align-items: center; gap: calc(var(--u) * 0.05); }
+  .lcd { flex: 1; min-width: 0; height: calc(var(--u) * 0.2); border-radius: calc(var(--u) * 0.012); padding: calc(var(--u) * 0.016) calc(var(--u) * 0.025);
+    background: #1d1f22; box-shadow: inset 0 1px 2px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.5); }
+  .lcd .glass { height: 100%; border-radius: 2px; background: linear-gradient(180deg, #a9b893, var(--lcd)); color: var(--lcd-ink);
+    padding: 0 calc(var(--u) * 0.02); display: flex; flex-direction: column; justify-content: center; overflow: hidden;
+    font-family: "MS Gothic", "Osaka-Mono", ui-monospace, monospace; }
+  .lcd.off .glass { background: #7d8572; color: #4f5847; }
+  .lcd .l1 { font-size: calc(var(--u) * 0.05); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .04em; }
+  .lcd .l2 { font-size: calc(var(--u) * 0.038); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .key { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: calc(var(--u) * 0.034); color: #4a4c4f; }
+  .key button { width: calc(var(--u) * 0.13); height: calc(var(--u) * 0.13); border-radius: calc(var(--u) * 0.012); cursor: pointer; padding: 0;
+    border: 1px solid #8a6d00; background: linear-gradient(180deg, #ffe466, var(--yellow) 55%, #d3a90c);
+    box-shadow: 0 calc(var(--u) * 0.012) 0 #8f7406, 0 calc(var(--u) * 0.02) calc(var(--u) * 0.02) rgba(0,0,0,.3); touch-action: manipulation; }
+  .key button:active, .key button.down { transform: translateY(calc(var(--u) * 0.01)); box-shadow: 0 calc(var(--u) * 0.003) 0 #8f7406; }
+  .plate { align-self: center; font-size: calc(var(--u) * 0.032); letter-spacing: .25em; color: #55585c; padding: 1px 8px; border: 1px solid rgba(0,0,0,.25); border-radius: 2px;
+    background: linear-gradient(180deg, #c9cbcd, #b1b4b7); }
+  /* 下の取付金具とケーブル */
+  .glands { display: flex; justify-content: space-between; padding: 0 22%; height: calc(var(--u) * 0.07); }
+  .glands i { width: calc(var(--u) * 0.075); background: linear-gradient(90deg, #6f7276, #c9cbcd, #6f7276); border-radius: 0 0 3px 3px; }
+
+  /* ---- 下の説明・音量・ログイン ---- */
+  .info { width: min(100%, 380px); font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row input[type=range] { flex: 1; accent-color: #5a5d61; }
+  .calls { margin: 0; padding-left: 1.2em; }
+  .err { color: #a3261b; }
+  .card { width: min(100%, 360px); background: rgba(255,255,255,.55); border: 1px solid rgba(0,0,0,.12); border-radius: 12px; padding: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .card label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 4px; }
+  .card input { width: 100%; font: inherit; font-size: 16px; padding: 9px 11px; border-radius: 8px; border: 1px solid #b7b1a6; background: #fff; color: var(--ink); }
+  .card button { width: 100%; margin-top: 12px; font: inherit; font-size: 16px; font-weight: 600; border: 0; border-radius: 10px; padding: 11px; color: #fff; background: #4f5357; cursor: pointer; }
+  /* 信号制御盤の小窓など（埋め込み）: 受信機と音量だけにして、小さい窓に収める */
+  html.embed { --u: min(300px, 86vw, calc((100vh - 64px) * 0.58)); }
+  html.embed body { padding: 4px 10px 8px; }
+  html.embed main { gap: 4px; }
+  html.embed #hint, html.embed #callsBox { display: none; }
+  @media (prefers-color-scheme: dark) {
+    :root { --wall: #3a3833; --wall2: #2f2d29; --ink: #e8e4dc; --muted: #aaa49a; }
+    .card { background: rgba(0,0,0,.25); border-color: rgba(255,255,255,.12); }
+    .card input { background: #1f1e1b; color: var(--ink); border-color: #55524b; }
+    .err { color: #ff9a8a; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+<script src="menulink.js"></script>
+<script src="crewsession.js"></script>
+<script>
+  // 小窓（iframe）や ?embed=1 のときは、受信機を小さい窓に収める
+  try { if (window.top !== window.self || new URLSearchParams(location.search).get("embed") === "1") document.documentElement.classList.add("embed"); } catch (e) { document.documentElement.classList.add("embed"); }
+</script>
+</head>
+<body>
+<main>
+  <div class="top">
+    <a href="menu.html" data-menu-link>‹ メニューに戻る</a>
+    <span class="who" id="who"></span>
+    <button class="link hidden" id="logoutBtn">ログアウト</button>
+  </div>
+
+  <!-- ログイン（乗務タブレットと同じ社員番号とパスワード。合い札はタブレットと共用） -->
+  <section class="card hidden" id="loginView">
+    <h2>列車無線モニター</h2>
+    <div style="font-size:13px;color:var(--muted)">乗務タブレットと同じ社員番号でログインします。</div>
+    <div id="pwPart" style="display:contents"><label for="loginId">社員番号</label>
+    <input type="text" id="loginId" inputmode="numeric" autocomplete="username">
+    <label for="loginPw">パスワード</label>
+    <input type="password" id="loginPw" autocomplete="current-password">
+    <button id="loginBtn">ログイン</button></div>
+    <div class="err" id="loginError"></div>
+  </section>
+
+  <div id="monitorView" class="hidden" style="display:contents">
+    <div class="unit" aria-label="列車無線の受信機">
+      <div class="antenna"></div>
+      <div class="cable"></div>
+      <div class="box">
+        <div class="face">
+          <div class="lamps">
+            <div class="lamp g" id="pwrLamp" title="サーバーにつながっている"><i></i>電源</div>
+            <div class="lamp r" id="rxLamp" title="声を受けている"><i></i>受信</div>
+          </div>
+          <div class="grille" id="grille"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="lower">
+            <div class="lcd off" id="lcd"><div class="glass"><div class="l1" id="l1">--</div><div class="l2" id="l2"></div></div></div>
+            <div class="key"><button id="keyBtn" aria-label="受信の入・切"></button><span id="keyText">受信</span></div>
+          </div>
+          <div class="plate">列車無線</div>
+        </div>
+      </div>
+      <div class="glands"><i></i><i></i></div>
+    </div>
+
+    <div class="info">
+      <div class="row"><span>音量</span><input id="volume" type="range" min="0" max="2" step="0.05"></div>
+      <div id="callsBox"></div>
+      <div id="hint">黄色のボタンで受信を始めます。聞こえるのは共通通話と一斉通告だけです（話すことはできません）。</div>
+      <div class="err" id="error"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // 列車無線のモニター（受信だけ）。
+  // ・ログイン（/api/tid/login）の合い札で /radio-monitor に参加する。サーバーは共通通話・一斉通告の音声と状態だけを送ってくる
+  // ・音声は Opus（16kHz・モノラル・40ms ごと）。radio.html と同じく libopus の WebAssembly で展開する
+  // ・ブラウザは触るまで音を出せないので、黄色のボタンで受信を始める（もう一度押すと切る）
+  const OPUS_URL = "https://cdn.jsdelivr.net/npm/libopus-wasm@0.4.1/dist/index.js";
+  const RATE = 16000, MAX_PACKET = 400;
+  const $ = (id) => document.getElementById(id);
+
+  // ログインはこのタブの中だけ（crewsession.js）。乗務メニューから開けば引き継ぎ、URL を直接開いたタブではログインを求める
+  let user = GokkoCrew.id(), token = GokkoCrew.token();
+  function setUser(id, tok, how) {
+    user = id || ""; token = id ? tok || "" : "";
+    if (how === "login") GokkoCrew.login(user, token); else GokkoCrew.logout();
+  }
+
+  function show(view) {
+    $("loginView").classList.toggle("hidden", view !== "login");
+    $("monitorView").classList.toggle("hidden", view !== "monitor");
+    $("who").textContent = user ? `ID:${user}` : "";
+    $("logoutBtn").classList.toggle("hidden", !user);
+  }
+
+  // ---- ログイン ----
+  $("loginBtn").onclick = async () => {
+    $("loginError").textContent = "";
+    try {
+      const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.message || "ログインできませんでした");
+      setUser(j.id, j.token, "login");
+      $("loginPw").value = "";
+      start();
+    } catch (e) { $("loginError").textContent = e.message; }
+  };
+  $("loginPw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("loginBtn").click(); });
+  GokkoCrew.discordButton($("loginView"), $("loginError")); // Discord でログイン（戻ってきたら crewsession.js が受け取る）
+  $("logoutBtn").onclick = async () => {
+    try { await fetch("/api/tid/logout", { method: "POST", headers: { "X-Crew-Token": token } }); } catch (e) {}
+    stop(); setUser("", ""); show("login");
+  };
+
+  // ---- 音 ----
+  let ctx = null, opus = null, outGain = null, listening = false, rxUntil = 0, lastSender = "";
+  const voices = new Map(); // 話した人の接続ID → { decoder, waiting, next, last }
+  let volume = 1;
+  try { volume = Number(localStorage.getItem("gokkoRadioMonitorVolume") || "1"); } catch (e) {}
+  if (!(volume >= 0 && volume <= 2)) volume = 1;
+  $("volume").value = volume;
+  $("volume").oninput = () => {
+    volume = Number($("volume").value);
+    if (outGain) outGain.gain.value = volume;
+    try { localStorage.setItem("gokkoRadioMonitorVolume", String(volume)); } catch (e) {}
+  };
+
+  async function openAudio() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
+      ctx.onstatechange = render;
+    }
+    await ctx.resume();
+    // 先に無音を鳴らして、iPhone で音が出る状態にする
+    const silent = ctx.createBufferSource(); silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); silent.connect(ctx.destination); silent.start();
+    if (!opus) opus = await import(OPUS_URL);
+  }
+
+  function click(freq) {
+    if (!ctx || !outGain) return;
+    const t = ctx.currentTime + 0.01, o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = freq; g.gain.setValueAtTime(0.12, t); g.gain.linearRampToValueAtTime(0, t + 0.08);
+    o.connect(g); g.connect(outGain); o.start(t); o.stop(t + 0.09);
+  }
+
+  $("keyBtn").onclick = async () => {
+    $("error").textContent = "";
+    if (listening) {
+      listening = false;
+      click(520);
+      for (const v of voices.values()) { try { v.decoder && v.decoder.free(); } catch (e) {} }
+      voices.clear();
+      render();
+      return;
+    }
+    try {
+      await openAudio();
+      listening = true;
+      click(880);
+    } catch (e) { $("error").textContent = "音を出せません: " + e.message; }
+    render();
+  };
+
+  function fromBase64(text) { const s = atob(text); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+
+  // サーバーが共通通話・一斉通告の声だけを送ってくる
+  function receive(packet) {
+    if (!packet || !packet.opus) return;
+    rxUntil = performance.now() + 500;
+    lastSender = packet.senderId;
+    if (!listening || !ctx || !opus) return;
+    const bytes = fromBase64(packet.opus);
+    if (bytes.length === 0 || bytes.length > MAX_PACKET) return;
+    let v = voices.get(packet.senderId);
+    if (!v) {
+      // 展開器は話す人ごと（前の音を覚えている）。できるまでに届いたものは貯めておく
+      v = { decoder: null, waiting: [bytes], next: 0, last: performance.now() };
+      voices.set(packet.senderId, v);
+      opus.createDecoder({ sampleRate: RATE, channels: 1 }).then((d) => {
+        v.decoder = d;
+        for (const b of v.waiting.splice(0)) play(v, b);
+      }).catch(() => voices.delete(packet.senderId));
+      return;
+    }
+    if (!v.decoder) { if (v.waiting.length < 10) v.waiting.push(bytes); return; }
+    play(v, bytes);
+  }
+
+  function play(v, bytes) {
+    if (!ctx || !listening) return;
+    let pcm;
+    try { pcm = v.decoder.decodeFloat(bytes); } catch (e) { return; }
+    if (!pcm || pcm.length === 0) return;
+    const buffer = ctx.createBuffer(1, pcm.length, RATE);
+    buffer.getChannelData(0).set(pcm);
+    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(outGain);
+    // 少し貯めてから流す（届く間隔のゆれを吸収する）。遅れすぎたら詰め直す
+    const t = ctx.currentTime;
+    if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;
+    src.start(v.next);
+    v.next += buffer.duration;
+    v.last = performance.now();
+  }
+
+  // ---- 接続 ----
+  let conn = null, status = null, closed = false, connected = false;
+  async function start() {
+    show("monitor");
+    closed = false;
+    conn = new signalR.HubConnectionBuilder().withUrl("/radio-monitor")
+      .withAutomaticReconnect({ nextRetryDelayInMilliseconds: (c) => closed ? null : Math.min(10000, [0, 1000, 2000, 5000][c.previousRetryCount] ?? 10000) })
+      .build();
+    conn.on("ReceiveMonitorStatus", (s) => { status = s; render(); });
+    conn.on("ReceiveRadioAudio", receive);
+    conn.onreconnecting(() => { connected = false; render(); });
+    conn.onreconnected(() => join());
+    conn.onclose(() => { connected = false; status = null; render(); if (!closed) setTimeout(() => { if (!closed) start(); }, 5000); });
+    try { await conn.start(); await join(); }
+    catch (e) { $("error").textContent = "サーバーにつながりません: " + e.message; connected = false; render(); }
+  }
+  async function join() {
+    const r = await conn.invoke("Join", token);
+    if (!r.ok) {
+      stop(); setUser("", ""); show("login");
+      $("loginError").textContent = r.message;
+      return;
+    }
+    connected = true;
+    render();
+  }
+  function stop() {
+    closed = true; connected = false; status = null;
+    if (conn) conn.stop().catch(() => {});
+  }
+
+  // ---- 表示 ----
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function speakerLabel(id) {
+    for (const c of (status && status.calls) || [])
+      for (const s of [c.dispatcher, c.caller, ...(c.responders || [])]) if (s && s.id === id) return s.label;
+    return "";
+  }
+  function callText(c) {
+    return c.isBroadcast ? `一斉通告 ${c.dispatcher.label}` : `${c.dispatcher.label} ⇔ ${c.caller.label}`;
+  }
+
+  function render() {
+    const rx = performance.now() < rxUntil;
+    const calls = (status && status.calls) || [];
+    const on = connected && listening;
+    $("pwrLamp").classList.toggle("on", connected);
+    $("pwrLamp").classList.toggle("blink", !connected && !closed);
+    $("rxLamp").classList.toggle("on", connected && rx);
+    $("grille").classList.toggle("rx", on && rx);
+    $("keyBtn").classList.toggle("down", listening);
+    $("keyText").textContent = listening ? "受信 入" : "受信 切";
+
+    let l1, l2;
+    if (!connected) { l1 = "未接続"; l2 = closed ? "" : "つなぎ直しています"; }
+    else if (!listening) { l1 = "受信 切"; l2 = "黄ボタンで受信"; }
+    else if (ctx && ctx.state !== "running") { l1 = "音 停止中"; l2 = "黄ボタンを押し直す"; }
+    else if (calls.length > 0) {
+      const b = calls.find((c) => c.isBroadcast);
+      l1 = b ? "一斉通告" : "共通 通話中";
+      const who = rx ? speakerLabel(lastSender) : "";
+      l2 = who ? `◀ ${who}` : callText(b || calls[0]);
+    }
+    else { l1 = "待 受"; l2 = status && status.dispatcherCount === 0 ? "司令 不在" : `司令${status ? status.dispatcherCount : 0}・乗務${status ? status.memberCount : 0}`; }
+    $("l1").textContent = l1;
+    $("l2").textContent = l2;
+    $("lcd").classList.toggle("off", !on);
+    $("hint").textContent = listening ? "聞こえるのは共通通話と一斉通告だけです（話すことはできません）。"
+      : "黄色のボタンで受信を始めます。聞こえるのは共通通話と一斉通告だけです（話すことはできません）。";
+
+    $("callsBox").innerHTML = calls.length === 0 ? "" :
+      `<div>いま聞こえている通話</div><ul class="calls">${calls.map((c) => `<li>${esc(callText(c))}${(c.responders || []).length ? `（応答: ${c.responders.map((r) => esc(r.label)).join("、")}）` : ""}</li>`).join("")}</ul>`;
+  }
+
+  // ---- 画面を消さない・音が止まったら再開 ----
+  let wakeLock = null;
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible") return;
+    if (listening && ctx) ctx.resume().catch(() => {}).finally(render);
+    try { if (listening && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  });
+
+  setInterval(() => {
+    render();
+    // しばらく声の来ない人の展開器を片づける
+    const now = performance.now();
+    for (const [id, v] of voices) if (v.decoder && now - v.last > 30000) { try { v.decoder.free(); } catch (e) {} voices.delete(id); }
+  }, 150);
+
+  if (token) start(); else show("login");
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "_": "日野森（TH61）の電子連動装置のデータ。連動は信号制御盤と同じ仕組み（Services/RelayPanels.cs）。てこ = 発点の信号機、dest = 着点。画面の絵は denshirendo/screens にある。回路・進路・接近区間は Data/Interlockings.json に合わせる。方向（D1）は画面が進路を選ぶときに自動で向ける",
+  "id": "TH61",
+  "name": "日野森",
+  "interlock": "日野森連動装置",
+  "screen": "denshirendo",
+  "autoCancel": true,
+  "approachTime": 60,
+  "releaseKey": {},
+  "directions": [
+    {"n": "D1", "section": ["TH61", "TH62"], "L": "上り", "circuits": ["TH1T", "TH2T"], "out": ["3L", "4L"], "in": ["2RA", "2RB"]}
+  ],
+  "points": [
+    {"n": "21", "circuit": "TH61_21イT"},
+    {"n": "22", "circuit": "TH61_22T"}
+  ],
+  "signalLevers": [
+    {"n": "2", "side": "R"},
+    {"n": "3", "side": "L"},
+    {"n": "4", "side": "L"},
+    {"n": "5", "side": "R"},
+    {"n": "6", "side": "L"}
+  ],
+  "destButtons": [
+    {"id": "1"}, {"id": "2"}, {"id": "3"}, {"id": "HM"}, {"id": "SO"}
+  ],
+  "routes": [
+    {"name": "2RA", "lever": "2", "side": "R", "dest": "1", "points": {"21": "N", "22": "R"},
+     "circuits": ["TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RAT"],
+     "approach": ["TH62_14RT", "TH62_15RT", "TH62_22T", "TH1T", "TH2T"]},
+    {"name": "2RB", "lever": "2", "side": "R", "dest": "2", "points": {"21": "N", "22": "N"},
+     "circuits": ["TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RBT"],
+     "approach": ["TH62_14RT", "TH62_15RT", "TH62_22T", "TH1T", "TH2T"]},
+    {"name": "5R", "lever": "5", "side": "R", "dest": "SO", "departure": true,
+     "circuits": ["TH61_5RT"],
+     "approach": ["TH1T", "TH2T", "TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RBT"]},
+    {"name": "4L", "lever": "4", "side": "L", "dest": "HM", "departure": true, "points": {"21": "R"},
+     "circuits": ["TH61_21ロT", "TH61_21イT", "TH61_2RT", "TH61_22T"], "overrun": ["TH61_22T"],
+     "lockGroups": [["TH61_21ロT"], ["TH61_21イT"], ["TH61_2RT"], ["TH61_22T"]],
+     "approach": ["下り249T", "下り245T", "下り241T", "下り237T", "TH61_6LT"]},
+    {"name": "3L", "lever": "3", "side": "L", "dest": "HM", "departure": true, "points": {"21": "N", "22": "R"},
+     "circuits": ["TH61_22T", "TH61_21イT", "TH61_2RT"],
+     "approach": ["TH61_2RAT"]},
+    {"name": "6L", "lever": "6", "side": "L", "dest": "3",
+     "circuits": ["TH61_6LT"],
+     "approach": ["下り249T", "下り245T", "下り241T", "下り237T"]}
+  ]
+}

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乗務の試験</title>
+<style>
+  /* 乗務の試験: ブラウザを車掌の代わりにして、車掌の操作を「サーバー → 運転士のクライアント → ゲーム」へ送る。
+     1台で、車掌の操作（ドア・ブザー・乗降促進・再開閉・非常ブレーキ）がゲームで効くかを確かめるためのもの。管理画面と同じ管理キーで使う。
+     見た目は車掌用操作盤にそろえる（暗い地・角丸） */
+  :root {
+    --bg: #181b21; --card: #262b34; --card2: #343a46; --line: #464e5c;
+    --text: #eceff4; --sub: #969eac; --red: #d63031; --amber: #f0aa28; --green: #2eb872;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .sub { color: var(--sub); font-size: 13px; margin: 0 0 14px; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px 16px; margin: 0 0 12px; }
+  .card h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 0 0 10px; letter-spacing: .05em; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  label { color: var(--sub); font-size: 13px; }
+  input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; width: 130px; }
+  button { font: inherit; font-weight: 600; color: var(--text); background: var(--card2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; min-width: 96px; cursor: pointer; user-select: none; touch-action: none; transition: background .1s; }
+  button:hover { background: #3e4552; }
+  button:active, button.held { background: #56607a; }
+  button.small { padding: 6px 12px; min-width: 0; font-weight: 500; }
+  button.big { flex: 1; min-height: 56px; font-size: 17px; }
+  #eb { width: 100%; min-height: 58px; font-size: 18px; color: #ff7878; border-color: var(--red); }
+  #eb.on { background: var(--red); color: #fff; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .side { background: var(--bg); border-radius: 12px; padding: 10px; }
+  .side h3 { margin: 0 0 8px; text-align: center; font-size: 14px; color: var(--sub); }
+  .side .row button { flex: 1; }
+  .pill { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--bg); color: var(--sub); }
+  .pill.ok { color: var(--green); }
+  .err { color: var(--amber); min-height: 1.5em; font-size: 13px; margin-top: 6px; }
+  .log { background: var(--bg); border-radius: 10px; height: 180px; overflow: auto; padding: 8px 10px; font: 12px/1.6 Consolas, "MS Gothic", monospace; color: var(--sub); }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>乗務の試験（車掌の代わり）</h1>
+  <p class="sub">運転士のクライアントを「在線を共有」でこのサーバーにつなぎ、列番を確定してから使います。押した操作は サーバー → 運転士のクライアント → ゲーム の順に届きます（車掌のクライアントがいなくても送れます）。</p>
+
+  <div class="card">
+    <div class="row">
+      <label for="key">管理キー</label><input type="password" id="key">
+      <button class="small" id="saveKey">設定</button>
+      <label for="train">列番</label><input type="text" id="train" placeholder="例 1140">
+      <button class="small" id="check">確認</button>
+      <span class="pill" id="crew">中継: ―</span>
+    </div>
+    <div class="err" id="error"></div>
+  </div>
+
+  <div class="card">
+    <h2>非常ブレーキ</h2>
+    <button id="eb">非常ブレーキ</button>
+  </div>
+
+  <div class="card">
+    <h2>ドア（車掌スイッチ）</h2>
+    <div class="grid2">
+      <div class="side"><h3>左</h3><div class="row"><button class="big" data-act="DoorOpnLeft">開</button><button class="big" data-act="DoorClsLeft">閉</button></div></div>
+      <div class="side"><h3>右</h3><div class="row"><button class="big" data-act="DoorOpnRight">開</button><button class="big" data-act="DoorClsRight">閉</button></div></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="big" data-act="door34sw">3/4閉（押すたびに入・切）</button>
+      <button class="big" data-act="doorCutSw">羽衣橋（押すたびに入・切）</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>押している間だけ</h2>
+    <div class="row">
+      <button class="big" data-hold="reOpen">再開閉</button>
+      <button class="big" data-hold="joukou">乗降促進</button>
+      <button class="big" data-hold="buzzer">ブザー</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>送った記録</h2>
+    <div class="log" id="log"></div>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let key = "";
+  try { key = sessionStorage.getItem("gokkoAdminKey") || ""; } catch (e) {}
+  $("key").value = key;
+  try { $("train").value = localStorage.getItem("gokkoCrewTestTrain") || ""; } catch (e) {}
+
+  // 非常ブレーキ・再開閉・乗降促進・ブザーは「今の状態」として送る（運転士のクライアントは、3秒届かないと戻す）
+  const state = { emergency: false, reOpen: false, joukou: false, buzzer: false };
+
+  function log(text) {
+    const line = document.createElement("div");
+    line.textContent = `${new Date().toLocaleTimeString("ja-JP", { hour12: false })}  ${text}`;
+    $("log").prepend(line);
+  }
+
+  async function api(method, path, body) {
+    const res = await fetch("/api/admin" + path, {
+      method, headers: { "X-Admin-Key": key, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined, cache: "no-store"
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((json && (json.message || json.detail)) || ("HTTP " + res.status));
+    return json;
+  }
+
+  const train = () => $("train").value.trim();
+  const stateText = () => Object.entries({ 非常: state.emergency, 再開閉: state.reOpen, 乗降促進: state.joukou, ブザー: state.buzzer })
+    .filter(([, v]) => v).map(([k]) => k).join("・") || "なし";
+
+  // 操作を送る（action が空なら、状態だけ）
+  async function send(action, quiet) {
+    if (!train()) { $("error").textContent = "列番を入れてください"; return; }
+    try {
+      await api("POST", "/crew-test/conductor", { train: train(), action: action || "", ...state });
+      $("error").textContent = "";
+      if (!quiet) log(`${action || "状態"}（入っているもの: ${stateText()}）`);
+    } catch (e) {
+      $("error").textContent = e.message;
+    }
+  }
+
+  async function check() {
+    if (!train() || !key) return;
+    try { localStorage.setItem("gokkoCrewTestTrain", train()); } catch (e) {}
+    try {
+      const s = await api("GET", "/crew-test/status?train=" + encodeURIComponent(train()));
+      $("crew").textContent = `中継: 運転士 ${s.drivers}人・車掌 ${s.conductors}人`;
+      $("crew").classList.toggle("ok", s.drivers > 0);
+      $("error").textContent = "";
+    } catch (e) {
+      $("crew").textContent = "中継: ―";
+      $("crew").classList.remove("ok");
+      $("error").textContent = e.message;
+    }
+  }
+
+  $("saveKey").onclick = () => { key = $("key").value; try { sessionStorage.setItem("gokkoAdminKey", key); } catch (e) {} check(); };
+  $("check").onclick = check;
+
+  $("eb").onclick = () => {
+    state.emergency = !state.emergency;
+    $("eb").classList.toggle("on", state.emergency);
+    $("eb").textContent = state.emergency ? "非常ブレーキ　入" : "非常ブレーキ";
+    send("");
+  };
+
+  document.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => send(b.dataset.act));
+
+  // 押している間だけの操作（ボタンの外で離しても切る）
+  document.querySelectorAll("[data-hold]").forEach((b) => {
+    const name = b.dataset.hold;
+    let down = false;
+    b.addEventListener("pointerdown", (e) => { if (down) return; down = true; b.setPointerCapture(e.pointerId); b.classList.add("held"); state[name] = true; send(""); });
+    const up = () => { if (!down) return; down = false; b.classList.remove("held"); state[name] = false; send(""); };
+    b.addEventListener("pointerup", up);
+    b.addEventListener("pointercancel", up);
+  });
+
+  setInterval(() => { if (state.emergency || state.reOpen || state.joukou || state.buzzer) send("", true); }, 1000);
+  setInterval(check, 3000);
+  check();
+</script>
+</body>
+</html>

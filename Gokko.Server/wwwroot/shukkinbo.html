@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>出勤簿</title>
+<style>
+  /* 出勤簿: 上から 行路と担当する運転士・車掌 → 各駅の信号扱い → 司令員。見るだけ（ログインなしで見られる。名前だけを出す）
+     色は乗務タブレット・乗務メニューにそろえる */
+  :root {
+    --bg: #1b2533; --panel: #22304a; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c;
+    --ok: #1f8a4c; --warn: #c98400; --info: #2f6fc0; --free: #8fd3a8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif; font-size: 14px; line-height: 1.5;
+    padding: 16px; max-width: 1100px; margin: 0 auto; font-variant-numeric: tabular-nums; }
+  a { color: #9cc3f5; }
+  .header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; background: var(--bar); border-radius: 10px; padding: 10px 16px; margin-bottom: 14px; }
+  .header h1 { margin: 0; font-size: 20px; }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .clock { font-family: "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", monospace; font-size: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; min-width: 0; }
+  section h2 { margin: 0; font-size: 16px; }
+  .sum { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin: 6px 0 8px; color: var(--muted); font-size: 13px; }
+  .sum b { color: var(--fg); font-size: 15px; }
+  select { font: inherit; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  td.id { font-weight: 700; white-space: nowrap; width: 6em; }
+  td.cur { white-space: nowrap; width: 7em; font-family: "BIZ UDGothic", "BIZ UDゴシック", monospace; }
+  td.st { font-weight: 700; white-space: nowrap; width: 8em; }
+  .who { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-right: 10px; }
+  .who .n { font-weight: 700; }
+  .free { color: var(--free); font-weight: 700; border: 1px dashed #6b7c93; border-radius: 6px; padding: 0 8px; }
+  .tag { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 5px; color: #fff; }
+  .tag.att { background: var(--ok); }
+  .tag.no { background: #607089; }
+  .tag.rin { background: var(--warn); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .time { color: var(--muted); font-size: 12px; font-family: "BIZ UDGothic", "BIZ UDゴシック", monospace; }
+  .none { color: var(--muted); font-size: 13px; }
+  .waiting { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .err { color: #ff8a80; }
+  @media (max-width: 600px) { body { padding: 10px; } td.cur { display: none; } th.cur { display: none; } }
+</style>
+<script src="menulink.js"></script>
+<script src="gameclock.js"></script>
+</head>
+<body>
+<div class="header">
+  <h1>出勤簿</h1>
+  <span class="muted">行路と運転士・車掌、各駅の信号扱い、司令員</span>
+  <span class="spacer"></span>
+  <a href="menu.html" data-menu-link>乗務メニューへ</a>
+  <span class="clock" id="clock"></span>
+</div>
+<div id="err" class="err"></div>
+
+<section>
+  <h2>行路（運転士・車掌）</h2>
+  <div class="sum" id="dutySum"></div>
+  <div class="scroll"><table>
+    <thead><tr><th>行路</th><th class="cur">いま乗る列車</th><th>運転士</th><th>車掌</th></tr></thead>
+    <tbody id="duties"><tr><td colspan="4" class="none">読み込み中…</td></tr></tbody>
+  </table></div>
+  <div class="waiting" id="waiting"></div>
+</section>
+
+<section>
+  <h2>信号扱い（駅ごと）</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>駅</th><th>出勤者</th></tr></thead>
+    <tbody id="relay"><tr><td colspan="2" class="none">読み込み中…</td></tr></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>司令員</h2>
+  <div id="dispatch" style="margin-top:6px"><span class="none">読み込み中…</span></div>
+</section>
+
+<script>
+  // 行路の一覧（/api/tid/duties）と、司令員・信号扱いの出勤（/api/tid/crew/role-attendance）を5秒ごとに読む
+  // 運転士: 行路の担当者（臨変も）。乗務の［出勤］をしていれば「出勤」、していなければ「未出勤」。いまその行路の列車を運転していれば緑の点
+  // 車掌: その行路のいま乗る列車に、車掌として乗っている人
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const tm = (iso) => `<span class="time">${GokkoClock.fmt(Date.parse(iso))}</span>`;
+  const FREE = `<span class="free">空き</span>`;
+  const filters = { all: ["すべての行路", () => true], taken: ["人のいる行路", (d) => d.drivers.length || d.conductors.length],
+    driver: ["運転士が空き", (d) => !d.drivers.length], conductor: ["車掌が空き", (d) => !d.conductors.length] };
+  let filter = "all";
+  try { const f = localStorage.getItem("gokkoShukkinboFilter"); if (filters[f]) filter = f; } catch (e) {}
+
+  function setHtml(el, html) { if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; } }
+
+  function drawDuties(j) {
+    const ds = j.duties || [];
+    const freeD = ds.filter((d) => !d.drivers.length).length, freeC = ds.filter((d) => !d.conductors.length).length;
+    const att = ds.reduce((n, d) => n + d.drivers.filter((p) => p.attended).length, 0) + (j.waiting || []).length;
+    setHtml($("dutySum"), `<span>全 <b>${ds.length}</b> 行路</span><span>運転士の空き <b>${freeD}</b></span><span>車掌の空き <b>${freeC}</b></span>
+      <span>出勤している運転士 <b>${att}</b> 名</span><span class="spacer"></span>
+      <select id="filter">${Object.entries(filters).map(([k, [l]]) => `<option value="${k}"${k === filter ? " selected" : ""}>${l}</option>`).join("")}</select>`);
+    const driver = (p) => `<span class="who">${p.onTrain ? `<span class="dot" title="いま運転中"></span>` : ""}<span class="n">${esc(p.name)}</span>${
+      p.attended ? `<span class="tag att">出勤</span>` : `<span class="tag no">未出勤</span>`}${p.extra ? `<span class="tag rin">臨変</span>` : ""}</span>`;
+    const shown = ds.filter(filters[filter][1]);
+    setHtml($("duties"), !ds.length ? `<tr><td colspan="4" class="none">行路表（Duties.csv）はまだありません</td></tr>`
+      : shown.map((d) => `<tr><td class="id">${esc(d.id)}</td><td class="cur">${esc(d.current || "")}</td>
+          <td>${d.drivers.length ? d.drivers.map(driver).join("") : FREE}</td>
+          <td>${d.conductors.length ? d.conductors.map((p) => `<span class="who"><span class="n">${esc(p.name)}</span></span>`).join("") : FREE}</td></tr>`).join("")
+        || `<tr><td colspan="4" class="none">${filters[filter][0]}の行路はありません</td></tr>`);
+    setHtml($("waiting"), `<span class="muted">出勤していて行路のない運転士: </span>${(j.waiting || []).length
+      ? j.waiting.map((p) => `<span class="who"><span class="n">${esc(p.name)}</span>${tm(p.since)}</span>`).join("") : `<span class="none">いません</span>`}`);
+  }
+
+  function drawRoles(j) {
+    const relay = j.roles.find((r) => r.stations) || { stations: [] };
+    const who = (p) => `<span class="who"><span class="n">${esc(p.name)}</span>${tm(p.since)}</span>`;
+    setHtml($("relay"), relay.stations.length
+      ? relay.stations.map((s) => `<tr><td class="st">${esc(s.name)}</td><td>${s.people.length ? s.people.map(who).join("") : FREE}</td></tr>`).join("")
+      : `<tr><td colspan="2" class="none">信号制御盤のある駅がありません</td></tr>`);
+    const disp = j.roles.find((r) => r.role === "司令員") || { people: [] };
+    setHtml($("dispatch"), disp.people.length ? disp.people.map(who).join("") : `<span class="none">いません</span>`);
+  }
+
+  async function refresh() {
+    $("clock").textContent = GokkoClock.fmt(GokkoClock.now());
+    let msg = "";
+    try { drawDuties(await (await fetch("/api/tid/duties", { cache: "no-store" })).json()); } catch (e) { msg = "行路の一覧を読めませんでした"; }
+    try { drawRoles(await (await fetch("/api/tid/crew/role-attendance", { cache: "no-store" })).json()); } catch (e) { msg = "出勤者を読めませんでした"; }
+    $("err").textContent = msg;
+  }
+  document.addEventListener("change", (ev) => {
+    if (ev.target.id !== "filter") return;
+    filter = ev.target.value;
+    try { localStorage.setItem("gokkoShukkinboFilter", filter); } catch (e) {}
+    $("dutySum").dataset.html = ""; refresh();
+  });
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

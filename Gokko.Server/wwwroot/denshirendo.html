@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>電子連動装置</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap">
+<style>
+  /* 1993年の新線開業に合わせて入れた装置、という設定の見た目。
+     液晶の中身だけを、少ない色（16色の時代の色）とドットの文字で描く。光のにじみは付けない */
+  :root {
+    --case: #3a3934; --caseHi: #4a4943; --screen: #020403;
+    --free: #9a9a96; --dark: #2c2c2a; --route: #6cc77e; --occ: #d8665e; --sel: #ecebe4;
+    --yellow: #ddd27a; --cyan: #7cc6c8; --text: #dddcd4; --dim: #7e7d78;
+    --font: 'DotGothic16', 'MS Gothic', 'Osaka-Mono', monospace;
+  }
+  html, body { margin: 0; height: 100%; background: var(--screen); overflow: hidden; user-select: none; font-family: var(--font); }
+  body { display: flex; flex-direction: column; }
+  /* 液晶の中身だけを画面いっぱいに描く（筐体の枠は描かない） */
+  #crt { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--screen); color: var(--text); overflow: hidden; }
+  /* 読み込めて、サーバーとつながっている間だけ左上の ＊ を点滅させる */
+  #beat { color: var(--yellow); visibility: hidden; }
+  #beat.live { visibility: visible; animation: beat 1s steps(1) infinite; }
+  @keyframes beat { 50% { visibility: hidden; } }
+  header { flex: none; display: flex; align-items: baseline; gap: 18px; padding: 10px 24px 6px; border-bottom: 2px solid #4a4a4a; font-size: 20px; }
+  /* 上の欄は ＊ と時計だけ（題・駅名・案内の文字は出さない） */
+  header .title, header #name, header .guide { display: none; }
+  header #beat { flex: 1; }
+  header .clock { color: var(--cyan); font-size: 24px; letter-spacing: .05em; }
+  #view { flex: 1; min-height: 0; width: 100%; display: block; }
+  /* 画面の下の帯（ソフトキー）。押せるものは四角い枠、選んでいる間は反転 */
+  footer { flex: none; display: flex; align-items: stretch; gap: 12px; padding: 10px 24px 14px; border-top: 2px solid #4a4a4a; flex-wrap: wrap; }
+  footer button { font: inherit; font-size: 19px; min-width: 132px; padding: 8px 14px; background: transparent; color: var(--text); border: 2px solid var(--free); border-radius: 0; cursor: pointer; text-align: left; }
+  footer button:hover { border-color: var(--text); }
+  footer button.on { background: var(--yellow); color: #000; border-color: var(--yellow); }
+  footer button small { display: block; font-size: 15px; color: var(--dim); margin-top: 2px; }
+  footer button.local small { color: var(--route); }
+  footer button.wait small { color: #d9a56a; }
+  footer .gap { flex: 1; }
+  footer .sub { min-width: 0; font-size: 15px; padding: 6px 12px; align-self: flex-end; color: var(--dim); border-color: #5a5a5a; }
+  #login { position: fixed; right: 40px; bottom: 120px; z-index: 5; background: #000; color: var(--text); border: 2px solid var(--free); padding: 10px 12px; font-size: 15px; display: none; }
+  #login.open { display: block; }
+  #login input { display: block; width: 190px; margin: 4px 0 8px; padding: 4px; font: inherit; background: #111; color: var(--text); border: 1px solid var(--free); border-radius: 0; }
+  #login button { font: inherit; background: transparent; color: var(--text); border: 2px solid var(--free); border-radius: 0; padding: 2px 10px; cursor: pointer; }
+  #login p { margin: 6px 0 0; color: var(--occ); max-width: 200px; }
+  #lost { position: absolute; left: 50%; top: 60px; transform: translateX(-50%); z-index: 4; background: #000; color: var(--occ); border: 2px solid var(--occ); padding: 4px 14px; display: none; }
+  svg text { font-family: var(--font); }
+  .hit { cursor: pointer; }
+</style>
+<script src="menulink.js"></script>
+</head>
+<body>
+<!-- 電子連動装置（試作）。denshirendo.html?screen=TH61-TH59 で開く（付けなければ日野森・西赤山）。?test=1 で線路をクリックして在線を置ける（試験用）。
+     操作はマウスだけ: 発点（▷）→ 着点（□）の順にクリックすると進路を取る。押した発点は ▶ になる。取消は、下の帯の「取消」→ 取り消す進路の発点。
+     連動はサーバーの信号制御盤と同じ仕組み（Services/RelayPanels.cs、駅データは denshirendo/stations）。失敗した操作は文を出さず、何も起きないだけ -->
+<div id="crt">
+  <header>
+    <span id="beat">＊</span>
+    <span class="title">電子連動装置</span>
+    <span id="name"></span>
+    <span class="guide" id="guide"></span>
+    <span class="clock" id="clock"></span>
+  </header>
+  <svg id="view" preserveAspectRatio="xMidYMid meet"></svg>
+  <footer>
+    <button id="cancelBtn">取消</button>
+    <span id="areas" style="display:contents"></span>
+    <span class="gap"></span>
+    <button class="sub" id="who">ログイン</button>
+    <button class="sub" data-menu-link onclick="location.href='menu.html'">メニュー</button>
+  </footer>
+  <div id="lost">サーバーとの接続が切れました　つなぎ直しています</div>
+</div>
+<div id="login">
+  駅扱いを切り換える人の社員番号
+  <input id="loginId" autocomplete="username" inputmode="numeric">
+  パスワード
+  <input id="loginPw" type="password" autocomplete="current-password">
+  <button id="loginGo">ログイン</button> <button id="loginClose">閉じる</button>
+  <p id="loginMsg"></p>
+</div>
+<script src="gameclock.js"></script>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const SCREEN = params.get('screen') || 'TH61-TH59';
+  const TEST = params.get('test') === '1';
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.getElementById('view');
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { free: css('--free'), dark: css('--dark'), route: css('--route'), occ: css('--occ'), sel: css('--sel'), dim: css('--dim'), text: css('--text'), yellow: css('--yellow'), cyan: css('--cyan') };
+
+  let L = null;                 // 画面の絵（denshirendo/screens）
+  const ST = {};                // 駅ID → { data, S（サーバーの状態）, routes: 名前 → 進路 }
+  let tid = { trains: [], routes: [] };
+  let cancelMode = false;
+  let blink = false;
+
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; };
+  const X = x => L.grid.x0 + x * L.grid.dx;
+  const Y = y => L.grid.y0 + y * L.grid.dy;
+
+  // ---- ログイン（駅扱いの切り換えに使う。信号制御盤と同じく、役職「信号扱い」の人だけ） ----
+  const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }, del(k) { try { localStorage.removeItem(k); } catch (e) {} } };
+  let crew = store.get('relayCrew');
+  const who = document.getElementById('who'), login = document.getElementById('login'), loginMsg = document.getElementById('loginMsg');
+  const showWho = () => { who.textContent = crew ? `ID:${crew.id}` : 'ログイン'; };
+  showWho();
+  who.onclick = async () => {
+    if (crew) {
+      if (!confirm(`ID:${crew.id} をログアウトしますか？`)) return;
+      try { await fetch('/api/tid/logout', { method: 'POST', headers: { 'X-Crew-Token': crew.token } }); } catch (e) {}
+      crew = null; store.del('relayCrew'); showWho(); return;
+    }
+    login.classList.add('open'); document.getElementById('loginId').focus();
+  };
+  document.getElementById('loginClose').onclick = () => login.classList.remove('open');
+  document.getElementById('loginGo').onclick = async () => {
+    loginMsg.textContent = '';
+    const id = document.getElementById('loginId').value.trim(), password = document.getElementById('loginPw').value;
+    try {
+      const res = await fetch('/api/tid/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, password }) });
+      const j = await res.json();
+      if (!res.ok) { loginMsg.textContent = j.message || 'ログインできません'; return; }
+      crew = { id: j.id, token: j.token }; store.set('relayCrew', crew); showWho();
+      document.getElementById('loginPw').value = '';
+      login.classList.remove('open');
+    } catch (e) { loginMsg.textContent = 'サーバーにつながりません'; }
+  };
+
+  async function send(st, op, id, dir) {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (crew) headers['X-Crew-Token'] = crew.token;
+      const res = await fetch(`/api/relay/${st}/op`, { method: 'POST', headers, body: JSON.stringify({ op, id, dir }) });
+      const j = await res.json();
+      if (!j.ok && j.message && j.message.includes('ログイン')) login.classList.add('open');
+      return j;
+    } catch (e) { return null; }
+  }
+
+  // ---- 状態の読み取り ----
+  const S = st => ST[st]?.S;
+  const local = st => !!S(st)?.local;
+  const routesOf = (st, lever, side) => ST[st].data.routes.filter(r => r.lever === lever && r.side === side);
+  const hasRoute = (st, lever) => (S(st)?.set || []).some(n => ST[st].routes[n].lever === lever);
+  // 発点だけ選んだ信号機（てこが倒れていて、進路も、着点まで選んだ進路もない）
+  const selected = (st, lever, side) => S(st)?.sig[lever] === side && !hasRoute(st, lever) && !(S(st)?.req || {})[lever];
+  // 着点まで選んで、開通を待っている（転てつ器の転換中など）
+  const pending = (st, lever, side) => S(st)?.sig[lever] === side && !hasRoute(st, lever) && !!(S(st)?.req || {})[lever];
+
+  function occSet() {
+    const occ = new Set();
+    for (const st in ST) for (const c of [...(S(st)?.occ || []), ...(S(st)?.testOcc || [])]) occ.add(c);
+    for (const t of tid.trains) for (const c of t.circuits) occ.add(c);
+    return occ;
+  }
+
+  // 進路の線: 緑の回路と、点滅させる回路（接近鎖錠・時素の間）
+  function routeSets(occ) {
+    const green = new Set(), flash = new Set();
+    for (const st in ST) {
+      const s = S(st); if (!s) continue;
+      for (const c of s.route) green.add(c);
+      for (const n of s.set) {
+        const r = ST[st].routes[n];
+        const lit = r.circuits.filter(c => !r.overrun.includes(c));
+        const approaching = r.approach.some(c => occ.has(c)) && !r.circuits.some(c => occ.has(c)) && s.sig[r.lever] === r.side;
+        if (s.timers[n] || approaching) for (const c of lit) flash.add(c);
+      }
+      // 集中（CTC）の間は、自動で取っている進路も出す
+      if (!s.local) for (const q of tid.routes) if (q.station === st && q.open) for (const c of q.circuits) green.add(c);
+    }
+    return { green, flash };
+  }
+
+  function signalGo(sg, occ) {
+    const s = S(sg.st); if (!s) return false;
+    const names = routesOf(sg.st, sg.lever, sg.side).map(r => r.name);
+    if (names.some(n => s.go.includes(n))) return true;
+    if (s.local) return false;
+    return tid.routes.some(q => q.station === sg.st && q.open && names.includes(q.route) && !ST[sg.st].routes[q.route].circuits.some(c => occ.has(c)));
+  }
+
+  // ---- 操作 ----
+  // 選びかけの発点を、ほかの発点を選ぶ前・空きをクリックしたときに戻す
+  async function clearSelections() {
+    for (const sg of L.signals) if (local(sg.st) && selected(sg.st, sg.lever, sg.side))
+      await send(sg.st, 'signal', sg.lever, sg.side === 'R' ? 'L' : 'R');
+  }
+
+  async function clickSignal(sg) {
+    if (cancelMode) {
+      cancelMode = false; draw();
+      if (S(sg.st)?.sig[sg.lever] === sg.side) await send(sg.st, 'signal', sg.lever, sg.side === 'R' ? 'L' : 'R');
+      return;
+    }
+    if (!local(sg.st)) return;
+    if (selected(sg.st, sg.lever, sg.side)) { await send(sg.st, 'signal', sg.lever, sg.side === 'R' ? 'L' : 'R'); return; }
+    if (S(sg.st).sig[sg.lever] !== 'N') return;   // 進路があるか、着点まで選んである
+    await clearSelections();
+    await send(sg.st, 'signal', sg.lever, sg.side);
+  }
+
+  async function clickDest(d) {
+    if (cancelMode) { cancelMode = false; draw(); return; }
+    if (!local(d.st)) return;
+    const s = S(d.st);
+    // 選んである発点から、この着点までの進路（サーバーも同じ選び方: いちばん新しく倒したてこ）
+    const r = ST[d.st].data.routes.find(r => r.dest === d.id && selected(d.st, r.lever, r.side));
+    if (!r) return;
+    // 単線区間の向きは自動で合わせる（出す進路は R、受ける進路は L）
+    for (const dr of ST[d.st].data.directions || []) {
+      const want = dr.out.includes(r.name) ? 'R' : dr.in.includes(r.name) ? 'L' : null;
+      if (want && s.dir[dr.n] !== want) await send(d.st, 'direction', dr.n, want);
+    }
+    await send(d.st, 'dest', d.id);
+  }
+
+  async function clickBlank() {
+    if (cancelMode) { cancelMode = false; draw(); return; }
+    await clearSelections();
+  }
+
+  document.getElementById('cancelBtn').onclick = async () => {
+    const next = !cancelMode;
+    await clearSelections();
+    cancelMode = next; draw();
+  };
+
+  async function toggleArea(st) {
+    const s = S(st); if (!s) return;
+    if (s.key.inserted && s.key.pos === 'R') { await send(st, 'key', 'turn', 'N'); await send(st, 'key', 'remove'); return; }
+    if (!s.key.inserted) { const j = await send(st, 'key', 'insert'); if (!j?.ok) return; }
+    await send(st, 'key', 'turn', 'R');
+  }
+
+  // ---- 絵 ----
+  const segEls = [], sigEls = [], destEls = [], dirEls = [];
+  let trainLayer;
+
+  function build() {
+    const xs = L.segments.flatMap(s => s.p.map(p => X(p[0])));
+    const ys = [...L.segments.flatMap(s => s.p.map(p => Y(p[1]))), ...L.texts.map(t => Y(t.at[1]))];
+    const minX = Math.min(...xs) - 60, maxX = Math.max(...xs) + 60, minY = Math.min(...ys) - 60, maxY = Math.max(...ys) + 80;
+    svg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
+    el('rect', { x: minX - 2000, y: minY - 2000, width: maxX - minX + 4000, height: maxY - minY + 4000, fill: 'transparent' }).addEventListener('click', clickBlank);
+    const root = el('g', {});
+    const g0 = el('g', { 'shape-rendering': 'crispEdges' }, root);
+
+    for (const [x, y, w] of L.platforms) el('rect', { x: X(x), y: Y(y) - 7, width: w * L.grid.dx, height: 14, fill: 'none', stroke: '#6a6a6a', 'stroke-width': 2 }, g0);
+    for (const t of L.texts) { const e = el('text', { x: X(t.at[0]), y: Y(t.at[1]), 'font-size': t.size, fill: t.dim ? C.dim : t.size >= 24 ? C.text : C.cyan, 'text-anchor': 'middle' }, root); e.textContent = t.t; e.style.pointerEvents = 'none'; }
+
+    for (const s of L.segments) {
+      const pts = s.p.map(p => `${X(p[0])},${Y(p[1])}`).join(' ');
+      const line = el('polyline', { points: pts, fill: 'none', stroke: C.free, 'stroke-width': 5, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, g0);
+      line.style.pointerEvents = 'none';
+      segEls.push({ s, line });
+      if (TEST) {
+        const hit = el('polyline', { points: pts, fill: 'none', stroke: 'transparent', 'stroke-width': 20, class: 'hit' });
+        hit.addEventListener('click', e => { e.stopPropagation(); for (const st in ST) send(st, 'occ', s.c); });
+      }
+    }
+    // 回路の継ぎ目（短い隙間）
+    const ends = new Map();
+    for (const s of L.segments) for (const p of [s.p[0], s.p[s.p.length - 1]]) { const k = p.join(); ends.set(k, (ends.get(k) || new Set()).add(s.c)); }
+    for (const [k, cs] of ends) if (cs.size > 1) { const [x, y] = k.split(',').map(Number); const e = el('rect', { x: X(x) - 2, y: Y(y) - 7, width: 4, height: 14, fill: '#000' }, g0); e.style.pointerEvents = 'none'; }
+
+    for (const d of L.dests) {
+      const x = X(d.at[0]), y = Y(d.at[1]);
+      const g = el('g', { class: 'hit' }, root);
+      el('rect', { x: x - 30, y: y - 18, width: 60, height: 36, fill: 'transparent' }, g);
+      const box = el('rect', { x: x - 9, y: y - 9, width: 18, height: 18, fill: '#000', stroke: C.free, 'stroke-width': 2, 'shape-rendering': 'crispEdges' }, g);
+      // 名前は信号機と反対の側（上り線は線の下、下り線は線の上。いちばん上の番線だけ線の上）
+      const t = el('text', { x, y: d.at[1] === 0 ? y + 30 : y - 18, 'font-size': 15, fill: C.cyan, 'text-anchor': 'middle' }, g); t.textContent = d.name;
+      g.addEventListener('click', e => { e.stopPropagation(); clickDest(d); });
+      destEls.push({ d, box, t });
+    }
+
+    // 信号機: 進む向きの左側に建てる（右へ進むなら線の上）。｜─〇 の形で、根元（｜）を at に置く。
+    // at は信号機が守る軌道回路の入口（境目）にして、柱と灯はその軌道回路の上へ、進む向きに伸ばす
+    // 発点の三角（▷）は線路の上、着点（□）の横に置き、進む向きを指す。信号機を押しても発点を押したのと同じ
+    // 同じ所（駅・at・向きが同じ）に建つ入換信号機と主信号機は、信号制御盤と同じく1本の柱にまとめる: ｜─◸〇（扇が入換、丸が主信号機）
+    const mateOf = sg => L.signals.find(o => o !== sg && o.st === sg.st && o.side === sg.side && o.at[0] === sg.at[0] && o.at[1] === sg.at[1]);
+    for (const sg of L.signals) {
+      const s = sg.side === 'R' ? 1 : -1, mate = mateOf(sg);
+      const x = X(sg.at[0]), y = Y(sg.at[1]) - s * 26;
+      const g = el('g', { class: 'hit' }, root);
+      if (!mate || sg.kind === 'shunt') {
+        el('rect', { x: x - 1, y: y - 7, width: 3, height: 14, fill: C.free, 'shape-rendering': 'crispEdges' }, g);
+        el('rect', { x: Math.min(x, x + s * 16), y: y - 1, width: 16, height: 3, fill: C.free, 'shape-rendering': 'crispEdges' }, g);
+      }
+      // 主信号機は灯（〇）。入換信号機（kind: "shunt"）は JIS E 3012 の灯列式 2位式の扇形（4分の1の円）。
+      // 柱の先に扇の縦の辺を当て、要（かなめ）を線路と反対の側に置く。同じ柱の主信号機の丸は扇の先に付ける
+      let lamp;
+      const ax = x + s * 16, r = 16;
+      if (sg.kind === 'shunt') {
+        const cy = y - s * 8;
+        lamp = el('path', { d: `M${ax},${cy} L${ax + s * r},${cy} A${r},${r} 0 0 1 ${ax},${cy + s * r} Z`, fill: C.occ, stroke: C.free, 'stroke-width': 1.5, 'stroke-linejoin': 'round' }, g);
+        el('rect', { x: Math.min(x - s * 4, ax + s * r), y: y - 12, width: Math.abs(ax + s * r - (x - s * 4)), height: 24, fill: 'transparent' }, g);
+      } else {
+        const cx = mate ? ax + s * (r + 9) : x + s * 24;
+        lamp = el('circle', { cx, cy: y, r: 8, fill: C.occ }, g);
+        el('rect', { x: cx - 12, y: y - 12, width: 24, height: 24, fill: 'transparent' }, g);
+      }
+      // 信号機名は柱の地面の側（根元の外）。1本の柱に2つあるときは、主信号機を上、入換を下に2段で
+      const ty = !mate ? y + 6 : sg.kind === 'shunt' ? y + 15 : y - 2;
+      const t = el('text', { x: x - s * 10, y: ty, 'font-size': mate ? 15 : 16, fill: C.text, 'text-anchor': s > 0 ? 'end' : 'start' }, g); t.textContent = sg.name;
+      g.addEventListener('click', e => { e.stopPropagation(); clickSignal(sg); });
+
+      const [bx, by] = sg.btn ? [X(sg.btn[0]), Y(sg.btn[1])] : [x, Y(sg.at[1])];
+      const gb = el('g', { class: 'hit' }, root);
+      el('rect', { x: bx - 16, y: by - 18, width: 32, height: 36, fill: 'transparent' }, gb);
+      const tri = el('polygon', { points: `${bx - s * 8},${by - 10} ${bx - s * 8},${by + 10} ${bx + s * 9},${by}`, fill: '#000', stroke: C.text, 'stroke-width': 2, 'stroke-linejoin': 'miter' }, gb);
+      gb.addEventListener('click', e => { e.stopPropagation(); clickSignal(sg); });
+      sigEls.push({ sg, lamp, tri });
+    }
+
+    for (const d of L.directions) {
+      const t = el('text', { x: X(d.at[0]), y: Y(d.at[1]), 'font-size': 20, fill: C.route, 'text-anchor': 'middle' }, root);
+      t.style.pointerEvents = 'none';
+      dirEls.push({ d, t });
+    }
+    trainLayer = el('g', {}, root);
+    trainLayer.style.pointerEvents = 'none';
+
+    const areas = document.getElementById('areas');
+    for (const st of L.stations) {
+      const b = document.createElement('button');
+      b.onclick = () => toggleArea(st);
+      areas.appendChild(b);
+      ST[st].btn = b;
+    }
+    document.getElementById('name').textContent = L.title;
+  }
+
+  // 線の leg: [駅, 転てつ器, 向き] か、その並び（全部そろったときだけ開いている。シーサスの直線側は両端が定位のときだけ）
+  const legsOf = s => !s.leg ? [] : Array.isArray(s.leg[0]) ? s.leg : [s.leg];
+  const legOpen = s => legsOf(s).every(l => S(l[0])?.point[l[1]] === l[2]);
+
+  function draw() {
+    if (!L || !segEls.length) return;
+    const occ = occSet();
+    const { green, flash } = routeSets(occ);
+
+    for (const { s, line } of segEls) {
+      let col = C.free;
+      const lg = legsOf(s);
+      const moving = lg.some(l => !S(l[0]) || S(l[0]).moving.includes(l[1]));
+      if (lg.length && (moving ? blink : !legOpen(s))) col = C.dark;   // 開いていない側（転換中は点滅）
+      else if (occ.has(s.c)) col = C.occ;
+      else if (green.has(s.c)) col = flash.has(s.c) && blink ? C.free : C.route;
+      line.setAttribute('stroke', col);
+    }
+
+    for (const { sg, lamp, tri } of sigEls) {
+      lamp.setAttribute('fill', signalGo(sg, occ) ? C.route : C.occ);
+      // 押した発点は ▶（着点を選ぶまで・開通を待つ間）。取消を押している間は、取り消せる発点が黄色く点滅
+      const pressed = selected(sg.st, sg.lever, sg.side) || pending(sg.st, sg.lever, sg.side);
+      const cancelable = cancelMode && S(sg.st)?.sig[sg.lever] === sg.side;
+      const col = cancelable ? (blink ? C.yellow : C.text) : C.text;
+      tri.setAttribute('stroke', col);
+      tri.setAttribute('fill', pressed ? col : '#000');
+    }
+
+    // 選んである発点から行ける着点は白枠
+    for (const { d, box } of destEls) {
+      const ok = local(d.st) && ST[d.st].data.routes.some(r => r.dest === d.id && selected(d.st, r.lever, r.side));
+      box.setAttribute('stroke', ok ? (blink ? C.sel : C.yellow) : C.free);
+      box.setAttribute('stroke-width', ok ? 3 : 2);
+    }
+
+    for (const { d, t } of dirEls) {
+      const a = S(d.st)?.dirActual?.[d.n];
+      const right = a === 'L' ? d.L === 'R' : a === 'R' ? d.L !== 'R' : null;
+      t.textContent = right == null ? '' : right ? '▶' : '◀';
+    }
+
+    // 列番: 列車が踏んでいる回路のうち、画面にあるものの上（上り線）か下（下り線）に箱
+    trainLayer.textContent = '';
+    for (const tr of tid.trains) {
+      const seg = L.segments.find(s => tr.circuits.includes(s.c) && legOpen(s));
+      if (!seg) continue;
+      const a = seg.p[0], b = seg.p[seg.p.length - 1];
+      const x = X((a[0] + b[0]) / 2), y = Y((a[1] + b[1]) / 2) + (tr.direction === '上り' ? -46 : 46);
+      const w = Math.max(60, tr.train.length * 12 + 16);
+      el('rect', { x: x - w / 2, y: y - 14, width: w, height: 28, fill: '#000', stroke: C.cyan, 'stroke-width': 2, 'shape-rendering': 'crispEdges' }, trainLayer);
+      const t = el('text', { x, y: y + 7, 'font-size': 18, fill: C.yellow, 'text-anchor': 'middle' }, trainLayer); t.textContent = tr.train;
+    }
+
+    for (const st of L.stations) {
+      const s = S(st), b = ST[st].btn; if (!b) continue;
+      const name = ST[st].data.name;
+      const keyR = s && s.key.inserted && s.key.pos === 'R';
+      const state = !s ? '－' : s.local ? '■ 駅扱' : keyR ? '■ 駅扱（許可待ち）' : '□ ＣＴＣ';
+      b.innerHTML = `${name}<small>${state}</small>`;
+      b.className = s?.local ? 'local' : keyR ? 'wait' : '';
+    }
+    document.getElementById('cancelBtn').classList.toggle('on', cancelMode);
+
+    const anySel = L.signals.some(sg => local(sg.st) && selected(sg.st, sg.lever, sg.side));
+    document.getElementById('guide').textContent = cancelMode ? '取り消す進路の発点を選んでください'
+      : anySel ? '着点を選んでください' : L.stations.some(local) ? '発点を選んでください' : '';
+  }
+
+  // ---- つなぐ ----
+  // 左上の ＊: どの駅ともつながっているときだけ点滅
+  function beat() { document.getElementById('beat').classList.toggle('live', L.stations.every(s => ST[s]?.live)); }
+
+  function connect(st) {
+    const es = new EventSource(`/api/relay/${st}/events`);
+    es.onmessage = e => { const m = JSON.parse(e.data); ST[st].S = m.state; ST[st].live = true; document.getElementById('lost').style.display = 'none'; beat(); draw(); };
+    es.onerror = () => { ST[st].live = false; document.getElementById('lost').style.display = 'block'; beat(); };
+  }
+  async function pollTid() {
+    try { const j = await (await fetch('/api/tid/state', { cache: 'no-store' })).json(); tid = j.tid || tid; draw(); } catch (e) {}
+    setTimeout(pollTid, 1000);
+  }
+
+  setInterval(() => { blink = !blink; draw(); }, 450);
+  const tick = () => { document.getElementById('clock').textContent = window.GokkoClock ? GokkoClock.fmt(Date.now(), true) : new Date().toLocaleTimeString(); };
+  tick(); setInterval(tick, 500);
+
+  (async () => {
+    L = await (await fetch(`denshirendo/screens/${SCREEN}.json`, { cache: 'no-store' })).json();
+    for (const st of L.stations) {
+      const data = await (await fetch(`/api/relay/${st}/station`)).json();
+      ST[st] = { data, S: null, routes: Object.fromEntries(data.routes.map(r => [r.name, { ...r, overrun: r.overrun || [], approach: r.approach || [] }])) };
+    }
+    build();
+    for (const st of L.stations) connect(st);
+    pollTid();
+    draw();
+  })();
+})();
+</script>
+</body>
+</html>

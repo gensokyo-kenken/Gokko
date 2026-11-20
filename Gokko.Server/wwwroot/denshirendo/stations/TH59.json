@@ -1,0 +1,38 @@
+{
+  "_": "西赤山（TH59）の電子連動装置のデータ。連動は信号制御盤と同じ仕組み（Services/RelayPanels.cs）。てこ = 発点の信号機、dest = 着点。13 は 13R（1番線から新大路方）と 13L（新大路方から2番線）の2つの信号機で1本のてこ。方向（D1）は画面が進路を選ぶときに自動で向ける",
+  "id": "TH59",
+  "name": "西赤山",
+  "interlock": "西赤山連動装置",
+  "screen": "denshirendo",
+  "autoCancel": true,
+  "approachTime": 60,
+  "releaseKey": {},
+  "directions": [
+    {"n": "D1", "section": ["TH59", "TH58"], "L": "下り", "circuits": ["NA1T", "NA2T"], "out": ["13R"], "in": ["13L"]}
+  ],
+  "points": [
+    {"n": "21", "circuits": ["TH59_21イT", "TH59_21ロT"]}
+  ],
+  "signalLevers": [
+    {"n": "11", "side": "R"},
+    {"n": "12", "side": "L"},
+    {"n": "13", "side": "LR"}
+  ],
+  "destButtons": [
+    {"id": "1"}, {"id": "2"}, {"id": "HM"}, {"id": "SO"}
+  ],
+  "routes": [
+    {"name": "13R", "lever": "13", "side": "R", "dest": "SO", "departure": true, "points": {"21": "R"},
+     "circuits": ["TH59_21イT", "TH59_21ロT"],
+     "approach": ["上り238T", "上り242T", "上り246T", "上り250T", "TH59_11RT"]},
+    {"name": "11R", "lever": "11", "side": "R", "dest": "1",
+     "circuits": ["TH59_11RT"],
+     "approach": ["上り238T", "上り242T", "上り246T", "上り250T"]},
+    {"name": "13L", "lever": "13", "side": "L", "dest": "2", "points": {"21": "N"},
+     "circuits": ["TH59_21ロT", "TH59_13LT"],
+     "approach": ["TH58_2RT", "NA2T", "NA1T"]},
+    {"name": "12L", "lever": "12", "side": "L", "dest": "HM", "departure": true,
+     "circuits": ["TH59_12LT"],
+     "approach": ["NA2T", "NA1T", "TH59_21ロT", "TH59_13LT"]}
+  ]
+}

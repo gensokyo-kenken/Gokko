@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 100" width="104" height="100">
+  <!-- てこの座（plain）。扇形の黒い板。細い線のふち、軸のまわりの輪、左右の小ねじ。軸の中心は (52,70)。字は倒す位置（左・まっすぐ上・右）に彫ってある -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f3b"/><stop offset="1" stop-color="#14161d"/></linearGradient></defs>
+  <g transform="translate(52 70) scale(0.9) translate(-52 -70)">
+  <path d="M3,41 Q52,9 101,41 C98,57 86,70 77.5,81 A27.5,27.5 0 0 1 26.5,81 C18,70 6,57 3,41 Z" fill="#14202a" opacity="0.4" transform="translate(2 3)"/>
+  <path d="M3,41 Q52,9 101,41 C98,57 86,70 77.5,81 A27.5,27.5 0 0 1 26.5,81 C18,70 6,57 3,41 Z" fill="url(#g)" stroke="#c9cfd8" stroke-width="1" stroke-linejoin="round"/>
+  <circle cx="52" cy="70" r="21.5" fill="#3b404d" stroke="#0d0e14" stroke-width="1"/>
+  <path d="M33.5,81 A21.5,21.5 0 0 0 73.5,70 A21.5,21.5 0 0 1 33.5,81 Z" fill="#232631"/>
+  <circle cx="52" cy="70" r="17" fill="#15171e"/>
+  <g fill="#6a7080" stroke="#0d0e14" stroke-width="0.8"><circle cx="22" cy="60" r="2.4"/><circle cx="82" cy="60" r="2.4"/></g>
+  <g>
+  </g>
+  </g>
+</svg>

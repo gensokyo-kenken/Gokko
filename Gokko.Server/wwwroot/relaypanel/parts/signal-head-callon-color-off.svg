@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 48" width="96" height="48">
+  <!-- 信号表示灯（callon-color・off）。JIS E 3012 の誘導信号機（色灯式）の記号。柱の途中に付く、二重の丸（外の丸の中に、灯の丸）。斜線はない。
+       入換信号機や場内信号機の信号表示灯の上に、同じ位置・同じ大きさで重ねて置く（丸が柱の上に乗る）。足は (10,24)、灯の中心は (27,24)。
+       右へ進む向き。左へ進む向きは、重ねる相手の灯と同じに回す。進行は橙。出ていないときは消灯 -->
+  <defs><filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="2.2"/></filter><clipPath id="b"><circle cx="27" cy="24" r="4.2"/></clipPath></defs>
+  <circle cx="27" cy="24" r="8" fill="#4a6470"/>
+  <g stroke="#f5f6f7" stroke-width="2" fill="none" stroke-linecap="round">
+    <line x1="10" y1="14" x2="10" y2="34"/><line x1="10" y1="24" x2="19" y2="24"/><circle cx="27" cy="24" r="8"/>
+  </g>
+  <circle cx="27" cy="24" r="7" fill="#3d424c" opacity="0" filter="url(#glow)"/>
+  <circle cx="27" cy="24" r="4.2" fill="#20242d"/>
+  <g clip-path="url(#b)"><circle cx="27.67" cy="24.92" r="4.2" fill="#3d424c"/></g>
+  <circle cx="27" cy="24" r="4.2" fill="none" stroke="#15181e" stroke-width="0.9"/>
+</svg>

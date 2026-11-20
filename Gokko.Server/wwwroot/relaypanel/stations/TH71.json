@@ -1,0 +1,103 @@
+{
+  "_": "津崎（TH71）の信号制御盤のデータ。座標は盤の画素（1920×1080）。駅の外は、場内信号機の1つ手前の閉塞（74T・89T）と、出ていく側（86T・75T）だけ盤に描く（接近の区間はそれより先まであるが、灯はない）。回路・進路・接近区間は Data/Interlockings.json に合わせる",
+  "id": "TH71",
+  "name": "津崎",
+  "interlock": "津崎連動装置",
+  "face": "relaypanel/parts/TH71-face.svg",
+  "approachTime": 30,
+  "releaseKey": { "at": [1780, 170], "lamp": [1780, 84], "normalLamp": [1862, 150] },
+  "allStop": { "at": [1500, 170] },
+  "statusLamps": [[90, 114], [200, 114], [300, 114]],
+
+  "points": [
+    { "n": "21", "circuit": "TH71_21T", "at": [430, 200] },
+    { "n": "22", "circuit": "TH71_22T", "at": [560, 200] },
+    { "n": "23", "circuit": "TH71_23T", "at": [1230, 200] },
+    { "n": "24", "circuit": "TH71_24T", "at": [1360, 200] }
+  ],
+
+  "signalLevers": [
+    { "n": "1", "side": "R", "kind": "main", "at": [264, 530] },
+    { "n": "4", "side": "R", "kind": "main", "at": [1110, 390] },
+    { "n": "5", "side": "R", "kind": "main", "at": [1110, 530] },
+    { "n": "2", "side": "L", "kind": "main", "at": [676, 670] },
+    { "n": "3", "side": "L", "kind": "main", "at": [676, 810] },
+    { "n": "6", "side": "L", "kind": "main", "at": [1436, 670] }
+  ],
+
+  "destButtons": [
+    { "id": "A", "at": [895, 390] },
+    { "id": "B", "at": [895, 530] },
+    { "id": "S", "at": [1415, 530] },
+    { "id": "C", "at": [895, 670] },
+    { "id": "D", "at": [895, 810] },
+    { "id": "T", "at": [330, 670] }
+  ],
+
+  "routes": [
+    { "name": "1RA", "lever": "1", "side": "R", "dest": "A", "points": { "21": "R" }, "circuits": ["TH71_1RT", "TH71_21T", "TH71_1RAT"],
+      "lockGroups": [["TH71_1RT", "TH71_21T"], ["TH71_1RAT"]], "groupTimes": [0, 30],
+      "approach": ["上り62T", "上り68T", "上り74T"], "approachTime": 60, "stops": ["4R"] },
+    { "name": "1RB", "lever": "1", "side": "R", "dest": "B", "points": { "21": "N", "23": "N" }, "circuits": ["TH71_1RT", "TH71_21T", "TH71_1RBT"],
+      "lockGroups": [["TH71_1RT", "TH71_21T"], ["TH71_1RBT"]], "groupTimes": [0, 30],
+      "approach": ["上り62T", "上り68T", "上り74T"], "approachTime": 60 },
+    { "name": "4R", "departure": true, "lever": "4", "side": "R", "dest": "S", "points": { "23": "R" }, "circuits": ["TH71_23T", "TH71_SST"],
+      "lockGroups": [["TH71_23T"]], "approach": ["TH71_1RAT"], "approachTime": 30, "stops": ["1RA"] },
+    { "name": "5R", "departure": true, "lever": "5", "side": "R", "dest": "S", "points": { "23": "N" }, "circuits": ["TH71_23T", "TH71_SST"],
+      "lockGroups": [["TH71_23T"]], "approach": ["TH71_1RBT"], "approachTime": 60,
+      "approachIf": [{ "circuits": ["上り68T", "上り74T"], "signal": "1RB" }, { "circuits": ["TH71_1RT", "TH71_21T"], "point": "21", "pos": "N" }] },
+    { "name": "6LC", "lever": "6", "side": "L", "dest": "C", "points": { "24": "N" }, "circuits": ["TH71_6LT", "TH71_24T", "TH71_6LCT"],
+      "lockGroups": [["TH71_6LT", "TH71_24T"]], "approach": ["TH70_2LT", "下り89T"], "approachTime": 60,
+      "approachIf": [{ "circuits": ["TH70_5LT", "TH70_21イT", "TH70_5LBT"], "other": "浜園 2L" }] },
+    { "name": "6LD", "lever": "6", "side": "L", "dest": "D", "points": { "24": "R" }, "circuits": ["TH71_6LT", "TH71_24T", "TH71_6LDT"],
+      "lockGroups": [["TH71_6LT", "TH71_24T"], ["TH71_6LDT"]], "groupTimes": [0, 30],
+      "approach": ["TH70_2LT", "下り89T"], "approachTime": 60, "stops": ["3L"],
+      "approachIf": [{ "circuits": ["TH70_5LT", "TH70_21イT", "TH70_5LBT"], "other": "浜園 2L" }] },
+    { "name": "2L", "departure": true, "lever": "2", "side": "L", "dest": "T", "points": { "22": "N" }, "circuits": ["TH71_22T", "TH71_TST"],
+      "lockGroups": [["TH71_22T"]], "clearTime": 20, "approach": ["TH71_6LCT"], "approachTime": 60,
+      "approachIf": [{ "circuits": ["TH70_5LBT", "TH70_2LT", "下り89T"], "signal": "6LC" }, { "circuits": ["TH71_6LT", "TH71_24T"], "point": "24", "pos": "N" }] },
+    { "name": "3L", "departure": true, "lever": "3", "side": "L", "dest": "T", "points": { "22": "R" }, "circuits": ["TH71_22T", "TH71_TST"],
+      "lockGroups": [["TH71_22T"]], "clearTime": 20, "approach": ["TH71_6LDT"], "approachTime": 30, "stops": ["6LD"] }
+  ],
+
+  "signalHeads": [
+    { "route": "1RA", "type": "2", "at": [322, 467], "dir": 1 },
+    { "route": "1RB", "type": "4yg", "at": [332, 496.4], "dir": 1 },
+    { "route": "4R", "type": "4yg", "at": [1166, 358.8], "dir": 1 },
+    { "route": "5R", "type": "4yg", "at": [1166, 497.8], "dir": 1 },
+    { "route": "2L", "type": "4yg", "at": [622, 636], "dir": -1 },
+    { "route": "3L", "type": "4yg", "at": [622, 776], "dir": -1 },
+    { "route": "6LC", "type": "4yg", "at": [1476, 720.4], "dir": -1 },
+    { "route": "6LD", "type": "2", "at": [1486, 751.2], "dir": -1 }
+  ],
+
+  "approachBells": [
+    { "id": "up", "label": "館浜方", "at": [480, 1000], "circuits": ["上り48T", "上り56T", "上り62T", "上り68T", "上り74T"] },
+    { "id": "down", "label": "新大路方", "at": [1440, 1000], "circuits": ["下り105T", "下り103T", "TH70_5LT", "TH70_21イT", "TH70_5LBT", "TH70_2LT", "下り89T"] }
+  ],
+  "timers": [{ "sec": 30, "at": [920, 1036] }, { "sec": 60, "at": [1000, 1036] }],
+
+  "trackLamps": [
+    { "c": "上り74T", "at": [110, 530] }, { "c": "上り74T", "at": [180, 530] },
+    { "c": "TH71_1RT", "at": [360, 530] }, { "c": "TH71_1RT", "at": [400, 530] },
+    { "c": "TH71_21T", "at": [442, 530] },
+    { "c": "TH71_21T", "at": [520, 530], "point": "21", "pos": "N" }, { "c": "TH71_21T", "at": [590, 530], "point": "21", "pos": "N" },
+    { "c": "TH71_21T", "at": [507, 460], "rot": -57.26, "point": "21", "pos": "R" }, { "c": "TH71_21T", "at": [590, 390], "point": "21", "pos": "R" },
+    { "c": "TH71_1RAT", "at": [650, 390] }, { "c": "TH71_1RAT", "at": [765, 390] }, { "c": "TH71_1RAT", "at": [975, 390] },
+    { "c": "TH71_1RBT", "at": [650, 530] }, { "c": "TH71_1RBT", "at": [765, 530] }, { "c": "TH71_1RBT", "at": [975, 530] },
+    { "c": "TH71_23T", "at": [1190, 530], "point": "23", "pos": "N" }, { "c": "TH71_23T", "at": [1270, 530], "point": "23", "pos": "N" },
+    { "c": "TH71_23T", "at": [1200, 390], "point": "23", "pos": "R" }, { "c": "TH71_23T", "at": [1281, 460], "rot": 57.26, "point": "23", "pos": "R" },
+    { "c": "TH71_23T", "at": [1346, 530] },
+    { "c": "TH71_SST", "at": [1384, 530] }, { "c": "TH71_SST", "at": [1474, 530] }, { "c": "上り86T", "at": [1600, 530] }, { "c": "上り86T", "at": [1740, 530] },
+    { "c": "下り75T", "at": [165, 670] }, { "c": "TH71_TST", "at": [286, 670] }, { "c": "TH71_TST", "at": [396, 670] },
+    { "c": "TH71_22T", "at": [442, 670] },
+    { "c": "TH71_22T", "at": [520, 670], "point": "22", "pos": "N" }, { "c": "TH71_22T", "at": [590, 670], "point": "22", "pos": "N" },
+    { "c": "TH71_22T", "at": [507, 740], "rot": 57.26, "point": "22", "pos": "R" }, { "c": "TH71_22T", "at": [590, 810], "point": "22", "pos": "R" },
+    { "c": "TH71_6LCT", "at": [745, 670] }, { "c": "TH71_6LCT", "at": [975, 670] },
+    { "c": "TH71_6LDT", "at": [745, 810] }, { "c": "TH71_6LDT", "at": [975, 810] },
+    { "c": "TH71_24T", "at": [1190, 670], "point": "24", "pos": "N" }, { "c": "TH71_24T", "at": [1270, 670], "point": "24", "pos": "N" },
+    { "c": "TH71_24T", "at": [1200, 810], "point": "24", "pos": "R" }, { "c": "TH71_24T", "at": [1281, 740], "rot": -57.26, "point": "24", "pos": "R" },
+    { "c": "TH71_24T", "at": [1346, 670] },
+    { "c": "TH71_6LT", "at": [1384, 670] }, { "c": "下り89T", "at": [1600, 670] }, { "c": "下り89T", "at": [1740, 670] }
+  ]
+}

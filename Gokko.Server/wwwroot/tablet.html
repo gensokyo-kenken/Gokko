@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乗務タブレット</title>
+<!-- 時刻の数字だけを太いゴシック体（Noto Sans JP の 800）で出す。数字と「:」だけを読み込むので軽い -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@800&text=0123456789:&display=swap">
+<style>
+  /* 乗務タブレット。配置は tablet-layout.xml（XAML 風）で決める。スタフ（紙）の部分は、暗い表示でも白地 */
+  :root {
+    --bg: #1b2533; --panel: #22304a; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c;
+    --ok: #1f8a4c; --warn: #c98400; --ng: #c62828; --info: #2f6fc0;
+    --paper: #ffffff; --ink: #111111; --rule: #222222; --stop: #6eb4f7; --now: #fff2a8; --done: #8a8a8a; --late: #c62828;
+    /* 数字もゴシック体（0 に点や斜線のないもの）。桁はそろえる（tabular-nums）
+       見出ゴMB31（モリサワ。有料なのでサーバーからは配らない）が端末に入っていれば使い、なければ BIZ UDゴシック */
+    --mono: "A-OTF 見出ゴMB31 Pr6N", "A-OTF Midashi Go MB31 Pr6N", "A-OTF 見出ゴMB31 Pro", "A-OTF Midashi Go MB31 Pro", "見出ゴMB31",
+      "MidashiGoPr6N-MB31", "MidashiGoPro-MB31", "a-otf-midashi-go-mb31-pr6n", "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif;
+    /* 時刻の数字（太く、0 に点なし）。読み込めなければ上の字 */
+    --num: "Noto Sans JP", var(--mono);
+  }
+  * { box-sizing: border-box; }
+  /* body は min-height（height で固定すると、下の余白が時刻表の後ろに付かず、放送装置の下に隠れる） */
+  html { height: 100%; }
+  html, body { margin: 0; }
+  body { min-height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif; font-size: 13px; line-height: 1.5; padding: 8px; font-variant-numeric: tabular-nums; }
+  button, select { font: inherit; }
+  .header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; background: var(--bar); border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; }
+  .t-large { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+  .t-muted { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  .badge { font-size: 12px; font-weight: 700; border-radius: 4px; padding: 1px 8px; color: #fff; background: #607089; }
+  .delay { font-family: var(--mono); font-weight: 700; color: #fff; background: var(--warn); border-radius: 4px; padding: 0 6px; }
+  .clock { font-family: var(--mono); font-size: 18px; }
+  .grid { display: grid; }
+  .stack { display: grid; align-content: start; min-width: 0; }
+  @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr) !important; } }
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .pane h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+  .big { font-size: 20px; font-weight: 700; }
+  .route { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 4px; padding: 1px 8px; }
+  .route.ok { background: var(--ok); color: #fff; }
+  .route.wait { color: var(--warn); border: 1px solid var(--warn); }
+  .route.req { color: var(--muted); border: 1px solid var(--line); }
+  .status { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--line); }
+  .dot.ok { background: var(--ok); } .dot.ng { background: var(--ng); }
+  .pick { max-width: 520px; margin: 40px auto; display: grid; gap: 10px; }
+  .pick .pane { display: grid; gap: 8px; }
+  .pick button { border: 1px solid var(--line); background: var(--bar); color: var(--fg); border-radius: 6px; padding: 6px 10px; cursor: pointer; text-align: left; }
+  .pick .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .err { color: #ffb4b4; }
+  /* 列車を選ぶ画面の行路一覧: 行路ごとに運転士・車掌の枠。だれもいない枠は点線の「空き」 */
+  .duty-sum { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; font-size: 12px; color: var(--muted); }
+  .duty-sum b { color: var(--fg); font-size: 14px; }
+  .duty-sum label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .duty-row { display: grid; grid-template-columns: 4.2em minmax(0, 1fr) minmax(0, 1fr); gap: 4px 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .duty-row .trains { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+  .duty-row .trains button { padding: 1px 8px; font-size: 12px; }
+  .duty-row .trains button.cur { background: var(--info); border-color: var(--info); color: #fff; }
+  .slot { display: flex; gap: 6px; align-items: center; min-width: 0; border-radius: 6px; padding: 3px 8px; background: var(--bar); border: 1px solid var(--line); }
+  .slot .k { flex: none; font-size: 11px; color: var(--muted); }
+  .slot .n { min-width: 0; overflow-wrap: anywhere; font-weight: 700; }
+  .slot.vacant { background: transparent; border-style: dashed; border-color: #6b7c93; }
+  .slot.vacant .n { color: #8fd3a8; font-weight: 700; }
+  .slot .tag { flex: none; font-size: 11px; border-radius: 3px; padding: 0 4px; background: var(--warn); color: #fff; }
+
+  /* スタフ */
+  .staff { background: var(--paper); color: var(--ink); border: 2px solid var(--rule); border-radius: 4px; min-width: 0; }
+  .staff-scroll { overflow-x: auto; }
+  table.staff-tt { border-collapse: collapse; width: 100%; font-size: 16px; line-height: 1.25; color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .staff-tt th { font-size: 11px; font-weight: 700; text-align: center; border: 1px solid var(--rule); padding: 1px 2px; background: var(--paper); }
+  .staff-tt td { border: 1px solid var(--rule); padding: 1px 5px; height: 1.75em; vertical-align: middle; font-variant-numeric: tabular-nums; background: var(--paper); }
+  .staff-tt tr.arr td:not(.st) { border-bottom-color: transparent; }
+  .staff-tt tr.arr + tr.dep td { border-top-color: transparent; }
+  .staff-tt td.st { font-size: 24px; font-weight: 700; white-space: nowrap; width: 30%; letter-spacing: .02em; }
+  /* 停車駅の色は種別ごと（staffFill）。普通は塗らない */
+  .staff-tt td.st.stop { background: var(--stop); }
+  .staff-tt.nofill td.st.stop { background: var(--paper); }
+  .staff-tt td.st.pass { font-size: 16px; font-weight: 400; }
+  .staff-tt td.st.off { color: #333; }
+  .staff-tt td.h { text-align: center; font-family: var(--num); font-weight: 800; font-size: 17px; width: 7%; }
+  .staff-tt td.m, .staff-tt td.s { text-align: center; font-family: var(--num); font-size: 18px; font-weight: 800; width: 9%; }
+  .staff-tt td.s { font-size: 16px; }
+  .staff-tt tr.arr td.m { text-align: right; }
+  .staff-tt tr.dep.stopping td.m { font-size: 26px; font-weight: 800; }
+  .staff-tt td.note { font-size: 13px; line-height: 1.2; }
+  .staff-tt td.note small { font-size: 11px; }
+  .staff-tt b.trk { font-size: 20px; margin-right: 4px; }
+  .staff-tt td.act { font-family: var(--num); font-weight: 800; font-size: 14px; color: var(--done); text-align: center; border-left: 2px solid var(--rule); width: 15%; min-width: 5.2em; white-space: nowrap; }
+  .staff-tt th.act { border-left: 2px solid var(--rule); min-width: 5.2em; }
+  .staff-tt td.act.late { color: var(--late); font-weight: 700; }
+  .staff-tt tr.done td.m, .staff-tt tr.done td.s { color: var(--done); }
+  .staff-tt tr.now td:not(.st):not(.h) { background: var(--now); }
+  .staff-foot { border-top: 2px solid var(--rule); padding: 6px 10px; font-size: 16px; font-weight: 700; }
+  .staff-foot .turn-link { color: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 2px 4px; }
+  .staff-foot .turn-changed { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: #e07000; color: #fff; font-size: 13px; }
+  /* 次の駅の欄の右に、大きな種別の札（NextStation Kind="true"） */
+  .next-kind { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+  .kind-badge { display: block; min-width: 3.2em; padding: .08em .35em; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); color: #fff; text-align: center;
+    font-size: 30px; font-weight: 700; line-height: 1.2; letter-spacing: .06em; }
+  .next-kind .big { white-space: nowrap; }
+  .next-kind .times { font-family: var(--num); font-weight: 800; font-size: 15px; }
+
+  /* 行路 */
+  .duty-list { display: grid; gap: 3px; font-size: 12px; }
+  .duty-item { display: grid; grid-template-columns: 4.5em minmax(0, 1fr); gap: 6px; padding: 3px 6px; border-radius: 4px; }
+  .duty-item .k { color: var(--muted); }
+  .duty-item.cur { background: var(--info); color: #fff; }
+  .duty-item.cur .k { color: #dfe9f7; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* 放送装置（車内・車外・連絡）。PC のクライアントで運転士・車掌として乗っているときだけ、画面の下に出す。声は PC のマイクから */
+  #onboard { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--bar); border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); display: none; }
+  #onboard.show { display: block; }
+  #onboard .ob-head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  #onboard .ob-head b { color: var(--fg); }
+  #onboard .ob-other { color: #fcd34d; }
+  #onboard .ob-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  #onboard button { font-size: 18px; font-weight: 700; padding: 12px 0; border-radius: 8px; border: 1px solid var(--line); background: #374151; color: var(--fg); cursor: pointer; touch-action: manipulation; }
+  #onboard button:disabled { color: #6b7280; }
+  /* 押されているボタンは水色（車内・車外・連絡で共通。PC のポップと同じ色） */
+  #onboard button.on-inside, #onboard button.on-outside, #onboard button.on-intercom { background: #38bdf8; border-color: #38bdf8; color: #082f49; }
+  #onboard .ob-msg { font-size: 12px; color: var(--muted); min-height: 1.2em; margin-top: 3px; }
+  /* 時刻表が放送装置の下に隠れないよう、下の余白は放送装置の実際の高さに合わせる（--ob-h は下のスクリプトで入れる） */
+  body.has-onboard { padding-bottom: calc(var(--ob-h, 170px) + 12px); scroll-padding-bottom: calc(var(--ob-h, 170px) + 12px); }
+  html:has(body.has-onboard) { scroll-padding-bottom: calc(var(--ob-h, 170px) + 12px); }
+  #onboard .ob-mic { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 6px; }
+  #onboard .ob-mic button { font-size: 14px; padding: 8px 12px; }
+  #onboard .ob-mic button.on { background: #dc2626; border-color: #dc2626; color: #fff; }
+  #onboard .ob-meter { height: 8px; border-radius: 4px; background: #374151; overflow: hidden; }
+  #onboard .ob-meter i { display: block; height: 100%; width: 0; background: #4ade80; }
+  #onboard .ob-meter.tx i { background: #f87171; }
+</style>
+<script src="menulink.js"></script>
+<script src="crewsession.js"></script>
+<script src="roleattend.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<div id="onboard">
+  <div class="ob-head"><b>放送装置</b><span id="ob-train"></span><span id="ob-other" class="ob-other"></span></div>
+  <div class="ob-buttons">
+    <button data-ob="Inside">車内</button><button data-ob="Outside">車外</button><button data-ob="Intercom">連絡</button>
+  </div>
+  <div class="ob-mic"><button id="ob-mic">スマホのマイク</button><div id="ob-meter" class="ob-meter"><i></i></div></div>
+  <div id="ob-msg" class="ob-msg"></div>
+</div>
+<script>
+  // 乗務タブレット。?train=列番 でその列車を表示する（クライアントの「乗務タブレット」ボタンは、自分の列番を付けて開く）。
+  // 列番がなければ、走っている列車と行路の一覧から選ぶ。2秒ごとに /api/tid/tablet を読み直す。
+  // ログインすると、その人の行路を出す。列番を付けずに開けば、その人の行路の、いま乗る列車を出す。
+  // ログインは Discord（はじめての人は Discord で申請し、勤怠管理で承認される）。移行のあいだは社員番号とパスワードでも入れ、入ったら Discord との紐づけを勧める。
+  // 画面に出すのは社員番号（ID:10103200）。
+  // ログインの合い札（トークン）と社員番号は、このタブの中だけに覚える（crewsession.js）。乗務メニューから開けば、メニューのログインを引き継ぐ。
+  // URL を直接開いたタブではログインを求める。ここでパスワードを入れてログインすれば、メニューにも覚える。「ログアウト」で消す
+  // クライアント（exe）から開いたときは、#crew=社員番号&token=合い札 で受け取る（crewsession.js が受け取り、アドレスからはすぐ消す）
+  const params = new URLSearchParams(location.search);
+  let train = params.get("train") || "";
+  let user = GokkoCrew.id(), token = GokkoCrew.token();
+  // how: "login"（パスワードなどで入った。メニューにも覚える）・"logout"・なし（このタブだけ）
+  function setUser(id, tok, how) {
+    user = id || ""; token = id ? tok || "" : "";
+    if (how === "login") GokkoCrew.login(user, token);
+    else if (how === "logout") GokkoCrew.logout();
+    else if (user) GokkoCrew.set(user, token);
+    else GokkoCrew.clear();
+    try { localStorage.removeItem("gokkoTabletUser"); } catch (e) {} // 社員番号より前の版で覚えていたユーザー名
+  }
+  const who = () => `ID:${esc(user)}`;
+  // 司令員の役職がある人には、勤怠管理と司令用管理画面へのリンクを、信号扱いの役職がある人には信号制御盤へのリンクを出す
+  // （同じタブで開くので、ログインを引き継ぐ。合言葉・管理キーは要らない）。dispatcher は、どちらかのリンクを出すか
+  // 開く前に、その役職で出勤していなければ「出勤」のポップを出す（roleattend.js）
+  let dispatcher = false, roles = [];
+  async function loadRoles() {
+    dispatcher = false; roles = [];
+    if (!token) return;
+    try {
+      const res = await fetch("/api/tid/crew/me", { headers: { "X-Crew-Token": token }, cache: "no-store" });
+      if (res.ok) roles = (await res.json()).roles || [];
+    } catch (e) {}
+    dispatcher = roles.includes("司令員") || roles.includes("信号扱い");
+  }
+  let rolesReady = loadRoles();
+  const roleLink = (href, label, role) => `<span><a href="${href}" data-role="${role}" style="color:var(--muted)">${label}</a></span>`;
+  const dispatchLinks = () =>
+    (roles.includes("司令員") ? roleLink("kintai.html", "勤怠管理", "司令員") + roleLink("diasettings.html", "司令用管理画面", "司令員") : "")
+    + (roles.includes("信号扱い") ? roleLink("relaypanel.html", "信号制御盤", "信号扱い") : "");
+  document.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a[data-role]");
+    if (!a || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button !== 0) return;
+    ev.preventDefault();
+    GokkoRoleAttend.guard(a.dataset.role, token, (station) => { location.href = a.getAttribute("href") + (station ? "?st=" + encodeURIComponent(station) : ""); }); // 信号扱いは出勤した駅の盤
+  });
+  async function post(path, body) {
+    const res = await fetch("/api/tid" + path, { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { "X-Crew-Token": token } : {}) }, body: JSON.stringify(body || {}) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || "うまくいきませんでした");
+    return j;
+  }
+  let layout = null, data = null, lastOk = 0, error = "";
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const circled = (n) => n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : (n ?? "");
+  const sec = (t) => { if (!t) return null; const p = t.split(":").map(Number); return p[0] * 3600 + p[1] * 60 + (p[2] || 0); };
+  const typeColor = { "特急": "#c62828", "快急": "#7b3fb5", "急行": "#d9731f", "区急": "#2e8b57", "準急": "#1e88f0", "普通": "#607089", "回送": "#ffffff" };
+  // スタフの停車駅を塗る色（種別の色を薄くしたもの。字が読めるように）。回送は灰色、普通は塗らない
+  const staffFill = { "特急": "#f4a3a3", "快急": "#cfb5ec", "急行": "#f6c99b", "区急": "#a9dcbd", "準急": "#a9cff7", "回送": "#c4c4c4" };
+  // スタフの上の種別の札の地の色（普通は黒、回送は灰色。ほかは種別の色）
+  const kindBack = (t) => t === "回送" ? "#7a7a7a" : t === "普通" || !typeColor[t] ? "#111" : typeColor[t];
+
+  function bind(name) {
+    if (!data) return "";
+    switch (name) {
+      case "train.number": return data.train;
+      case "train.type": return data.type;
+      case "train.label": return data.label;
+      case "train.dest": return data.dest;
+      case "train.unyo": return data.unyo ?? "";
+      case "duty.id": return data.duty ? data.duty.id : "";
+      case "duty.handle": return data.duty ? fmtMin(data.duty.handleMinutes) : "";
+      case "delay": return data.delay ?? "";
+      case "gameTime": return data.gameTime;
+      case "crew.id": case "crew.name": return data.crew ?? "";
+      default: return "";
+    }
+  }
+  const fmtMin = (m) => `${Math.floor(m / 60)}時間${String(m % 60).padStart(2, "0")}分`;
+
+  // ---- 部品 ----
+  const parts = {
+    Tablet: (el) => children(el),
+    Header: (el) => `<div class="header">${children(el)}</div>`,
+    Grid: (el) => {
+      const cols = (el.getAttribute("Columns") || "1*").split(",").map((c) => c.trim().endsWith("*") ? `minmax(0, ${c.trim().slice(0, -1) || 1}fr)` : c.trim());
+      const gap = el.getAttribute("Gap") || "8";
+      const kids = [...el.children].map((c, i) => ({ c, col: Number(c.getAttribute("Grid.Column") ?? i) })).sort((a, b) => a.col - b.col);
+      return `<div class="grid" style="grid-template-columns:${cols.join(" ")};gap:${gap}px">${kids.map((k) => render(k.c)).join("")}</div>`;
+    },
+    Stack: (el) => `<div class="stack" style="gap:${el.getAttribute("Gap") || 8}px">${children(el)}</div>`,
+    Spacer: () => `<span class="spacer"></span>`,
+    Text: (el) => {
+      const v = bind(el.getAttribute("Bind"));
+      if (v === "" || v == null) return "";
+      const style = el.getAttribute("Style");
+      return `<span class="${style === "Large" ? "t-large" : style === "Muted" ? "t-muted" : ""}">${esc((el.getAttribute("Prefix") || "") + v + (el.getAttribute("Suffix") || ""))}</span>`;
+    },
+    Badge: (el) => {
+      const v = bind(el.getAttribute("Bind") || "train.type");
+      if (!v) return "";
+      const bg = typeColor[v] || "#607089";
+      return `<span class="badge" style="background:${bg};color:${v === "回送" ? "#d32f2f" : "#fff"};${v === "回送" ? "border:1px solid #111" : ""}">${esc(data.label || v)}</span>`;
+    },
+    Delay: () => data && data.delay ? `<span class="delay">+${data.delay}分</span>` : "",
+    Clock: () => data ? `<span class="clock">${esc(data.gameTime)}</span>` : "",
+    Staff: (el) => staff(el.getAttribute("Actual") !== "false"),
+    NextStation: (el) => nextStation(el),
+    Duty: () => duty(),
+    TrainNext: () => trainNext(),
+    StatusBar: () => {
+      const age = lastOk ? Math.round((Date.now() - lastOk) / 1000) : null;
+      const ok = age != null && age < 6;
+      return `<div class="status"><span><a href="menu.html" data-menu-link style="color:var(--muted)">‹ メニュー</a></span><span><span class="dot ${ok ? "ok" : "ng"}"></span>サーバー${ok ? "" : "（更新が止まっています）"}</span>
+        <span>${data && data.running ? "走行中" : "まだ走っていない（ダイヤを表示）"}</span>
+        <span>最終更新 ${age == null ? "-" : age + "秒前"}</span>
+        <span>${user ? `ログイン: ${who()}${data && data.attended === false ? `（<a href="#" data-attend="1" style="color:var(--muted)">出勤</a>）` : `（<a href="#" data-leave="1" style="color:var(--muted)">退勤</a>）`}（<a href="#" data-logout="1" style="color:var(--muted)">ログアウト</a>）`
+          : `<a href="#" data-login="1" style="color:var(--muted)">ログイン</a>`}</span>
+        ${data && data.viewOnly ? `<span class="err">見ているだけ（自分の行路の列車ではありません）</span>` : ""}
+        ${user ? `<span><a href="tablet.html" style="color:var(--muted)">行路の列車に戻る</a></span>` : ""}<span><a href="tablet.html?pick=1" style="color:var(--muted)">${user ? "ほかの列車を見る" : "列車を選び直す"}</a></span>
+        <span><a href="tablet-arrivals.html" style="color:var(--muted)">駅の接近案内</a></span>
+        <span><a href="radio-monitor.html" style="color:var(--muted)">列車無線モニター</a></span>${dispatchLinks()}${error ? `<span class="err">${esc(error)}</span>` : ""}</div>`;
+    }
+  };
+  const children = (el) => [...el.children].map(render).join("");
+  const render = (el) => (parts[el.tagName] || (() => ""))(el);
+
+  // スタフ: 停車駅は着（上の行・小さく）と発（下の行・太く）。通過は1行。時は変わる所だけ。右端に番線と記事、実績
+  function staff(actual) {
+    if (!data) return "";
+    let lastHour = null;
+    const rows = [];
+    data.stops.forEach((s, i) => {
+      const stopping = s.stop !== "通";
+      const isNow = i === data.next;
+      const cls = (s.passed ? "done " : "") + (isNow ? "now " : "");
+      const name = stopping ? esc(s.name) : `（${esc(s.name)}）`;
+      const stCls = `st ${stopping ? "stop" : "pass"} ${s.control ? "" : "off"}`;
+      const trk = s.track ? `<b class="trk">${circled(s.track)}</b>` : "";
+      // 記事は「;」区切り。1つずつは折り返さず、記事と記事の間で折り返す（実績の欄の幅を残すため）
+      const memo = s.note ? `<small>${s.note.split(";").map((x) => `<span style="white-space:nowrap">${esc(x)}</span>`).join("　")}</small>` : "";
+      const lines = [];
+      if (stopping && s.arr && s.dep && s.arr !== s.dep) {
+        lines.push({ kind: "arr", t: s.arr, act: s.actArr }, { kind: "dep", t: s.dep, act: s.actDep });
+      } else {
+        lines.push({ kind: "dep", t: s.dep || s.arr, act: s.actDep || s.actArr });
+      }
+      lines.forEach((ln, j) => {
+        const p = (ln.t || "").split(":");
+        const hour = p[0] || "";
+        const showHour = hour && hour !== lastHour;
+        if (hour) lastHour = hour;
+        const late = ln.act && ln.t && sec(ln.act) - sec(ln.t) >= 60;
+        const act = actual ? `<td class="act ${late ? "late" : ""}">${ln.act ? esc(ln.act.slice(3)) : (isNow && j === 0 ? "<b style='color:#111;font-size:10px'>次</b>" : "")}</td>` : "";
+        const first = j === 0;
+        const span = lines.length;
+        rows.push(`<tr class="${cls}${ln.kind}${stopping ? " stopping" : ""}">
+          ${first ? `<td class="${stCls}" rowspan="${span}">${name}</td>` : ""}
+          <td class="h">${showHour ? esc(Number(hour)) : ""}</td>
+          <td class="m">${esc(p[1] || "")}</td><td class="s">${esc(p[2] || "")}</td>
+          <td class="note">${span === 1 ? trk + memo : first ? trk : memo}</td>${act}</tr>`);
+      });
+    });
+    const fill = staffFill[data.type];
+    return `<div class="staff"><div class="staff-scroll"><table class="staff-tt${fill ? "" : " nofill"}" style="${fill ? `--stop:${fill}` : ""}">
+      <thead><tr><th>駅</th><th>時</th><th>分</th><th>秒</th><th>番線・記事</th>${actual ? "<th class=\"act\">実績</th>" : ""}</tr></thead>
+      <tbody>${rows.join("")}</tbody></table></div></div>`;
+  }
+
+  function trainNext() {
+    if (!data) return "";
+    const out = [];
+    if (data.renumber) out.push(`▼ ${esc(data.renumber.station)}から ${esc(data.renumber.number)} に列番変更`);
+    if (data.turn) {
+      // 後運用（終点で折り返して次になる列車）。押すと、その列車のタブレットを開く。司令が差し替えたときは「変更」の印と元の列番
+      const t = data.turn;
+      const changed = t.changed ? ` <span class="turn-changed">変更</span><span class="t-muted">（元 ${esc(t.original || "なし")}）</span>` : "";
+      out.push(t.kind === "折返" && t.number
+        ? `後運用　<a class="turn-link" href="tablet.html?train=${encodeURIComponent(t.number)}">${esc(t.number)}</a>（${esc((t.time || "").slice(0, 5))}${esc(t.how || "")}）${changed}`
+        : esc(t.kind) + (t.number ? `：${esc(t.number)}` : "") + changed);
+    }
+    return out.length ? `<div class="staff"><div class="staff-foot">${out.join("<br>")}</div></div>` : "";
+  }
+
+  // 次の駅。まだ走っていない列車は始発駅（サーバーが次の駅を決められないとき）
+  const nextStop = () => data.next >= 0 ? data.stops[data.next]
+    : !data.running ? data.stops.find((x) => !x.passed)
+    : data.stops.find((x) => x.control && !x.passed) ?? data.stops.find((x) => !x.passed);
+  const routeChip = (r) => !r ? "" : r === "進路確定" ? `<span class="route ok">進路確定</span>` : r.includes("要求待ち") ? `<span class="route req">${esc(r)}</span>` : `<span class="route wait">${esc(r)}</span>`;
+
+  // 次の駅（駅・番線・着発・進路）。Kind="true" なら右に大きな種別の札も出す
+  function nextStation(el) {
+    if (!data) return "";
+    const s = nextStop();
+    const kind = el && el.getAttribute("Kind") === "true"
+      ? `<span class="kind-badge" style="background:${kindBack(data.type)}">${esc(data.type)}</span>` : "";
+    let body;
+    if (!s) body = "この先に駅はありません";
+    else {
+      const stopping = s.stop !== "通";
+      body = `<div class="big">${esc(s.name)}${s.track ? ` ${s.track}番線` : ""}${stopping ? "" : "（通過）"}</div>
+      <div class="times">${s.arr && stopping ? `着 ${esc(s.arr)}　` : ""}${s.dep ? `${stopping ? "発" : "通過"} ${esc(s.dep)}` : ""}</div>
+      ${s.route ? `<div style="margin-top:6px">進路 ${routeChip(s.route)}</div>` : ""}`;
+    }
+    return kind ? `<div class="pane next-kind"><div><h5>次の駅</h5>${body}</div>${kind}</div>` : `<div class="pane"><h5>次の駅</h5>${body}</div>`;
+  }
+
+  function duty() {
+    if (!data || !data.duty) return "";
+    const d = data.duty;
+    const items = d.items.map((x) => `<div class="duty-item ${x.current ? "cur" : ""}"><span class="k">${esc(x.kind)}</span>
+      <span>${x.kind === "休憩" ? esc((x.from || "") + " " + (x.note || "")) : `<b class="mono">${esc(x.train)}</b>　${esc(x.from || "")} ${esc((x.dep || "").slice(0, 5))} → ${esc(x.to || "")} ${esc((x.arr || "").slice(0, 5))}${x.note ? "　" + esc(x.note) : ""}`}</span></div>`).join("");
+    const rinpen = (data.extras || []).includes(d.id) ? ` <span class="err">臨変</span>` : ""; // ほかの人も持っている行路を、あとから持った
+    return `<div class="pane"><h5>行路 ${esc(d.id)}${rinpen}　ハンドルタイム ${fmtMin(d.handleMinutes)}</h5><div class="duty-list">${items}</div></div>`;
+  }
+
+  // ---- ログイン（Discord。移行のあいだは社員番号とパスワードでも）と、Discord との紐づけ ----
+  const inputStyle = "padding:6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg)";
+  const discordStyle = "background:#5865f2;border-color:#5865f2;color:#fff";
+  const app = () => document.getElementById("app");
+  const afterLogin = () => { location.href = "tablet.html" + (train ? "?train=" + encodeURIComponent(train) : ""); };
+  const links = (...items) => `<div class="pane row">${items.join("　")}</div>`;
+  function bindSubmit(run) {
+    const btn = document.getElementById("submit"), msg = document.getElementById("lmsg");
+    if (!btn) return;
+    const go = async () => { msg.textContent = ""; btn.disabled = true; try { await run(); } catch (e) { msg.textContent = e.message; } finally { btn.disabled = false; } };
+    btn.onclick = go;
+    app().querySelectorAll("input").forEach((i) => i.addEventListener("keydown", (ev) => { if (ev.key === "Enter") go(); }));
+    const first = app().querySelector("input"); if (first) first.focus();
+  }
+
+  async function loginScreen(message) {
+    stopped = true;
+    document.title = "乗務タブレット ログイン";
+    const c = await GokkoCrew.discordConfig();
+    const pw = !(c.enabled && c.passwordClosed);
+    app().innerHTML = `<div class="pick">
+      <div class="pane"><h5>ログイン</h5>
+        ${c.enabled ? `<div class="row"><button id="discord" style="${discordStyle}">Discord でログイン</button></div>
+          <div class="t-muted">はじめての人も、Discord でログインすると申請できます（勤怠管理の担当者が承認します）。</div>` : ""}
+        ${pw ? `${c.enabled ? `<div class="t-muted">社員番号とパスワード${c.passwordUntil ? `（${GokkoCrew.linkUntil(c.passwordUntil)}）` : ""}</div>` : ""}
+        <input id="uid" placeholder="社員番号（8桁）" inputmode="numeric" autocomplete="username" style="${inputStyle}">
+        <input id="upass" placeholder="パスワード（例: k7mq-3xwp）" type="password" autocomplete="current-password" style="${inputStyle}">
+        <div class="row"><button id="submit">ログイン</button></div>` : ""}
+        <div id="lmsg" class="err">${esc(message || "")}</div></div>
+      ${links(`<a href="tablet.html?pick=1" style="color:var(--muted)">ログインしないで列車を選ぶ</a>`, `<a href="menu.html" data-menu-link style="color:var(--muted)">‹ メニューに戻る</a>`)}</div>`;
+    const d = document.getElementById("discord");
+    if (d) d.onclick = async () => { try { await GokkoCrew.discordLogin(); } catch (e) { document.getElementById("lmsg").textContent = e.message; } };
+    bindSubmit(async () => {
+      const j = await post("/login", { id: document.getElementById("uid").value.trim(), password: document.getElementById("upass").value });
+      setUser(j.id, j.token, "login");
+      if (j.discordEnabled && !j.discordLinked) linkScreen(j.linkUntil); else afterLogin();
+    });
+  }
+
+  // パスワードでログインした人に、Discord との紐づけを勧める
+  function linkScreen(until) {
+    app().innerHTML = `<div class="pick">
+      <div class="pane"><h5>Discord と紐づける</h5>
+        <div>${who()} さん、Discord と紐づけてください。紐づけると、次からは［Discord でログイン］だけで入れます（パスワードは使えなくなります）。</div>
+        ${until ? `<div class="t-muted">パスワードでのログインは ${esc(GokkoCrew.linkUntil(until))}。</div>` : ""}
+        <div class="row"><button id="link" style="${discordStyle}">Discord と紐づける</button><button id="later">あとで</button></div>
+        <div id="lmsg" class="err"></div></div></div>`;
+    document.getElementById("link").onclick = async () => { try { await GokkoCrew.discordLink(token); } catch (e) { document.getElementById("lmsg").textContent = e.message; } };
+    document.getElementById("later").onclick = afterLogin;
+  }
+
+  // ---- 行路の一覧（運転士・車掌の枠） ----
+  // 運転士の枠: 行路の担当者（臨変で持っている人も。いまその行路の列車を運転していれば緑の点）
+  // 車掌の枠: その行路のいま乗る列車に、車掌として乗っている人。だれもいない枠は「空き」
+  // 絞り込み: all=すべて、driver=運転士が空いている行路、conductor=車掌が空いている行路（端末に覚える）
+  const dutyFilters = { all: ["すべての行路", () => true], driver: ["運転士が空き", (d) => !d.drivers.length], conductor: ["車掌が空き", (d) => !d.conductors.length] };
+  let dutyFilter = "all";
+  try { const f = localStorage.getItem("gokkoTabletDutyFilter"); if (dutyFilters[f]) dutyFilter = f; } catch (e) {}
+  async function refreshDuties() {
+    const box = document.getElementById("duty-pane");
+    if (!box) return;
+    let duties;
+    try { duties = (await (await fetch("/api/tid/duties", { cache: "no-store" })).json()).duties; } catch (e) { return; }
+    if (!duties.length) { box.innerHTML = "<span class='t-muted'>行路表（Duties.csv）はまだありません</span>"; return; }
+    const slot = (kind, people) => people.length
+      ? `<div class="slot"><span class="k">${kind}</span><span class="n">${people.map((p) =>
+          `${p.onTrain ? `<span class="dot ok" title="いま運転中"></span>` : ""}${esc(p.name)}${p.extra ? ` <span class="tag">臨変</span>` : ""}`).join("、")}</span></div>`
+      : `<div class="slot vacant"><span class="k">${kind}</span><span class="n">空き</span></div>`;
+    const freeDrivers = duties.filter((d) => !d.drivers.length).length, freeConductors = duties.filter((d) => !d.conductors.length).length;
+    const shown = duties.filter(dutyFilters[dutyFilter][1]);
+    box.innerHTML = `<div class="duty-sum"><span>全 ${duties.length} 行路のうち　運転士の空き <b>${freeDrivers}</b>　車掌の空き <b>${freeConductors}</b></span>
+        <span class="spacer"></span><select id="duty-filter" style="padding:2px 4px;border-radius:4px;border:1px solid var(--line);background:var(--bg);color:var(--fg)">${
+          Object.entries(dutyFilters).map(([k, [label]]) => `<option value="${k}"${k === dutyFilter ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+      <div class="duty-rows">${shown.map((d) => `<div class="duty-row"><b class="mono">${esc(d.id)}</b>${slot("運転士", d.drivers)}${slot("車掌", d.conductors)}
+        <div class="trains">${d.trains.map((t) => `<button data-train="${esc(t)}"${t === d.current ? ` class="cur" title="いま乗る列車"` : ""}>${esc(t)}</button>`).join("")}</div></div>`).join("")
+        || `<div class='t-muted' style='padding-top:6px'>${dutyFilters[dutyFilter][0]}の行路はありません</div>`}</div>`;
+    document.getElementById("duty-filter").onchange = (ev) => {
+      dutyFilter = ev.target.value;
+      try { localStorage.setItem("gokkoTabletDutyFilter", dutyFilter); } catch (e) {}
+      refreshDuties();
+    };
+  }
+
+  // ---- 列車を選ぶ画面 ----
+  async function pickScreen() {
+    await rolesReady; // 役職のリンクを出すため
+    let trains = [];
+    try { trains = (await (await fetch("/api/tid/state", { cache: "no-store" })).json()).tid.trains.map((t) => t.train); } catch (e) {}
+    const go = (t) => `<button data-train="${esc(t)}">${esc(t)}</button>`;
+    document.getElementById("app").innerHTML = `<div class="pick">
+      <div class="pane"><h5>出勤者（司令員・信号扱い）</h5><div id="role-attendees"><span class="t-muted">読み込み中…</span></div></div>
+      <div class="pane"><h5>列番を入れて開く</h5><div class="row"><input id="no" placeholder="例: 995C" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg)"><button id="open">開く</button></div></div>
+      <div class="pane"><h5>走っている列車</h5><div class="row">${trains.length ? trains.map(go).join("") : "<span class='t-muted'>いません</span>"}</div></div>
+      <div class="pane"><h5>行路（運転士・車掌）</h5><div id="duty-pane"><span class="t-muted">読み込み中…</span></div></div>
+      <div class="pane"><a href="tablet-arrivals.html" style="color:var(--muted)">駅の接近案内（駅へ向かってくる列車と到着番線）</a><br><a href="shukkinbo.html" style="color:var(--muted)">出勤簿（行路の運転士・車掌、信号扱い、司令員）</a></div>
+      <div class="pane"><div class="row" style="gap:4px 14px">${user ? `<span>ログイン: ${who()}（<a href="#" data-logout="1" style="color:var(--muted)">ログアウト</a>）</span>` : `<a href="#" data-login="1" style="color:var(--muted)">ログイン</a>`}${dispatchLinks()}</div></div></div>`;
+    document.querySelector(".pick").addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-train]");
+      if (b) location.search = "?train=" + encodeURIComponent(b.dataset.train);
+    });
+    await refreshDuties();
+    setInterval(refreshDuties, 5000); // だれが乗っているかは変わるので、行路の欄だけ読み直す
+    // ログインしていて行路がなければ、入れた列番の行路を割り当てる（ほかの人が持っていれば臨変）
+    document.getElementById("open").onclick = async () => {
+      const v = document.getElementById("no").value.trim();
+      if (!v) return;
+      if (user) { try { const j = await post("/crew/take", { train: v }); if (j.message) setFlash(j.message); } catch (e) { setFlash(e.message); } }
+      location.search = "?train=" + encodeURIComponent(v);
+    };
+    document.getElementById("no").addEventListener("keydown", (ev) => { if (ev.key === "Enter") document.getElementById("open").click(); });
+    GokkoRoleAttend.panel(document.getElementById("role-attendees"), () => token); // 自分の名前の横に［退勤］
+  }
+
+  // 出勤・行路の割り当ての知らせ（次に開いた画面の上に、しばらく出す）
+  function setFlash(m) { try { sessionStorage.setItem("gokkoTabletFlash", JSON.stringify({ m, t: Date.now() })); } catch (e) {} }
+  function flash() {
+    try {
+      const f = JSON.parse(sessionStorage.getItem("gokkoTabletFlash") || "null");
+      if (f && Date.now() - f.t < 10000) return `<div class="pane"><b>${esc(f.m)}</b></div>`;
+      sessionStorage.removeItem("gokkoTabletFlash");
+    } catch (e) {}
+    return "";
+  }
+  // 出勤: 行路がなければ、空いている行路がランダムに1つ割り当てられる（所属を見る）
+  async function attend() {
+    try { setFlash((await post("/crew/attend")).message); } catch (e) { setFlash(e.message); }
+    location.href = "tablet.html";
+  }
+  // 退勤: 出勤を外し、担当している行路（臨変も）を外す（行路はほかの人に回る）
+  async function leave() {
+    if (!confirm("退勤しますか？\n担当している行路は外れ、ほかの人に割り当てられるようになります。")) return;
+    try { setFlash((await post("/crew/leave")).message); } catch (e) { setFlash(e.message); }
+    location.href = "tablet.html";
+  }
+
+  // ログアウト・ログインの文字（ステータスバーと選ぶ画面）
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-attend]");
+    if (b) { ev.preventDefault(); attend(); return; }
+    const lv = ev.target.closest("[data-leave]");
+    if (lv) { ev.preventDefault(); leave(); return; }
+    const a = ev.target.closest("a[data-logout], a[data-login]");
+    if (!a) return;
+    ev.preventDefault();
+    if (a.dataset.logout) { post("/logout").catch(() => {}).finally(() => { setUser("", "", "logout"); location.href = "tablet.html" + (train ? "?train=" + encodeURIComponent(train) : ""); }); }
+    else loginScreen();
+  });
+
+  // 放送装置（車内・車外・連絡）: PC のクライアントで運転士・車掌として乗っているときだけ、画面の下に出す（1秒ごとに読み直す）。
+  // 押すたびに入・切。車内・車外・連絡はどれか1つ（サーバーが切り替える）。声は PC のマイクから送る
+  const ob = document.getElementById("onboard");
+  let obBusy = false, obMsgUntil = 0;
+  // 放送装置の高さ（名前の行が折り返すと変わる）を、ページの下の余白に入れる
+  new ResizeObserver(() => document.documentElement.style.setProperty("--ob-h", ob.offsetHeight + "px")).observe(ob);
+  function showOnboard(s) {
+    const show = !!(s && s.aboard);
+    ob.classList.toggle("show", show);
+    document.body.classList.toggle("has-onboard", show);
+    if (!show) return;
+    document.documentElement.style.setProperty("--ob-h", ob.offsetHeight + "px");
+    document.getElementById("ob-train").textContent = `${s.train}　${s.role}`;
+    document.getElementById("ob-other").textContent = s.otherBroadcast || "";
+    for (const b of ob.querySelectorAll("[data-ob]")) {
+      const k = b.dataset.ob, on = k === "Inside" ? s.inside : k === "Outside" ? s.outside : s.intercom;
+      b.className = on ? "on-" + k.toLowerCase() : "";
+      b.disabled = obBusy || (!on && k !== "Intercom" && !!s.otherBroadcast); // ほかの人が放送している間は、放送のボタンは押せない
+    }
+    if (Date.now() > obMsgUntil) document.getElementById("ob-msg").textContent = (s.members || []).join("／");
+  }
+  async function refreshOnboard() {
+    if (!token || obBusy) { if (!token) showOnboard(null); return; }
+    try {
+      const res = await fetch("/api/tid/onboard", { cache: "no-store", headers: { "X-Crew-Token": token } });
+      showOnboard(res.ok ? await res.json() : null);
+    } catch (e) { /* つながらなければ、そのまま */ }
+  }
+  ob.addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-ob]");
+    if (!b || obBusy) return;
+    obBusy = true;
+    try {
+      const j = await post("/onboard", { action: b.dataset.ob });
+      document.getElementById("ob-msg").textContent = j.message || "";
+      obMsgUntil = Date.now() + 4000;
+      obBusy = false;
+      showOnboard(j.state);
+    } catch (e) {
+      document.getElementById("ob-msg").textContent = e.message;
+      obMsgUntil = Date.now() + 4000;
+    } finally { obBusy = false; }
+  });
+  setInterval(refreshOnboard, 1000);
+  refreshOnboard();
+
+  // スマホのマイクで話す（/onboard-phone）。入にしている間は PC のマイクからは送らない。
+  // 声を出すと、そのとき選んでいる車内・車外・連絡に自動で送る（小さい音は送らない）。音声は列車無線のスマホの受話器（radio.html）と同じ作り:
+  // 16kHz・40ms ごとの Opus（libopus の WebAssembly）。マイクは https でないと使えない
+  const OB_OPUS_URL = "https://cdn.jsdelivr.net/npm/libopus-wasm@0.4.1/dist/index.js";
+  const OB_SIGNALR_URL = "https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js";
+  const OB_RATE = 16000, OB_FRAME = 640, OB_MAX_PACKET = 400, OB_GATE = 0.02, OB_GATE_HOLD = 400;
+  let obState = null, obMic = null; // obMic: { ctx, stream, node, encoder, conn, gateUntil, level }
+  const obShow = showOnboard;
+  showOnboard = (s) => { obState = s; obShow(s); obMicView(); }; // 状態を覚えておく（送る種類を決めるため）
+  function obChannel() {
+    const s = obState;
+    return !s || !s.aboard ? 0 : s.inside ? 1 : s.outside ? 2 : s.intercom ? 3 : 0;
+  }
+  function obMicView() {
+    const b = document.getElementById("ob-mic");
+    b.className = obMic ? "on" : "";
+    b.textContent = obMic ? "スマホのマイク 入" : "スマホのマイク";
+  }
+  const OB_CAPTURE = `
+    class Capture extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.ratio = sampleRate / ${OB_RATE};
+        const w = 2 * Math.PI * Math.min(7000, sampleRate * 0.45) / sampleRate, q = Math.SQRT1_2;
+        const a = Math.sin(w) / (2 * q), c = Math.cos(w), a0 = 1 + a;
+        this.b0 = (1 - c) / 2 / a0; this.b1 = (1 - c) / a0; this.b2 = this.b0; this.a1 = -2 * c / a0; this.a2 = (1 - a) / a0;
+        this.x1 = this.x2 = this.y1 = this.y2 = 0; this.pos = 0; this.prev = 0;
+        this.out = new Float32Array(${OB_FRAME}); this.n = 0;
+      }
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (!ch) return true;
+        for (let i = 0; i < ch.length; i++) {
+          const x = ch[i];
+          const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+          this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y;
+          while (this.pos <= 1) {
+            this.out[this.n++] = this.prev + (y - this.prev) * this.pos;
+            this.pos += this.ratio;
+            if (this.n === ${OB_FRAME}) { this.port.postMessage(this.out, [this.out.buffer]); this.out = new Float32Array(${OB_FRAME}); this.n = 0; }
+          }
+          this.pos -= 1; this.prev = y;
+        }
+        return true;
+      }
+    }
+    registerProcessor("gokko-onboard-capture", Capture);`;
+  function obLoadScript(url) {
+    return new Promise((ok, ng) => { const s = document.createElement("script"); s.src = url; s.onload = ok; s.onerror = () => ng(new Error("読み込めませんでした")); document.head.appendChild(s); });
+  }
+  function obBase64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+  function obMsg(text) { document.getElementById("ob-msg").textContent = text; obMsgUntil = Date.now() + 5000; }
+  async function obStartMic() {
+    if (!window.isSecureContext) throw new Error("https:// で開いてください（マイクは https でないと使えません）");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("このブラウザではマイクを使えません");
+    const m = { gateUntil: 0, level: 0 };
+    try {
+      m.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      await m.ctx.resume();
+      m.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      if (!window.signalR) await obLoadScript(OB_SIGNALR_URL);
+      const opus = await import(OB_OPUS_URL);
+      m.encoder = await opus.createEncoder({ sampleRate: OB_RATE, channels: 1, frameSize: OB_FRAME, application: opus.Application.Voip, signal: opus.Signal.Voice, bitrate: 24000, vbr: true, complexity: 5 });
+      const url = URL.createObjectURL(new Blob([OB_CAPTURE], { type: "application/javascript" }));
+      await m.ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const source = m.ctx.createMediaStreamSource(m.stream);
+      m.node = new AudioWorkletNode(m.ctx, "gokko-onboard-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      m.node.port.onmessage = (e) => obFrame(m, e.data);
+      const sink = m.ctx.createGain(); sink.gain.value = 0; // 処理を動かし続けるため、無音で出力につなぐ
+      source.connect(m.node); m.node.connect(sink); sink.connect(m.ctx.destination);
+      m.conn = new signalR.HubConnectionBuilder().withUrl("/onboard-phone").withAutomaticReconnect().build();
+      m.conn.onreconnected(async () => { try { await m.conn.invoke("Join", token); await m.conn.invoke("SetMic", true); } catch (e) {} });
+      await m.conn.start();
+      const j = await m.conn.invoke("Join", token);
+      if (!j.ok) throw new Error(j.message);
+      await m.conn.invoke("SetMic", true);
+      try { m.wake = await navigator.wakeLock?.request("screen"); } catch (e) {} // 話している間は画面を消さない
+      obMic = m;
+    } catch (e) { obStopMic(m); throw e; }
+  }
+  function obStopMic(m) {
+    m = m || obMic;
+    if (!m) return;
+    try { m.conn && m.conn.invoke("SetMic", false).finally(() => m.conn.stop()); } catch (e) {}
+    try { m.stream && m.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    try { m.node && m.node.disconnect(); } catch (e) {}
+    try { m.ctx && m.ctx.close(); } catch (e) {}
+    try { m.encoder && m.encoder.free(); } catch (e) {}
+    try { m.wake && m.wake.release(); } catch (e) {}
+    if (m === obMic) obMic = null;
+  }
+  function obFrame(m, pcm) {
+    let peak = 0;
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+    m.level = Math.max(m.level, Math.min(peak, 1));
+    const now = performance.now();
+    if (peak >= OB_GATE) m.gateUntil = now + OB_GATE_HOLD;
+    const channel = obChannel();
+    m.tx = channel > 0 && now < m.gateUntil;
+    if (!m.tx || !m.conn || m.conn.state !== signalR.HubConnectionState.Connected) return;
+    let packet;
+    try { packet = m.encoder.encodeFloat(pcm, { maxPacketBytes: OB_MAX_PACKET }); } catch (e) { return; }
+    if (packet && packet.length > 0) m.conn.send("SendAudio", { channel, senderId: "", opus: obBase64(packet) }).catch(() => {});
+  }
+  setInterval(() => { // マイクの大きさ（送っている間は赤）
+    const meter = document.getElementById("ob-meter");
+    const level = obMic ? obMic.level : 0;
+    if (obMic) obMic.level *= 0.7;
+    meter.firstElementChild.style.width = Math.round(level * 100) + "%";
+    meter.classList.toggle("tx", !!(obMic && obMic.tx));
+  }, 100);
+  document.getElementById("ob-mic").addEventListener("click", async (ev) => {
+    const b = ev.currentTarget;
+    if (b.disabled) return;
+    b.disabled = true;
+    try {
+      if (obMic) { obStopMic(); obMsg("PC のマイクに戻しました"); }
+      else { await obStartMic(); obMsg("スマホのマイクで話します（車内・車外・連絡のどれかを入にして、声を出すと送ります）"); }
+    } catch (e) {
+      obMsg((e && e.name === "NotAllowedError") ? "マイクの使用が許可されませんでした。ブラウザの設定で許可してください" : "マイクを開けませんでした: " + (e && e.message || e));
+    } finally { b.disabled = false; obMicView(); }
+  });
+  window.addEventListener("pagehide", () => obStopMic());
+
+  let stopped = false;
+  async function refresh() {
+    if (stopped) return;
+    let notice = null;
+    try {
+      const q = new URLSearchParams();
+      if (train) q.set("train", train);
+      const res = await fetch("/api/tid/tablet?" + q, { cache: "no-store", headers: token ? { "X-Crew-Token": token } : {} });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        if (j.logout) { setUser(""); loginScreen(j.message); return; } // ユーザーが消された・パスワードが出し直された
+        error = j.message || "読み込めませんでした"; data = null;
+        if (user && !train) notice = error; // 行路がまだない
+      }
+      else {
+        data = await res.json(); error = ""; lastOk = Date.now();
+        if (user && data.crew && data.crew !== user) setUser(data.crew, token); // 勤怠管理で社員番号が変わった
+      }
+    } catch (e) { error = "サーバーにつながりません"; }
+    document.title = data ? `${data.train} 乗務タブレット` : "乗務タブレット";
+    document.getElementById("app").innerHTML = data ? flash() + render(layout)
+      : `<div class="pick">${flash()}<div class="pane err">${esc(error)}</div>
+          ${notice ? `<div class="pane"><div class="row"><button data-attend="1">出勤</button></div>
+            <div class="t-muted">出勤すると、空いている行路が自動で割り当てられます。乗る列車が決まっているときは、「列車を選ぶ」から列番を入れて開いてください。</div></div>` : ""}
+          <div class="pane"><div class="row" style="gap:4px 14px">${user ? `<span>ログイン: ${who()}（<a href="#" data-leave="1" style="color:var(--muted)">退勤</a>）（<a href="#" data-logout="1" style="color:var(--muted)">ログアウト</a>）</span>` : ""}<span><a href="tablet.html?pick=1" style="color:var(--muted)">列車を選ぶ</a></span>${dispatchLinks()}</div></div></div>`;
+  }
+
+  (async () => {
+    // 列番もログインもなければログインの画面。?pick=1 なら列車を選ぶ画面
+    if (params.get("pick")) { await pickScreen(); return; }
+    if (!train && !user) { loginScreen(); return; }
+    try {
+      const xml = await (await fetch("tablet-layout.xml", { cache: "no-store" })).text();
+      layout = new DOMParser().parseFromString(xml, "application/xml").documentElement;
+      if (layout.getAttribute("FontSize")) document.body.style.fontSize = layout.getAttribute("FontSize") + "px";
+    } catch (e) { document.getElementById("app").textContent = "配置ファイル（tablet-layout.xml）を読めませんでした"; return; }
+    await refresh();
+    setInterval(refresh, 2000);
+  })();
+</script>
+</body>
+</html>

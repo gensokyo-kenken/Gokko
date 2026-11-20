@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 18" width="40" height="18">
+  <!-- 方向てこの両わきの、ななめの棒の灯（off）。ラインライトと同じく、盤に埋め込んだ平らな窓。中心は (20,9)、窓は 30×8 の長丸。
+       線路の上の方向てこの左右に 2 本ずつ、「＜」「＞」の形に並べる。線路の帯にかからないように、中心を線路から上下に 25 離す。開通している向きの 2 本が黄色に点く -->
+  <defs>
+    <filter id="glow" x="-0.5" y="-1.4" width="2" height="3.8"><feGaussianBlur stdDeviation="2.6"/></filter>
+    <clipPath id="b"><rect x="5" y="5" width="30" height="8" rx="4"/></clipPath>
+  </defs>
+  <rect x="4" y="4" width="32" height="10" rx="5" fill="#2f353e" opacity="0" filter="url(#glow)"/>
+  <rect x="5" y="5" width="30" height="8" rx="4" fill="#181c23"/>
+  <g clip-path="url(#b)"><rect x="6.2" y="6.6" width="30" height="8" rx="4" fill="#2f353e"/></g>
+  <rect x="5" y="5" width="30" height="8" rx="4" fill="none" stroke="#11141a" stroke-width="1.1"/>
+</svg>

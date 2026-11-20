@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 48" width="96" height="48">
+  <!-- 信号表示灯（2・off）。JIS E 3012 の信号機の記号を、線路に沿って寝かせた形。2位式（停止・進行）。丸の中は斜線1本。
+       真ん中に埋め込みの小さな灯。足は (10,24)、灯の中心は (63,24)。右へ進む向き。左へ進む向きは、灯の中心で 180 度回す（左右を返すと斜線の向きが変わるので、返さない） -->
+  <defs><filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="3"/></filter><clipPath id="b"><circle cx="63" cy="24" r="6"/></clipPath></defs>
+  <g stroke="#f5f6f7" stroke-width="2" fill="none" stroke-linecap="round">
+    <line x1="10" y1="14" x2="10" y2="34"/><line x1="10" y1="24" x2="47.5" y2="24"/><circle cx="63" cy="24" r="15.5"/>
+    <path d="M73.96,13.04 L52.04,34.96"/>
+  </g>
+  <circle cx="63" cy="24" r="10" fill="#3d424c" opacity="0" filter="url(#glow)"/>
+  <circle cx="63" cy="24" r="7.4" fill="#3c5360"/>
+  <circle cx="63" cy="24" r="6" fill="#20242d"/>
+  <g clip-path="url(#b)"><circle cx="63.96" cy="25.32" r="6" fill="#3d424c"/></g>
+  <circle cx="63" cy="24" r="6" fill="none" stroke="#15181e" stroke-width="1"/>
+</svg>

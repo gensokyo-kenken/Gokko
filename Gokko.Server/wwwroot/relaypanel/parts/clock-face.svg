@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" width="320" height="160">
+  <!-- デジタル時計の枠（320×160、横:縦 = 2:1）。白い樹脂の枠に、灰緑の液晶の窓。窓は (10,10) から 300×140。
+       ロープレの時刻を 時:分 と小さい秒で出し、その下に 月/日 と曜日を出す。盤に刷ったものではなく、盤の上の好きな所に動かして置ける独立した時計として使う。
+       数字は clock-digit-0〜9.svg、点は clock-colon.svg を、下の大きさに引きのばして並べる（位置は枠の左上から）。
+       時 (18,18)・(67,18) と 分 (140.5,18)・(189.5,18) は 49×84。点 (116,18) は 24.5×84。秒 (246.5,54)・(274.5,54) は 28×48。
+       月 (24,116)・(41,116) と 日 (72,116)・(89,116) は 15.75×27（月の十の位が 0 のときは置かない）。曜日 clock-wday-0〜6.svg は (268,116) に 27×27。
+       月と日の間の斜めの線と、下の段を分ける横の線は、この枠に描いてある -->
+  <defs>
+    <linearGradient id="m" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbfcfd"/><stop offset="0.6" stop-color="#e6e9ee"/><stop offset="1" stop-color="#c9ced6"/></linearGradient>
+    <linearGradient id="w" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b9c0ae"/><stop offset="1" stop-color="#a2a998"/></linearGradient>
+    <linearGradient id="i" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.28"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect x="1" y="1" width="318" height="158" rx="9" fill="url(#m)" stroke="#8d939e" stroke-width="1.1"/>
+  <rect x="3.4" y="3.4" width="313.2" height="153.2" rx="7" fill="none" stroke="#fff" stroke-width="1" opacity="0.8"/>
+  <rect x="10" y="10" width="300" height="140" rx="3" fill="url(#w)" stroke="#7d8478" stroke-width="1.1"/>
+  <rect x="10.6" y="10.6" width="298.8" height="9" fill="url(#i)"/>
+  <path d="M196,11 L246,11 L176,149 L126,149 Z" fill="#fff" opacity="0.06"/>
+  <!-- 下の段を分ける線、月と日の間の斜めの線 -->
+  <path d="M17,109 H303" stroke="#181b17" stroke-width="1.4"/>
+  <path d="M67.5,117 L61,142" stroke="#181b17" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

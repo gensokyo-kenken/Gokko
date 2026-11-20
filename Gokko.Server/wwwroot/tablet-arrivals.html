@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>接近案内</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@800&text=0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&display=swap">
+<style>
+  /* 駅の接近案内（乗務タブレット）。駅の案内盤のように、駅へ向かってくる列車を到着する順に、上り・下りごとに直近3列車まで出す。
+     色と字は乗務タブレット（tablet.html）に合わせる */
+  :root {
+    --bg: #1b2533; --panel: #22304a; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c;
+    --head: #1f4fa0; --row: #111822; --ok: #1f8a4c; --warn: #c98400; --info: #2f6fc0;
+    --mono: "A-OTF 見出ゴMB31 Pr6N", "A-OTF Midashi Go MB31 Pr6N", "A-OTF 見出ゴMB31 Pro", "A-OTF Midashi Go MB31 Pro", "見出ゴMB31",
+      "MidashiGoPr6N-MB31", "MidashiGoPro-MB31", "a-otf-midashi-go-mb31-pr6n", "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif;
+    --num: "Noto Sans JP", var(--mono);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif; font-size: 13px; line-height: 1.4; padding: 8px; font-variant-numeric: tabular-nums; }
+  button, select { font: inherit; }
+  a { color: var(--muted); }
+  .header { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; background: var(--bar); border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; }
+  .station { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+  .clock { font-family: var(--mono); font-size: 18px; }
+  .spacer { flex: 1; }
+  select { padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 8px; }
+
+  /* 盤: 左に向きの札、右に段の表 */
+  .board { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 0; background: #000; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .dir-tag { writing-mode: vertical-rl; text-orientation: upright; display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700; letter-spacing: .3em; color: #0d2a52; background: #8fb8e6; }
+  .dir-tag.up { color: #5a1414; background: #ec9a9a; }
+  .stages { display: grid; align-content: start; min-width: 0; }
+  .colhead { display: grid; grid-template-columns: var(--cols); background: var(--head); color: #fff; font-size: 11px; font-weight: 700; }
+  .colhead span { padding: 3px 6px; border-left: 1px solid rgba(255,255,255,.35); text-align: center; }
+  .colhead span:first-child { border-left: 0; }
+  .stages { --cols: 3.4em minmax(0, 1fr) 4.4em 12.4em; }
+  .stage { display: grid; grid-template-columns: var(--cols); align-items: center; background: var(--row); border-top: 1px solid #2a3442; min-height: 64px; }
+  .stage > div { padding: 4px 6px; min-width: 0; }
+  .ord { font-size: 11px; color: #e6d36a; text-align: center; font-weight: 700; }
+  .ord .st { display: inline-block; margin-top: 3px; font-size: 10px; color: #fff; border-radius: 3px; padding: 0 4px; background: #607089; }
+  .ord .st.arrived { background: var(--ok); }
+  .ord .st.passing { background: var(--warn); }
+  .num { font-family: var(--num); font-weight: 800; font-size: 30px; line-height: 1.1; letter-spacing: .04em; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kind { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 3px; padding: 0 6px; color: #fff; margin-right: 4px; }
+  .trk { display: flex; justify-content: center; }
+  .trk b { display: inline-flex; align-items: center; justify-content: center; min-width: 1.5em; height: 1.5em; font-family: var(--num); font-weight: 800; font-size: 28px;
+    border: 3px solid #fff; border-radius: 4px; color: #fff; }
+  .trk b.none { border-color: #4a5566; color: #4a5566; font-size: 18px; }
+  .times { display: grid; gap: 2px; }
+  .t { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+  .t .v { font-family: var(--num); font-weight: 800; font-size: 19px; text-align: right; white-space: nowrap; }
+  .t .v.dim, .stage.first .t .v.dim { color: #4f5b6c; letter-spacing: .05em; font-weight: 400; font-size: 15px; }
+  .t .k { font-size: 12px; font-weight: 700; border-radius: 3px; padding: 0 5px; background: #33445c; color: #fff; }
+  .t.off .k { background: transparent; color: #4f5b6c; border: 1px solid #3a4556; }
+  /* 第一列車は大きく */
+  .stage.first { min-height: 92px; }
+  .stage.first .num { font-size: 46px; }
+  .stage.first .trk b { font-size: 40px; }
+  .stage.first .t .v { font-size: 22px; }
+  .stage.empty .num { color: #2a3442; }
+  .delay { font-family: var(--mono); font-weight: 700; color: #fff; background: var(--warn); border-radius: 4px; padding: 0 5px; font-size: 11px; margin-left: 4px; }
+  @media (max-width: 520px) {
+    .stages { --cols: 2.8em minmax(0, 1fr) 3.6em 10.2em; }
+    .num { font-size: 22px; letter-spacing: 0; } .stage.first .num { font-size: 28px; }
+    .trk b { font-size: 22px; } .stage.first .trk b { font-size: 30px; }
+    .t .v { font-size: 16px; } .stage.first .t .v { font-size: 18px; }
+  }
+  .status { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--line); }
+  .dot.ok { background: var(--ok); } .dot.ng { background: #c62828; }
+  .pick { max-width: 520px; margin: 40px auto; display: grid; gap: 10px; }
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .pane h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .row button { border: 1px solid var(--line); background: var(--bar); color: var(--fg); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .err { color: #ffb4b4; }
+</style>
+<script src="menulink.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<script>
+  // 駅の接近案内。?station=駅ID（例 TH71）。2秒ごとに /api/tid/arrivals を読み直す。駅を選ぶと、このブラウザに覚えておく。
+  // 段は 1 列車の「着」と「発」。待避の駅では、同じ列車が「着」の段と「発」の段に分かれて出る（間に、先に出す列車の段が入る）。
+  // 時刻の欄: ーーーー は、その時刻をほかの段で出す。・・・・ は時刻がない（通過の着・始発の着・終着の発）
+  const params = new URLSearchParams(location.search);
+  let station = params.get("station") || "";
+  try { if (!station) station = localStorage.getItem("gokkoArrivalsStation") || ""; } catch (e) {}
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const typeColor = { "特急": "#c62828", "快急": "#7b3fb5", "急行": "#d9731f", "区急": "#2e8b57", "準急": "#1e88f0", "普通": "#607089", "回送": "#7a7a7a" };
+  const ORD = ["第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八"];
+  let stations = [], data = null, lastOk = 0, error = "";
+  const app = () => document.getElementById("app");
+
+  function timeLine(kind, v) {
+    if (v === "split") return `<div class="t off"><span class="v dim">ーーーー</span><span class="k">${kind}</span></div>`;
+    if (v === "none" || !v) return `<div class="t off"><span class="v dim">・・・・</span><span class="k">${kind}</span></div>`;
+    return `<div class="t"><span class="v">${esc(v)}</span><span class="k">${kind}</span></div>`;
+  }
+
+  function stageRow(s, i) {
+    const first = i === 0 ? " first" : "";
+    if (!s) return `<div class="stage empty${first}"><div class="ord">${ORD[i] || ""}</div><div></div><div></div><div></div></div>`;
+    const stCls = s.status === "到着" ? "arrived" : s.status === "通過中" ? "passing" : "";
+    const kindBg = typeColor[s.kind] || "#607089";
+    const label = s.stage === "通過" ? "通過" : s.stage === "終着" ? "当駅止" : s.stage === "発" && s.status !== "始発" ? "待避後発" : s.status === "始発" ? "当駅始発" : "";
+    return `<div class="stage${first}">
+      <div class="ord">${ORD[i] || ""}<br><span class="st ${stCls}">${esc(s.status)}</span></div>
+      <div><div class="num">${esc(s.train)}</div>
+        <div class="sub"><span class="kind" style="background:${kindBg}">${esc(s.type)}</span>${s.dest ? esc(s.dest) + "行" : ""}${label ? "　" + label : ""}${s.delay ? `<span class="delay">+${s.delay}分</span>` : ""}</div></div>
+      <div class="trk">${s.track ? `<b>${esc(s.track)}</b>` : `<b class="none">－</b>`}</div>
+      <div class="times">${timeLine("着", s.arr)}${timeLine("発", s.dep)}</div>
+    </div>`;
+  }
+
+  // 上りを先に出す（横並びなら左、縦並びなら上が上り）
+  const upFirst = (bs) => [...bs].sort((a, b) => (a.direction === "上り" ? 0 : 1) - (b.direction === "上り" ? 0 : 1));
+  function board(b) {
+    const rows = b.stages.map(stageRow);
+    // 列車がいなくても盤の形は保つ（3段まで空の段）
+    for (let i = rows.length; i < 3; i++) rows.push(stageRow(null, i));
+    return `<div class="board"><div class="dir-tag ${b.direction === "上り" ? "up" : ""}">${esc(b.direction)}</div>
+      <div class="stages"><div class="colhead"><span>順</span><span>列車番号</span><span>番線</span><span>時刻</span></div>${rows.join("")}</div></div>`;
+  }
+
+  function stationSelect() {
+    return `<select id="st">${stations.map((s) => `<option value="${esc(s.id)}" ${s.id === station ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`;
+  }
+
+  function render() {
+    const age = lastOk ? Math.round((Date.now() - lastOk) / 1000) : null;
+    const ok = age != null && age < 6;
+    document.title = data ? `${data.name} 接近案内` : "接近案内";
+    app().innerHTML = `<div class="header"><a href="menu.html" data-menu-link style="color:inherit; text-decoration:none; font-weight:700">‹ メニュー</a><span class="station">${esc(data ? data.name : "")}</span><span>接近案内</span>
+        <span class="spacer"></span>${stationSelect()}<span class="clock">${esc(data ? data.gameTime : "")}</span></div>
+      ${data ? `<div class="boards">${upFirst(data.boards).map(board).join("")}</div>` : `<div class="pane err">${esc(error)}</div>`}
+      <div class="status"><span><span class="dot ${ok ? "ok" : "ng"}"></span>サーバー${ok ? "" : "（更新が止まっています）"}</span>
+        <span>最終更新 ${age == null ? "-" : age + "秒前"}</span>
+        <span>ーーーー は別の段で出す時刻、・・・・ は時刻なし（通過など）</span>
+        <span><a href="tablet.html">乗務タブレットに戻る</a></span>${data && error ? `<span class="err">${esc(error)}</span>` : ""}</div>`;
+    document.getElementById("st").onchange = (ev) => choose(ev.target.value);
+  }
+
+  function choose(id) {
+    station = id;
+    try { localStorage.setItem("gokkoArrivalsStation", id); } catch (e) {}
+    history.replaceState(null, "", "?station=" + encodeURIComponent(id));
+    data = null; error = "読み込み中";
+    refresh();
+  }
+
+  function pickScreen() {
+    app().innerHTML = `<div class="pick"><div class="pane"><h5>接近案内を出す駅</h5>
+      <div class="row">${stations.map((s) => `<button data-st="${esc(s.id)}">${esc(s.name)}</button>`).join("") || "<span class='err'>駅がありません</span>"}</div></div>
+      <div class="pane"><a href="menu.html" data-menu-link>‹ メニューに戻る</a>　<a href="tablet.html">乗務タブレットに戻る</a></div></div>`;
+    app().querySelectorAll("button[data-st]").forEach((b) => b.onclick = () => { choose(b.dataset.st); timer = timer || setInterval(refresh, 2000); });
+  }
+
+  let busy = false, timer = null;
+  async function refresh() {
+    if (busy || !station) return;
+    busy = true;
+    try {
+      const res = await fetch("/api/tid/arrivals?station=" + encodeURIComponent(station), { cache: "no-store" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { error = j.message || "読み込めませんでした"; data = null; }
+      else { data = j; error = ""; lastOk = Date.now(); }
+    } catch (e) { error = "サーバーにつながりません"; }
+    busy = false;
+    // 駅を選ぶ欄を開いている間は描き直さない（選びにくくなるので）
+    if (document.activeElement && document.activeElement.id === "st") return;
+    render();
+  }
+
+  (async () => {
+    try { stations = await (await fetch("/api/tid/arrivals/stations", { cache: "no-store" })).json(); } catch (e) { stations = []; }
+    if (!station || !stations.some((s) => s.id === station)) { station = ""; pickScreen(); return; }
+    await refresh();
+    timer = setInterval(refresh, 2000);
+  })();
+</script>
+</body>
+</html>

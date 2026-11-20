@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 100" width="104" height="100">
+  <!-- てこの握り（pink）。丸い頭から、先へ細くなる握りがのびる形。頭の黒い丸札に番号を書く。軸の中心は (52,70)。定位（N）はこの向き。左右へは軸を中心に 38 度回す -->
+  <defs>
+    <clipPath id="gp"><path d="M45.6,7 Q45.6,3 49.6,3 H54.4 Q58.4,3 58.4,7 L61.6,56 H42.4 Z"/></clipPath>
+    <clipPath id="hd"><circle cx="52" cy="70" r="17"/></clipPath>
+  </defs>
+  <g transform="translate(52 70) scale(0.9) translate(-52 -70)">
+  <path d="M45.6,7 Q45.6,3 49.6,3 H54.4 Q58.4,3 58.4,7 L61.6,56 H42.4 Z" fill="#0b0d12" opacity="0.35" transform="translate(2.5 3)"/>
+  <circle cx="54.5" cy="73" r="17" fill="#0b0d12" opacity="0.35"/>
+  <path d="M45.6,7 Q45.6,3 49.6,3 H54.4 Q58.4,3 58.4,7 L61.6,56 H42.4 Z" fill="#d89aa9"/>
+  <g clip-path="url(#gp)">
+    <path d="M54.2,0 L58,60 H66 V0 Z" fill="#a86a84"/>
+    <path d="M40,48 Q52,43 64,48 V60 H40 Z" fill="#a86a84" opacity="0.6"/>
+  </g>
+  <path d="M45.6,7 Q45.6,3 49.6,3 H54.4 Q58.4,3 58.4,7 L61.6,56 H42.4 Z" fill="none" stroke="#5c3044" stroke-width="1" stroke-linejoin="round"/>
+  <circle cx="52" cy="70" r="17" fill="#d89aa9"/>
+  <g clip-path="url(#hd)"><path d="M52,88 A18,18 0 0 0 70,70 A18,18 0 0 0 66.5,59 A23,23 0 0 1 40,84.5 A18,18 0 0 0 52,88 Z" fill="#a86a84"/></g>
+  <circle cx="52" cy="70" r="17" fill="none" stroke="#5c3044" stroke-width="1"/>
+  <circle cx="52" cy="70" r="11.5" fill="#1b1d27" stroke="#e4e7ec" stroke-width="1.2"/>
+  </g>
+</svg>

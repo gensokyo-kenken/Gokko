@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>勤怠管理</title>
+<style>
+  /* 勤怠管理: 乗務員（ユーザー）を作り、行路（Data/Duties.csv）に割り当てる。管理画面と同じ管理キーで使う。
+     勤怠管理の鍵（Gokko:KintaiKey。公開する用）で入ったときは「乗務員」タブを出さない（行路の割り当て・列車ごとの担当だけ）。
+     見た目は、昔の Windows の事務用アプリ風（灰色の地・青いタイトルバー・タブ・枠囲み・一覧表・ステータスバー） */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: #ece9d8; color: #000; font: 12px/1.4 "MS UI Gothic", "Meiryo UI", Tahoma, sans-serif; display: flex; flex-direction: column; }
+  .titlebar { background: linear-gradient(#0a5fd8 0%, #3a8cf3 8%, #0f5fe0 40%, #0a4fc9 88%, #0842a6 100%); color: #fff; font: bold 13px Tahoma, "MS UI Gothic", sans-serif;
+    padding: 5px 8px; text-shadow: 1px 1px #0b2f80; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #0831a0; }
+  .titlebar .icon { width: 16px; height: 16px; background: #fff; border: 1px solid #08389c; border-radius: 2px; display: inline-grid; place-items: center; color: #0a4fc9; font-size: 10px; text-shadow: none; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #aca899; box-shadow: 0 1px #fff; }
+  .toolbar .sep { width: 1px; align-self: stretch; background: #aca899; box-shadow: 1px 0 #fff; margin: 0 2px; }
+  .content { flex: 1; padding: 8px 10px; overflow: auto; }
+  input[type=text], input[type=password], select {
+    font: inherit; background: #fff; border: 1px solid #7f9db9; padding: 2px 3px; border-radius: 0; height: 21px; }
+  button { font: inherit; color: #000; min-width: 75px; height: 23px; padding: 0 8px; border: 1px solid #003c74; border-radius: 3px;
+    background: linear-gradient(#fff, #f4f3ee 45%, #e3e0d0 90%, #d6d0bf); cursor: default; }
+  button:hover { box-shadow: inset 0 0 0 1px #f8b330; }
+  button:active { background: linear-gradient(#e3e0d0, #f4f3ee); }
+  button.small { min-width: 0; height: 19px; padding: 0 6px; font-size: 11px; }
+  /* タブ（プロパティシート風） */
+  .tabs { display: flex; gap: 2px; padding-left: 4px; position: relative; top: 1px; }
+  .tab { padding: 3px 12px; border: 1px solid #919b9c; border-bottom: none; background: linear-gradient(#fff, #ecebe5); border-radius: 3px 3px 0 0; cursor: default; }
+  .tab.on { background: #fcfcfe; border-top: 2px solid #ffc83c; padding-bottom: 5px; position: relative; top: -2px; }
+  .sheet { border: 1px solid #919b9c; background: #fcfcfe; padding: 10px; min-height: 380px; }
+  /* min-width: 0 … fieldset は既定で中身（一覧表）より狭くならず、シートの外へはみ出す。一覧表は .list の中で横に流す */
+  fieldset { border: 1px solid #d0d0bf; border-radius: 3px; padding: 6px 10px 10px; margin: 0 0 10px; min-width: 0; }
+  legend { color: #0046d5; padding: 0 3px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+  .note { color: #444; margin: 2px 0 6px; }
+  /* 一覧表（リストビュー風） */
+  .list { border: 1px solid #7f9db9; background: #fff; overflow: auto; max-height: 360px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { position: sticky; top: 0; font-weight: normal; text-align: left; white-space: nowrap; padding: 2px 6px;
+    background: linear-gradient(#fff, #ebeadb); border-right: 1px solid #c7c5b2; border-bottom: 2px solid #d6d2c2; }
+  th[data-sort] { cursor: default; user-select: none; }
+  th[data-sort]:hover { background: linear-gradient(#fff, #f8f7f0); }
+  th[data-sort]:active { background: #dedccf; }
+  tr.group td { background: #e3e8f4; color: #0046d5; font-weight: bold; border-top: 1px solid #b8c4dc; }
+  tr.group:hover td { background: #e3e8f4; }
+  th .arrow { color: #7f7f7f; font-size: 9px; margin-left: 4px; }
+  td { padding: 2px 6px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; vertical-align: middle; }
+  td.wrap { white-space: normal; min-width: 220px; } /* 乗務列車の欄は折り返して、担当者の欄を画面に収める */
+  td input[type=checkbox] { margin: 0 2px 0 0; vertical-align: middle; }
+  td label { white-space: nowrap; }
+  tr:hover td { background: #e8eef9; }
+  .mono { font-family: "MS Gothic", "Courier New", monospace; }
+  .run { color: #008000; font-weight: bold; }
+  .ng { color: #c00000; }
+  .auto { border: 1px solid #000080; color: #000080; padding: 0 2px; font-size: 11px; }
+  .muted { color: #808080; }
+  .chip { font-family: "MS Gothic", "Courier New", monospace; margin-right: 6px; display: inline-block; white-space: nowrap; }
+  .chip.run { color: #008000; font-weight: bold; }
+  .chip.pick { cursor: pointer; padding: 0 2px; border: 1px solid transparent; }
+  .chip.pick:hover { border-color: #7f9db9; }
+  .chip.pick.on { background: #316ac5; color: #fff; }
+  .statusbar { display: flex; gap: 2px; padding: 2px; border-top: 1px solid #aca899; background: #ece9d8; }
+  .statusbar span { border: 1px solid; border-color: #aca899 #fff #fff #aca899; padding: 1px 6px; }
+  .statusbar span.grow { flex: 1; }
+  /* 確認・お知らせの窓（メッセージボックス風） */
+  .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .15); display: grid; place-items: center; z-index: 9; }
+  .dialog { background: #ece9d8; border: 1px solid #0831a0; box-shadow: 2px 2px 6px rgba(0, 0, 0, .4); min-width: 320px; max-width: 90vw; }
+  .dialog .body { padding: 14px 16px; display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: start; }
+  .dialog .mark { width: 32px; height: 32px; border-radius: 50%; background: radial-gradient(#5a9ef8, #1d5fd0); color: #fff; font: bold 20px Georgia, serif; display: grid; place-items: center; }
+  .dialog .mark.warn { background: radial-gradient(#ffe36b, #e7a600); color: #000; border-radius: 3px; }
+  .dialog .pw { font: bold 22px "MS Gothic", "Courier New", monospace; letter-spacing: .1em; background: #fff; border: 1px solid #7f9db9; padding: 4px 10px; margin: 6px 0; display: inline-block; }
+  .dialog .buttons { display: flex; justify-content: center; gap: 8px; padding: 0 0 12px; }
+</style>
+<script src="menulink.js"></script>
+<script src="crewsession.js"></script>
+</head>
+<body>
+<div class="titlebar"><span class="icon">勤</span>勤怠管理 － 乗務員・行路割当</div>
+<div class="toolbar">
+  <label>管理キー: <input id="key" type="password" size="14" autocomplete="off"></label>
+  <button id="saveKey">接続</button>
+  <span class="sep"></span>
+  <button id="reload">最新の情報に更新</button>
+  <span class="sep"></span>
+  <a href="admin.html" id="adminLink">管理画面へ</a>
+  <a href="shukkinbo.html">出勤簿へ</a>
+  <a href="menu.html" data-menu-link>乗務メニューへ</a>
+</div>
+
+<div class="content">
+  <fieldset><legend>出勤者（司令員・信号扱い）</legend><div id="roleAttend" class="row" style="gap:4px 18px;margin:0">－</div></fieldset>
+  <div class="tabs" id="tabs">
+    <span class="tab" data-tab="users">乗務員</span>
+    <span class="tab" data-tab="roster">名簿</span>
+    <span class="tab" data-tab="duties">行路の割り当て</span>
+    <span class="tab" data-tab="trains">列車ごとの担当</span>
+    <span class="tab" data-tab="diagram">行路のダイヤ</span>
+    <span class="tab" data-tab="edit">行路を組む</span>
+  </div>
+  <div class="sheet">
+    <div data-sheet="users">
+      <fieldset><legend>Discord の申請<span id="appsCount"></span></legend>
+        <div class="note">はじめての人は、乗務メニューなどの［Discord でログイン］から申請します。Discord の名前で本人か確かめてから［承認］を押してください。<br>
+          承認すると、入社年度から社員番号を振って名簿に入れます（社員番号を入れて申請した人は、その社員番号に Discord を紐づけます）。<br>
+          Discord の名前は、承認・却下したら消します（名簿には残しません）。</div>
+        <div class="list" id="apps"></div>
+      </fieldset>
+      <fieldset><legend>乗務員の登録（移行のあいだだけ）</legend>
+        <div class="note">ユーザー名・入社年度・所属を入れて［登録］を押すと、社員番号とパスワードを自動で発行します。本人に伝えてください（パスワードでのログインの期限まで使えます。本人はログインしたら Discord と紐づけます）。<br>
+          社員番号を決めてある人は、社員番号の欄に入れてください（空欄なら入社年度から自動で振ります）。</div>
+        <div class="row">ユーザー名: <input id="newUser" type="text" maxlength="20" size="16">
+          入社年度: <select id="newYear"></select>
+          所属: <select id="newDepot"></select>
+          社員番号: <input id="newId" type="text" maxlength="8" size="9" placeholder="自動">
+          <button id="addUser">登録</button></div>
+      </fieldset>
+      <fieldset><legend>乗務員の一覧</legend>
+        <div class="note">ログイン欄の「Discord」は Discord と紐づけ済み、「パスワード」はまだの人です。パスワードを忘れた人は［再発行］を押すか、本人に Discord で申請してもらってください（社員番号を入れて申請すると、その人に紐づきます）。<br>
+          Discord アカウントを作り直した人は［紐づけ解除］を押し、新しい Discord で申請し直してもらってください。<br>
+          社員番号・ユーザー名・入社年度・所属を直すときは［編集］を押してください。</div>
+        <div class="list" id="users"></div>
+      </fieldset>
+    </div>
+    <div data-sheet="roster">
+      <fieldset><legend>名簿</legend>
+        <div class="note">社員番号またはユーザー名の一部を入れると絞り込みます（例: 「10103」「山」）。見出しを押すと並べ替えます。</div>
+        <div class="row">社員番号: <input id="rosterId" type="text" size="10" maxlength="8" inputmode="numeric">
+          　ユーザー名: <input id="rosterName" type="text" size="16" maxlength="20">
+          <button id="rosterClear">クリア</button>　<span id="rosterInfo" class="muted"></span></div>
+        <div class="list" id="roster"></div>
+      </fieldset>
+    </div>
+    <div data-sheet="duties">
+      <fieldset id="dutyFileBox"><legend>行路表</legend>
+        <div class="note">サーバーの Data フォルダにある行路表（Duties*.csv）から選んで［読み込む］を押すと、再起動せずに切り替わります。選んだ行路表は再起動しても使います。<br>
+          行路の割り当ては切り替えても消えません。新しい行路表にない行路番号の割り当ては、下の一覧に「行路表にない」と出ます。</div>
+        <div class="row">ファイル: <select id="dutyFile"></select> <button id="loadDuties">読み込む</button>
+          　読み込み中: <span class="mono" id="dutyFileNow">－</span> <span id="dutyFileInfo"></span></div>
+        <div class="note" style="margin-top:8px">［運行番号から作る］: 時間を決めると、その間に館浜〜赤山町を走る列車を漏れなく拾い、いちばん少ない人数で受け持つ行路（道1, 道2, …。特急に乗る行路は 駒1, 駒2, …）を作って、そのまま使います。<br>
+          同じ編成の折返しにはそのまま乗り（待機）、着いた駅から出るほかの列車にも乗り換えます（渡り。赤山町は5分、ほかの駅は3分以上あと。「渡りの上限」まで、短いほどよい）。前の割り当ては外し、出勤している人に割り当て直します。<br>
+          作った行路表は「名前」の CSV（空なら Duties.unyo.csv）に書きます。同じ名前の、勤怠管理で作った行路表は上書きします（手で作った行路表は上書きしません）。</div>
+        <div class="row">運行番号から作る: <input id="unyoFrom" type="time" value="17:00"> 〜 <input id="unyoTo" type="time" value="19:00">
+          　渡りの上限: <input id="unyoTransfer" type="number" min="5" max="120" value="30" style="width:4em">分
+          　名前: Duties.<input id="unyoName" type="text" size="14" maxlength="40" placeholder="例: 夕方">.csv <button id="makeUnyo">作る</button></div>
+      </fieldset>
+      <fieldset><legend>出勤と自動割り当て</legend>
+        <div class="note">乗務タブレットで［出勤］を押した人には、空いている行路をランダムに1つ自動で割り当てます（所属の合う行路から。前回と同じ行路と、ほかの人と列車が重なる行路は避けます）。<br>
+          ［出勤者に自動で割り当てる］を押すと、出勤していて行路のない人に、出勤した順にまとめて割り当てます。自動で割り当てた行路には「自」と出ます。直すときは下の担当者の欄で選び直してください。<br>
+          タブレットで列番を入れて開いた人は、その列車の行路が割り当てられます。ほかの人がもう持っていたときは、あとから来た人が「臨変」になります。</div>
+        <div class="row"><button id="autoAssign">出勤者に自動で割り当てる</button> <button id="clearAttend">全員の出勤を外す</button>
+          　出勤: <span id="attendInfo">－</span></div>
+      </fieldset>
+      <fieldset><legend>行路の割り当て</legend>
+        <div class="note">行路ごとに担当の乗務員を選んでください。同じ人に複数の行路を割り当ててもかまいません。緑の列番は走行中の列車です。</div>
+        <div class="list" id="duties"></div>
+      </fieldset>
+    </div>
+    <div data-sheet="trains">
+      <fieldset><legend>列車ごとの担当</legend>
+        <div class="row"><label><input type="checkbox" id="onlyRunning"> 走行中の列車のみ表示</label>
+          　検索: <input id="trainFilter" type="text" size="14"></div>
+        <div class="list" id="trains"></div>
+      </fieldset>
+    </div>
+    <div data-sheet="diagram">
+      <fieldset><legend>運転士のいない列車</legend>
+        <div class="note">館浜〜赤山町を走る列車のうち、運転士のいない列車です。「行路なし」はどの行路にも入っていない列車（行路表の時間の中だけ）、「担当者なし」は行路はあるが担当者のいない列車です。</div>
+        <div class="row"><label><input type="checkbox" id="noDutyOnly"> 行路なしだけ表示</label>　<span id="noDriverInfo"></span></div>
+        <div class="list" id="noDriver"></div>
+      </fieldset>
+      <fieldset><legend>行路のダイヤ</legend>
+        <div class="note">横が時刻、縦が駅です。行路ごとに色を分けた線が、運転士の動きです（点線は休憩・乗り継ぎ、破線は担当者のいない行路、赤い太線は行路のない列車）。線にマウスを当てると、行路・担当者・列番が出ます。</div>
+        <div class="row">行路・社員番号で強調: <input id="diaFilter" type="text" size="12" placeholder="例: 道3"></div>
+        <div class="list" id="dutyDia" style="overflow:auto"></div>
+      </fieldset>
+    </div>
+    <div data-sheet="edit">
+      <fieldset><legend>行路を組む</legend>
+        <div class="note">列番を押して選び（もう一度押すと外れます）、移す先の行路を選んで［移す］を押すと、その行路へ移ります。「新しい行路」を選ぶと、入れた行路番号で行路を作ります。<br>
+          移したあとは、列車を発車の順に並べ直し、5分以上あく所に休憩を入れ直します。列車のなくなった行路は消えます。組んだ行路表は「書く先」の名前の CSV に書き、そのまま使います。空なら、いまの行路表が勤怠管理で作ったものならそれに、手で作ったものなら Duties.edit.csv に書きます（手で作った行路表は書き換えません）。<br>
+          「注意」の欄に、前の列車の着いた駅と次の列車の出る駅が違う所（つながらない）と、時間が重なる所が出ます。</div>
+        <div class="row">移す先: <select id="moveTo"></select> <input id="moveNew" type="text" size="8" maxlength="12" placeholder="例: 臨1">
+          　書く先: Duties.<input id="editName" type="text" size="12" maxlength="40" placeholder="空なら自動">.csv
+          <button id="moveBtn">選んだ列車を移す</button> <button id="moveClear">選ぶのをやめる</button>　選んだ列車: <span id="moveSel" class="mono">なし</span></div>
+        <div class="row">行路名を変える: <select id="renameFrom"></select> → <input id="renameTo" type="text" size="8" maxlength="12" placeholder="新しい行路名"> <button id="renameBtn">変える</button>
+          <span class="muted">（担当者・臨変はそのまま新しい行路名へ移ります。書く先は上と同じ）</span></div>
+        <div class="list" id="editList"></div>
+      </fieldset>
+    </div>
+    <fieldset id="problemsBox" hidden><legend>行路表の注意</legend><div id="problems"></div></fieldset>
+  </div>
+</div>
+
+<div class="statusbar"><span id="conn" class="grow">未接続</span><span id="countUsers">乗務員 0 名</span><span id="countDuties">行路 0 件</span><span id="clock">--:--</span></div>
+
+<script src="gameclock.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let key = "";
+  try { key = sessionStorage.getItem("gokkoAdminKey") || ""; } catch (e) {}
+  // 乗務メニューから開いた司令員は、鍵なしで入る（メニューから引き継いだ、このタブだけのログインの合い札。crewsession.js）
+  // URL を直接開いたタブでは引き継がないので、管理キーか、乗務メニューからのログインが要る
+  const crewToken = GokkoCrew.token();
+  $("key").value = key;
+  let data = null;
+  let tab = "users";
+  try { tab = localStorage.getItem("gokkoKintaiTab") || "users"; } catch (e) {}
+
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const hm = (t) => (t ? t.slice(0, 5) : "--:--");
+  const fmtMin = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+  function setHtml(el, html) { if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; } }
+
+  // メッセージボックス。buttons は ["OK"] や ["はい", "いいえ"]。押したボタンの文字を返す
+  function box(html, buttons = ["OK"], warn = false) {
+    return new Promise((resolve) => {
+      const m = document.createElement("div");
+      m.className = "modal";
+      m.innerHTML = `<div class="dialog"><div class="titlebar"><span class="icon">勤</span>勤怠管理</div>
+        <div class="body"><div class="mark ${warn ? "warn" : ""}">${warn ? "!" : "i"}</div><div>${html}</div></div>
+        <div class="buttons">${buttons.map((b) => `<button data-b="${esc(b)}">${esc(b)}</button>`).join("")}</div></div>`;
+      m.addEventListener("click", (ev) => { const b = ev.target.closest("button[data-b]"); if (b) { m.remove(); resolve(b.dataset.b); } });
+      document.body.appendChild(m);
+      m.querySelector(`button[data-b="${esc(buttons[buttons.length - 1])}"]`).focus();
+    });
+  }
+  const showPassword = (id, pw, what) => box(`${esc(what)}<br><br>社員番号: <b class="mono">ID:${esc(id)}</b><br>パスワード:<br><span class="pw">${esc(pw)}</span><br>
+    このパスワードは、この画面を閉じると二度と表示されません。<br>社員番号と一緒に、本人に伝えてください。`);
+  const era = (y) => !y ? "" : y >= 2019 ? `R${y - 2018}` : y >= 1989 ? `H${y - 1988}` : `S${y - 1925}`;
+  const yearOptions = (sel) => { let s = ""; for (let y = data.joinYearTo; y >= data.joinYearFrom; y--) s += `<option value="${y}" ${y === sel ? "selected" : ""}>${y}（${era(y)}）</option>`; return s; };
+
+  // 乗務員の登録内容の変更（社員番号・ユーザー名・入社年度・所属）。［OK］で保存し、［キャンセル］で閉じる
+  function editUser(u) {
+    const m = document.createElement("div");
+    m.className = "modal";
+    m.innerHTML = `<div class="dialog"><div class="titlebar"><span class="icon">勤</span>乗務員の登録内容の変更</div>
+      <div class="body" style="grid-template-columns:auto 1fr;align-items:center">
+        <label for="eId">社員番号:</label><input id="eId" type="text" maxlength="8" size="10" value="${esc(u.id)}">
+        <label for="eName">ユーザー名:</label><input id="eName" type="text" maxlength="20" size="20" value="${esc(u.name)}">
+        <label for="eYear">入社年度:</label><select id="eYear">${yearOptions(u.joinYear)}</select>
+        <label for="eDepot">所属:</label><select id="eDepot">${data.depots.map((d) => `<option ${d === u.depot ? "selected" : ""}>${esc(d)}</option>`).join("")}</select>
+        <span></span><span class="note" style="margin:0">社員番号を変えても、行路の割り当てとログインはそのまま引き継ぎます。</span>
+        <span></span><span id="eMsg" class="ng"></span>
+      </div>
+      <div class="buttons"><button id="eOk">OK</button><button id="eCancel">キャンセル</button></div></div>`;
+    document.body.appendChild(m);
+    const close = () => m.remove();
+    const save = async () => {
+      try {
+        await api("POST", "/crew/users/update", { id: u.id, newId: $("eId").value.trim(), name: $("eName").value.trim(), joinYear: Number($("eYear").value), depot: $("eDepot").value });
+        close(); await refresh();
+      } catch (e) { $("eMsg").textContent = e.message; }
+    };
+    $("eOk").onclick = save;
+    $("eCancel").onclick = close;
+    m.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target.tagName === "INPUT") save(); if (ev.key === "Escape") close(); });
+    $("eName").focus();
+  }
+
+  // 乗務員の登録・編集・パスワード・役職・出勤の付け外しは管理キーだけ（/api/admin）。ほかは勤怠管理の鍵でも使える（/api/kintai）
+  const adminOnly = ["/crew/users", "/crew/reset", "/crew/roles", "/crew/attend", "/crew/applications", "/crew/discord"];
+  async function api(method, path, body) {
+    const isAdmin = adminOnly.some((p) => path === p || path.startsWith(p + "/")) && path !== "/crew/attend/clear";
+    const res = await fetch((isAdmin ? "/api/admin" : "/api/kintai") + path, {
+      method, headers: { ...(!key && crewToken && !isAdmin ? { "X-Crew-Token": crewToken } : { [isAdmin ? "X-Admin-Key" : "X-Kintai-Key"]: key }), "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined, cache: "no-store"
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((json && (json.message || json.detail)) || ("HTTP " + res.status));
+    return json;
+  }
+  async function act(method, path, body) {
+    try { const r = await api(method, path, body); await refresh(); return r; }
+    catch (e) { await box(esc(e.message), ["OK"], true); return null; }
+  }
+
+  function showTab() {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === tab));
+    document.querySelectorAll("[data-sheet]").forEach((s) => { s.hidden = s.dataset.sheet !== tab; });
+  }
+
+  // ---- 一覧表の並べ替え（見出しを押すと昇順 → 降順 → もとの並び） ----
+  let sorts = {};
+  try { sorts = JSON.parse(localStorage.getItem("gokkoKintaiSort") || "{}") || {}; } catch (e) {}
+  const collator = new Intl.Collator("ja", { numeric: true }); // 道1, 道2, …, 道9, 道10
+  function head(table, cols) {
+    const s = sorts[table];
+    return `<tr>${cols.map(([label, k]) => !k ? `<th>${label}</th>`
+      : `<th data-table="${table}" data-sort="${k}" title="押すと並べ替え">${label}${s && s.key === k ? `<span class="arrow">${s.desc ? "▼" : "▲"}</span>` : ""}</th>`).join("")}</tr>`;
+  }
+  function sorted(table, rows, getters) {
+    const s = sorts[table];
+    const get = s && getters[s.key];
+    if (!get) return rows;
+    const blank = (v) => v === null || v === undefined || v === "";
+    return rows.map((r, i) => ({ r, i, v: get(r) })).sort((a, b) => {
+      if (blank(a.v) || blank(b.v)) return blank(a.v) === blank(b.v) ? a.i - b.i : blank(a.v) ? 1 : -1; // 空はいつも下
+      const c = typeof a.v === "number" && typeof b.v === "number" ? a.v - b.v : collator.compare(String(a.v), String(b.v));
+      return (s.desc ? -c : c) || a.i - b.i;
+    }).map((x) => x.r);
+  }
+  document.addEventListener("click", (ev) => {
+    const th = ev.target.closest("th[data-sort]");
+    if (!th) return;
+    const { table, sort } = th.dataset, s = sorts[table];
+    sorts[table] = !s || s.key !== sort ? { key: sort, desc: false } : !s.desc ? { key: sort, desc: true } : null;
+    try { localStorage.setItem("gokkoKintaiSort", JSON.stringify(sorts)); } catch (e) {}
+    draw();
+  });
+
+  function draw() {
+    if (!data) return;
+    // 勤怠管理の鍵で入ったときは、乗務員タブを出さない
+    const full = data.full !== false;
+    document.querySelector('.tab[data-tab="users"]').hidden = !full;
+    $("adminLink").hidden = !full;
+    const dutyEdit = data.dutyEdit !== false; // 行路表を扱える（管理キー・司令員。勤怠管理の鍵ではできない）
+    document.querySelector('.tab[data-tab="edit"]').hidden = !dutyEdit;
+    if ((!full && tab === "users") || (!dutyEdit && tab === "edit")) { tab = "duties"; showTab(); }
+    const users = data.users;
+    const dutyIndex = new Map(data.duties.map((d, i) => [d.view.id, i])); // 行路の並び（サーバーが決めた順: グループごと・番号順）
+    const missing = data.missing || []; // 割り当ててあるのに、いまの行路表にない行路番号
+    const missingSet = new Set(missing.map((m) => m.duty));
+    const t = (d) => d ? GokkoClock.fmt(Date.parse(d)) : ""; // ロープレ時刻
+    const userRows = sorted("users", users, {
+      id: (u) => u.id, name: (u) => u.name, year: (u) => u.joinYear || null, depot: (u) => u.depot, roles: (u) => (u.roles || []).join(" "),
+      attend: (u) => u.attended, duties: (u) => dutyIndex.get(u.duties[0]), login: (u) => u.discord ? 0 : 1,
+      tablet: (u) => u.online ? 0 : u.last ? 1e13 - Date.parse(u.last) : null, created: (u) => u.created // ログイン中 → 最近読みに来た順
+    });
+    setHtml($("users"), `<table>${head("users", [["社員番号", "id"], ["ユーザー名", "name"], ["入社年度", "year"], ["所属", "depot"], ["役職", "roles"], ["出勤", "attend"],
+      ["担当行路", "duties"], ["ログイン", "login"], ["タブレット", "tablet"], ["登録日", "created"], ["操作"]])}
+      ${users.length === 0 ? `<tr><td colspan="11" class="muted">（登録されている乗務員はいません）</td></tr>` : userRows.map((u) => `<tr>
+        <td class="mono">ID:${esc(u.id)}</td><td>${esc(u.name)}</td><td>${u.joinYear || ""}（${era(u.joinYear)}）</td><td>${esc(u.depot)}</td>
+        <td>${(data.roleNames || []).map((r) => `<label><input type="checkbox" data-role="${esc(r)}" data-id="${esc(u.id)}" ${(u.roles || []).includes(r) ? "checked" : ""}> ${esc(r)}</label>`).join(" ")}</td>
+        <td>${u.attended ? `<span class="run">出勤</span> <span class="mono">${t(u.attended)}</span> <button class="small" data-attend="${esc(u.id)}" data-on="">取消</button>`
+          : `<button class="small" data-attend="${esc(u.id)}" data-on="1">出勤</button>`}</td>
+        <td class="mono">${u.duties.length ? u.duties.map((d) => (missingSet.has(d) ? `<span class="ng" title="行路表にない">${esc(d)}(行路表にない)</span>` : esc(d))
+          + ((u.extras || []).includes(d) ? `<span class="ng">(臨変)</span>` : "")).join(", ") : `<span class="muted">なし</span>`}</td>
+        <td>${[u.discord ? "Discord" : "", u.hasPassword ? `<span class="ng">パスワード</span>` : ""].filter(Boolean).join("・") || `<span class="muted">なし</span>`}</td>
+        <td>${u.online ? `<span class="run">ログイン中</span> <span class="mono">${esc(u.train || "")}</span>` : `<span class="muted">${u.last ? "最終 " + t(u.last) : "－"}</span>`}</td>
+        <td>${u.created ? new Date(u.created).toLocaleDateString("ja-JP") : ""}</td>
+        <td><button class="small" data-edit="${esc(u.id)}">編集</button> <button class="small" data-reset="${esc(u.id)}">再発行</button>${u.discord ? ` <button class="small" data-unlink="${esc(u.id)}">紐づけ解除</button>` : ""} <button class="small" data-del="${esc(u.id)}">削除</button></td></tr>`).join("")}</table>`);
+
+    // 名簿（勤怠管理の鍵でも見られる。社員番号・ユーザー名・入社年度・所属・担当行路だけ）
+    const qId = $("rosterId").value.trim().replace(/^ID:?/i, ""), qName = $("rosterName").value.trim().toLowerCase();
+    const rosterRows = sorted("roster", users.filter((u) => (!qId || u.id.includes(qId)) && (!qName || (u.name || "").toLowerCase().includes(qName))), {
+      id: (u) => u.id, name: (u) => u.name, year: (u) => u.joinYear || null, depot: (u) => u.depot, duties: (u) => dutyIndex.get(u.duties[0])
+    });
+    setHtml($("rosterInfo"), qId || qName ? `${rosterRows.length} 名が該当（全 ${users.length} 名）` : `全 ${users.length} 名`);
+    setHtml($("roster"), `<table>${head("roster", [["社員番号", "id"], ["ユーザー名", "name"], ["入社年度", "year"], ["所属", "depot"], ["担当行路", "duties"]])}
+      ${rosterRows.length === 0 ? `<tr><td colspan="5" class="muted">（${users.length ? "該当する乗務員はいません" : "登録されている乗務員はいません"}）</td></tr>` : rosterRows.map((u) => `<tr>
+        <td class="mono">ID:${esc(u.id)}</td><td>${esc(u.name)}</td><td>${u.joinYear || ""}（${era(u.joinYear)}）</td><td>${esc(u.depot)}</td>
+        <td class="mono">${u.duties.length ? u.duties.map((d) => esc(d) + ((u.extras || []).includes(d) ? `<span class="ng">(臨変)</span>` : "")).join(", ") : `<span class="muted">なし</span>`}</td></tr>`).join("")}</table>`);
+
+    // 行路のグループ（変道・変駒・赤道・赤駒・道・駒・試 など。行路番号から数字と「泊」を除いたもの）。
+    // 並びはサーバーが決める（グループごと、中は番号順）。行路番号の順のときだけ、グループの切れ目に見出しの行を入れる
+    const group = (id) => id.replace(/泊|\d+/g, "");
+    const byId = !sorts.duties || sorts.duties.key === "id";
+    const groupRow = (prev, id) => !byId || (prev && group(prev) === group(id)) ? ""
+      : `<tr class="group"><td colspan="6">${esc(group(id))}（${data.duties.filter((x) => group(x.view.id) === group(id)).length} 行路）</td></tr>`;
+    // 行路表の切り替え・運行番号から作るのは管理キーと司令員（勤怠管理の鍵では欄ごと隠す）
+    $("dutyFileBox").hidden = !dutyEdit;
+    const options = (sel) => `<option value="">（未割当）</option>` + users.map((u) => `<option value="${esc(u.id)}" ${u.id === sel ? "selected" : ""}>ID:${esc(u.id)}</option>`).join("");
+    const running = new Set(data.trains.filter((x) => x.running).map((x) => x.train));
+    const extrasOf = {}; // 臨変（行路番号 → 社員番号の並び）
+    (data.extras || []).forEach((x) => { (extrasOf[x.duty] = extrasOf[x.duty] || []).push(x.user); });
+    const attended = users.filter((u) => u.attended);
+    setHtml($("attendInfo"), `${attended.length} 名（うち行路なし ${attended.filter((u) => !u.duties.length).length} 名）`);
+    // 行路表のファイル（選んでいる最中は描き直さない）
+    if (document.activeElement !== $("dutyFile")) {
+      const cur = $("dutyFile").dataset.files === data.dutyFiles.join("\n") ? $("dutyFile").value : data.dutyFile;
+      $("dutyFile").dataset.files = data.dutyFiles.join("\n");
+      setHtml($("dutyFile"), data.dutyFiles.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join(""));
+      if (data.dutyFiles.includes(cur)) $("dutyFile").value = cur;
+    }
+    $("dutyFileNow").textContent = data.dutyFile;
+    setHtml($("dutyFileInfo"), !data.dutyFileExists ? `<span class="ng">（ファイルがありません）</span>`
+      : `（行路 ${data.duties.length} 件・注意 ${data.problems.length ? `<span class="ng">${data.problems.length} 件</span>` : "なし"}）`);
+
+    if (!(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.duty))
+      setHtml($("duties"), `<table>${head("duties", [["行路", "id"], ["始業", "start"], ["終業", "end"], ["ハンドル", "handle"], ["乗務列車", "trains"], ["担当者", "user"]])}
+        ${!data.hasDuties ? `<tr><td colspan="6" class="muted">（行路表 Data/${esc(data.dutyFile)} がありません）</td></tr>` : sorted("duties", data.duties, {
+          id: (d) => dutyIndex.get(d.view.id), start: (d) => d.view.start, end: (d) => d.view.end, handle: (d) => d.view.handleMinutes,
+          trains: (d) => (d.view.items.find((x) => x.kind !== "休憩") || {}).train, user: (d) => d.user
+        }).map((d, i, all) => { const v = d.view; return groupRow(all[i - 1] && all[i - 1].view.id, v.id) + `<tr>
+          <td class="mono">${esc(v.id)}</td><td class="mono">${hm(v.start)}</td><td class="mono">${hm(v.end)}</td><td class="mono">${fmtMin(v.handleMinutes)}</td>
+          <td class="wrap">${v.items.filter((x) => x.kind !== "休憩").map((x) => `<span class="chip ${running.has(x.train) ? "run" : ""}" title="${esc(x.kind)} ${esc(x.from || "")} ${hm(x.dep)} → ${esc(x.to || "")} ${hm(x.arr)}">${esc(x.train)}</span>`).join("")}</td>
+          <td><select data-duty="${esc(v.id)}">${options(d.user)}</select>${d.user ? (d.auto ? ` <span class="auto" title="自動で割り当てた">自</span>` : "") : ` <span class="ng">未割当</span>`}
+            ${(extrasOf[v.id] || []).map((x) => `<br><span class="ng">臨変</span> <span class="mono">ID:${esc(x)}</span> <button class="small" data-extra="${esc(v.id)}" data-user="${esc(x)}">外す</button>`).join("")}</td></tr>`; }).join("")}
+        ${missing.map((m) => `<tr><td class="mono">${esc(m.duty)}</td><td colspan="4"><span class="ng">行路表にない</span> <span class="muted">（${esc(data.dutyFile)} にこの行路番号はありません。割り当ては残してあります）</span></td>
+          <td class="mono">ID:${esc(m.user)} <button class="small" data-unassign="${esc(m.duty)}">割当を外す</button></td></tr>`).join("")}</table>`);
+
+    const only = $("onlyRunning").checked, q = $("trainFilter").value.trim();
+    const rows = data.trains.filter((x) => (!only || x.running) && (!q || x.train.includes(q) || (x.user || "").includes(q) || x.duty.includes(q)));
+    const online = new Set(users.filter((u) => u.online).map((u) => u.id));
+    setHtml($("trains"), `<table>${head("trains", [["列車番号", "train"], ["種別", "kind"], ["行路", "duty"], ["担当者", "user"], ["タブレット", "online"], ["状態", "running"]])}
+      ${rows.length === 0 ? `<tr><td colspan="6" class="muted">（該当する列車はありません）</td></tr>` : sorted("trains", rows, {
+        train: (x) => x.train, kind: (x) => x.kind, duty: (x) => dutyIndex.get(x.duty), user: (x) => x.user,
+        online: (x) => x.user && online.has(x.user) ? 0 : null, running: (x) => x.running ? 0 : null
+      }).map((x) => `<tr>
+        <td class="mono">${esc(x.train)}</td><td>${esc(x.kind)}</td><td class="mono">${esc(x.duty)}</td>
+        <td class="mono">${x.user ? "ID:" + esc(x.user) : `<span class="ng">未割当</span>`}${(extrasOf[x.duty] || []).map((e) => ` <span class="ng">臨変</span> ID:${esc(e)}`).join("")}</td>
+        <td>${x.user && online.has(x.user) ? `<span class="run">ログイン中</span>` : ""}</td>
+        <td>${x.running ? `<span class="run">走行中</span>` : ""}</td></tr>`).join("")}</table>`);
+
+    $("problemsBox").hidden = !data.problems.length;
+    setHtml($("problems"), data.problems.map((p) => `<div>${esc(p)}</div>`).join(""));
+    $("countUsers").textContent = `乗務員 ${users.length} 名`;
+    $("countDuties").textContent = `行路 ${data.duties.length} 件（未割当 ${data.duties.filter((d) => !d.user).length}）`;
+  }
+
+  // 司令員・信号扱いの出勤者（乗務メニュー・乗務タブレットで出勤した人。名前と出勤したロープレ時刻）
+  async function drawRoleAttend() {
+    try {
+      const j = await (await fetch("/api/tid/crew/role-attendance", { cache: "no-store" })).json();
+      const who = (p) => `${esc(p.name)} <span class="mono muted">${GokkoClock.fmt(Date.parse(p.since))}</span>`;
+      // 信号扱いは駅ごと（駅名: 名前、だれもいなければ空き）
+      setHtml($("roleAttend"), j.roles.map((r) => r.stations
+        ? `<span><b>${esc(r.role)}</b>（${r.people.length} / ${r.stations.length} 駅）: ${r.stations.map((s) =>
+            `${esc(s.name)} ${s.people.length ? s.people.map(who).join("、") : `<span class="ng">空き</span>`}`).join("　") || `<span class="muted">盤のある駅がありません</span>`}</span>`
+        : `<span><b>${esc(r.role)}</b>（${r.people.length} 名）: ${r.people.length ? r.people.map(who).join("、") : `<span class="muted">いません</span>`}</span>`).join(""));
+    } catch (e) { /* 読めなければ前の表示のまま */ }
+  }
+  async function refresh() {
+    $("clock").textContent = GokkoClock.fmt(GokkoClock.now()); // ロープレ時刻（なければこの PC の時計）
+    if (!key && !crewToken) { $("conn").textContent = "管理キーを入力して［接続］を押してください（司令員は、乗務メニューでログインしてから開いてください）"; return; }
+    try {
+      data = await api("GET", "/crew");
+      $("conn").textContent = key ? "接続しました" : "司令員のログインで接続しました";
+      if (!$("newYear").options.length) {
+        let ys = ""; for (let y = data.joinYearTo; y >= data.joinYearFrom; y--) ys += `<option value="${y}">${y}（${era(y)}）</option>`;
+        $("newYear").innerHTML = ys;
+        $("newDepot").innerHTML = data.depots.map((d) => `<option>${esc(d)}</option>`).join("");
+      }
+      draw();
+      if (data.full !== false) await loadApplications();
+      if (tab === "diagram" || tab === "edit") await loadDiagram();
+    } catch (e) { $("conn").textContent = "エラー: " + e.message; }
+    await drawRoleAttend();
+  }
+
+  // ---- Discord で申請した人（管理キーだけ。承認すると名簿に入る。社員番号を入れて申請した人は、その人に紐づく） ----
+  async function loadApplications() {
+    let apps = [];
+    try { apps = (await api("GET", "/crew/applications")).applications || []; } catch (e) { setHtml($("apps"), `<span class="ng">${esc(e.message)}</span>`); return; }
+    $("appsCount").textContent = apps.length ? `（${apps.length}件）` : "";
+    setHtml($("apps"), apps.length === 0 ? `<span class="muted">（申請はありません）</span>` : `<table><tr><th>申請日時</th><th>Discord</th><th>申請の中身</th><th>操作</th></tr>
+      ${apps.map((a) => `<tr><td>${new Date(a.utc).toLocaleString("ja-JP")}</td><td>${esc(a.discordName)}</td>
+        <td>${a.existingId ? `社員番号 <span class="mono">ID:${esc(a.existingId)}</span>（${esc(a.existingName)}）に紐づけたい` : `${esc(a.name)}・${a.joinYear}（${era(a.joinYear)}）・${esc(a.depot)}`}</td>
+        <td><button class="small" data-approve="${esc(a.key)}">承認</button> <button class="small" data-reject="${esc(a.key)}">却下</button></td></tr>`).join("")}</table>`);
+  }
+
+  // ---- 行路のダイヤ・運転士のいない列車（「行路のダイヤ」タブを開いているときだけ読む） ----
+  let dia = null;
+  async function loadDiagram() {
+    try { dia = await api("GET", "/duties/diagram"); drawDiagram(); drawEdit(); }
+    catch (e) { setHtml($("dutyDia"), `<span class="ng">${esc(e.message)}</span>`); }
+  }
+  const hms = (s) => { s = ((s % 86400) + 86400) % 86400; return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}`; };
+  function drawDiagram() {
+    if (!dia || !data) return;
+    // 運転士のいない列車: 行路なし（サーバーが拾ったもの）＋ 担当者のいない行路の列車
+    const noDuty = dia.uncovered.map((u) => ({ train: u.train, type: u.type, from: u.from, to: u.to, dep: u.dep, arr: u.arr, why: "行路なし" }));
+    const noUser = $("noDutyOnly").checked ? [] : dia.duties.filter((d) => !d.user && !d.extras.length).flatMap((d) => d.lines.map((l) => ({
+      train: l.train, type: "", from: dia.stations[l.points[0][0]], to: dia.stations[l.points[l.points.length - 1][0]],
+      dep: l.points[0][1], arr: l.points[l.points.length - 1][1], why: `担当者なし（${d.id}）` })));
+    const rows = sorted("noDriver", noDuty.concat(noUser).sort((a, b) => a.dep - b.dep), {
+      train: (x) => x.train, why: (x) => x.why, dep: (x) => x.dep, arr: (x) => x.arr, from: (x) => x.from, to: (x) => x.to
+    });
+    setHtml($("noDriverInfo"), `行路なし <b class="${noDuty.length ? "ng" : ""}">${noDuty.length}</b> 本・担当者なし ${dia.duties.filter((d) => !d.user && !d.extras.length).reduce((n, d) => n + d.lines.length, 0)} 本`);
+    setHtml($("noDriver"), `<table>${head("noDriver", [["列車番号", "train"], ["理由", "why"], ["発駅", "from"], ["発", "dep"], ["着駅", "to"], ["着", "arr"]])}
+      ${rows.length === 0 ? `<tr><td colspan="6" class="muted">（運転士のいない列車はありません）</td></tr>` : rows.map((x) => `<tr>
+        <td class="mono">${esc(x.train)}</td><td><span class="ng">${esc(x.why)}</span></td><td>${esc(x.from)}</td><td class="mono">${hms(x.dep)}</td><td>${esc(x.to)}</td><td class="mono">${hms(x.arr)}</td></tr>`).join("")}</table>`);
+
+    // ダイヤグラム（SVG）
+    if (dia.from == null) { setHtml($("dutyDia"), `<span class="muted">（行路がありません）</span>`); return; }
+    const from = Math.floor(dia.from / 1800) * 1800, to = Math.ceil(dia.to / 1800) * 1800;
+    const left = 70, top = 24, rowH = 30, pxPerMin = 4;
+    const W = left + (to - from) / 60 * pxPerMin + 20, H = top + (dia.stations.length - 1) * rowH + 30;
+    const x = (s) => (left + (s - from) / 60 * pxPerMin).toFixed(1), y = (r) => top + r * rowH;
+    const q = $("diaFilter").value.trim().replace(/^ID:?/i, "");
+    const hit = (d) => !q || d.id === q || /^\d{3,}$/.test(q) && ((d.user || "").includes(q) || d.extras.some((e) => e.includes(q))); // 行路番号はそのもの、社員番号は一部でよい
+    const color = (i) => `hsl(${(i * 137.5) % 360},70%,38%)`;
+    let g = "";
+    for (let t = from; t <= to; t += 600) // 10分ごとの縦線（30分は濃く、1時間は時刻）
+      g += `<line x1="${x(t)}" y1="${top}" x2="${x(t)}" y2="${y(dia.stations.length - 1)}" stroke="${t % 3600 === 0 ? "#888" : t % 1800 === 0 ? "#bbb" : "#e4e4e4"}"/>`
+        + (t % 3600 === 0 ? `<text x="${x(t)}" y="${top - 8}" text-anchor="middle" font-size="11">${hms(t).slice(0, 2)}時</text>` : "");
+    dia.stations.forEach((n, r) => { g += `<line x1="${left}" y1="${y(r)}" x2="${W - 20}" y2="${y(r)}" stroke="#ddd"/><text x="${left - 6}" y="${y(r) + 4}" text-anchor="end" font-size="11">${esc(n)}</text>`; });
+    dia.uncovered.forEach((u) => {
+      g += `<polyline points="${u.points.map((p) => `${x(p[1])},${y(p[0])}`).join(" ")}" fill="none" stroke="#e00000" stroke-width="3"><title>${esc(u.train)}（行路なし）</title></polyline>`;
+    });
+    dia.duties.forEach((d, i) => {
+      const on = hit(d), c = color(i), who = d.user ? "ID:" + d.user : "担当者なし";
+      const tip = `${d.id}　${who}${d.extras.length ? "　臨変 " + d.extras.map((e) => "ID:" + e).join("・") : ""}`;
+      const dash = d.user || d.extras.length ? "" : `stroke-dasharray="6 3"`;
+      d.lines.forEach((l, k) => {
+        if (k > 0) { const p = d.lines[k - 1].points.at(-1), n = l.points[0]; // 休憩・乗り継ぎ
+          g += `<polyline points="${x(p[1])},${y(p[0])} ${x(n[1])},${y(n[0])}" fill="none" stroke="${c}" stroke-dasharray="1 3" opacity="${on ? 1 : .15}"/>`; }
+        g += `<polyline points="${l.points.map((p) => `${x(p[1])},${y(p[0])}`).join(" ")}" fill="none" stroke="${c}" stroke-width="${q && on ? 3 : 1.6}" ${dash} opacity="${on ? 1 : .15}"><title>${esc(tip)}　${esc(l.train)}</title></polyline>`;
+      });
+      const s = d.lines[0].points[0];
+      if (on) g += `<text x="${x(s[1]) - 2}" y="${y(s[0]) + (s[0] === 0 ? -3 : 12)}" font-size="10" fill="${c}" text-anchor="end">${esc(d.id)}</text>`;
+    });
+    setHtml($("dutyDia"), `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" style="background:#fff;display:block">${g}</svg>`);
+  }
+  // ---- 行路を組む（列車を選んで、ほかの行路へ移す） ----
+  const picked = new Set();
+  function drawEdit() {
+    if (!dia || !data) return;
+    const sel = $("moveTo").value;
+    if (document.activeElement !== $("moveTo"))
+      setHtml($("moveTo"), `<option value="">新しい行路 →</option>` + data.duties.map((d) => `<option value="${esc(d.view.id)}" ${d.view.id === sel ? "selected" : ""}>${esc(d.view.id)}</option>`).join(""));
+    $("moveNew").hidden = !!$("moveTo").value;
+    const rsel = $("renameFrom").value;
+    if (document.activeElement !== $("renameFrom"))
+      setHtml($("renameFrom"), data.duties.map((d) => `<option value="${esc(d.view.id)}" ${d.view.id === rsel ? "selected" : ""}>${esc(d.view.id)}</option>`).join(""));
+    const known = new Set(data.duties.flatMap((d) => d.view.items.map((x) => x.train)).concat(dia.uncovered.map((u) => u.train)));
+    [...picked].forEach((t) => { if (!known.has(t)) picked.delete(t); });
+    $("moveSel").textContent = picked.size ? [...picked].join("・") : "なし";
+    const chip = (t, title) => `<span class="chip pick ${picked.has(t) ? "on" : ""}" data-pick="${esc(t)}" title="${esc(title)}">${esc(t)}</span>`;
+    // 注意: 前の列車の着いた駅と次の列車の出る駅が違う・時間が重なる
+    const warn = (items) => {
+      const w = [], ride = items.filter((x) => x.kind !== "休憩");
+      for (let i = 1; i < ride.length; i++) {
+        const p = ride[i - 1], n = ride[i];
+        if (p.to && n.from && p.to !== n.from) w.push(`${p.train} ${p.to} → ${n.train} ${n.from} がつながらない`);
+        if (p.arr && n.dep && n.dep < p.arr) w.push(`${p.train} と ${n.train} の時間が重なる`);
+      }
+      return w;
+    };
+    const noDuty = dia.uncovered;
+    setHtml($("editList"), `<table><tr><th>行路</th><th>始業</th><th>終業</th><th>ハンドル</th><th>乗務列車（押して選ぶ）</th><th>担当者</th><th>注意</th></tr>
+      ${noDuty.length ? `<tr><td class="ng">行路なし</td><td colspan="3" class="muted">${noDuty.length} 本</td><td class="wrap">${noDuty.map((u) => chip(u.train, `${u.from} ${hms(u.dep)} → ${u.to} ${hms(u.arr)}`)).join("")}</td><td></td><td></td></tr>` : ""}
+      ${data.duties.map((d) => { const v = d.view, w = warn(v.items); return `<tr>
+        <td class="mono">${esc(v.id)}</td><td class="mono">${hm(v.start)}</td><td class="mono">${hm(v.end)}</td><td class="mono">${fmtMin(v.handleMinutes)}</td>
+        <td class="wrap">${v.items.filter((x) => x.kind !== "休憩").map((x) => chip(x.train, `${x.kind} ${x.from || ""} ${hm(x.dep)} → ${x.to || ""} ${hm(x.arr)}`)).join("")}</td>
+        <td class="mono">${d.user ? "ID:" + esc(d.user) : `<span class="muted">なし</span>`}</td>
+        <td>${w.length ? w.map((s) => `<div class="ng">${esc(s)}</div>`).join("") : ""}</td></tr>`; }).join("")}</table>`);
+  }
+  $("editList").addEventListener("click", (ev) => {
+    const c = ev.target.closest("[data-pick]");
+    if (!c) return;
+    const t = c.dataset.pick;
+    if (picked.has(t)) picked.delete(t); else picked.add(t);
+    drawEdit();
+  });
+  $("moveTo").addEventListener("change", drawEdit);
+  $("moveClear").onclick = () => { picked.clear(); drawEdit(); };
+  $("moveBtn").onclick = async () => {
+    if (!picked.size) { await box("移す列車を選んでください", ["OK"], true); return; }
+    const to = $("moveTo").value, newId = $("moveNew").value.trim();
+    if (!to && !newId) { await box("新しい行路の行路番号を入れてください", ["OK"], true); return; }
+    const r = await act("POST", "/duties/move", { trains: [...picked], to, newId, name: $("editName").value.trim() || null });
+    if (r) { picked.clear(); $("moveNew").value = ""; $("moveTo").value = r.target; await loadDiagram(); }
+  };
+  $("renameBtn").onclick = async () => {
+    const from = $("renameFrom").value, to = $("renameTo").value.trim();
+    if (!from) return;
+    if (!to) { await box("新しい行路名を入れてください", ["OK"], true); return; }
+    const r = await act("POST", "/duties/rename", { from, to, name: $("editName").value.trim() || null });
+    if (r) { $("renameTo").value = ""; await loadDiagram(); $("renameFrom").value = to; await box(esc(r.message)); }
+  };
+  $("noDutyOnly").addEventListener("change", drawDiagram);
+  $("diaFilter").addEventListener("input", drawDiagram);
+  document.addEventListener("click", (ev) => { if (ev.target.closest('th[data-table="noDriver"]')) setTimeout(drawDiagram); });
+
+  $("tabs").addEventListener("click", (ev) => {
+    const t = ev.target.closest(".tab");
+    if (!t) return;
+    tab = t.dataset.tab;
+    try { localStorage.setItem("gokkoKintaiTab", tab); } catch (e) {}
+    showTab();
+    if ((tab === "diagram" || tab === "edit") && data) loadDiagram();
+  });
+  $("saveKey").onclick = () => { key = $("key").value; try { sessionStorage.setItem("gokkoAdminKey", key); } catch (e) {} refresh(); };
+  $("reload").onclick = refresh;
+  ["rosterId", "rosterName"].forEach((i) => $(i).addEventListener("input", draw));
+  $("rosterClear").onclick = () => { $("rosterId").value = ""; $("rosterName").value = ""; draw(); };
+  $("addUser").onclick = async () => {
+    const n = $("newUser").value.trim();
+    if (!n) return;
+    const r = await act("POST", "/crew/users", { name: n, joinYear: Number($("newYear").value), depot: $("newDepot").value, id: $("newId").value.trim() || null });
+    if (r) { $("newUser").value = ""; $("newId").value = ""; await showPassword(r.id, r.password, `乗務員「${n}」を登録しました。`); }
+  };
+  ["newUser", "newId"].forEach((i) => $(i).addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("addUser").click(); }));
+  $("users").addEventListener("click", async (ev) => {
+    const del = ev.target.closest("button[data-del]");
+    if (del && await box(`乗務員 ID:${esc(del.dataset.del)} を削除しますか？<br>割り当てていた行路は未割当になります。`, ["はい", "いいえ"], true) === "はい")
+      await act("POST", "/crew/users/delete", { id: del.dataset.del });
+    const ed = ev.target.closest("button[data-edit]");
+    if (ed) { const u = data.users.find((x) => x.id === ed.dataset.edit); if (u) editUser(u); }
+    const rs = ev.target.closest("button[data-reset]");
+    if (rs && await box(`ID:${esc(rs.dataset.reset)} のパスワードを再発行しますか？<br>今のパスワードは使えなくなり、ログイン中のタブレット・クライアントもログアウトします。`, ["はい", "いいえ"], true) === "はい") {
+      const r = await act("POST", "/crew/reset", { id: rs.dataset.reset });
+      if (r) await showPassword(rs.dataset.reset, r.password, "パスワードを再発行しました。");
+    }
+    const ul = ev.target.closest("button[data-unlink]");
+    if (ul && await box(`ID:${esc(ul.dataset.unlink)} の Discord の紐づけを外しますか？<br>ログイン中のタブレット・クライアントもログアウトします。本人には、新しい Discord で申請し直してもらってください（社員番号を入れて申請すると、この人に紐づきます）。`, ["はい", "いいえ"], true) === "はい")
+      await act("POST", "/crew/discord/unlink", { id: ul.dataset.unlink });
+  });
+  $("apps").addEventListener("click", async (ev) => {
+    const ap = ev.target.closest("button[data-approve]"), rj = ev.target.closest("button[data-reject]");
+    if (ap) { const r = await act("POST", "/crew/applications/approve", { key: ap.dataset.approve }); if (r) await box(`承認しました。社員番号は <b class="mono">ID:${esc(r.id)}</b> です。本人は［Discord でログイン］で入れます。`, ["OK"]); }
+    if (rj && await box("この申請を却下しますか？", ["はい", "いいえ"], true) === "はい") await act("POST", "/crew/applications/reject", { key: rj.dataset.reject });
+  });
+  $("users").addEventListener("change", async (ev) => {
+    const c = ev.target.closest("input[data-role]");
+    if (c) await act("POST", "/crew/roles", { id: c.dataset.id, role: c.dataset.role, on: c.checked });
+  });
+  $("users").addEventListener("click", async (ev) => {
+    const a = ev.target.closest("button[data-attend]");
+    if (a) await act("POST", "/crew/attend", { id: a.dataset.attend, on: !!a.dataset.on });
+  });
+  $("autoAssign").onclick = async () => {
+    const r = await act("POST", "/crew/auto-assign");
+    if (!r) return;
+    await box(!r.results.length ? "出勤していて行路のない人はいません。"
+      : r.results.map((x) => `ID:${esc(x.user)} → ${x.duty ? `行路 <b class="mono">${esc(x.duty)}</b>` : `<span class="ng">空いている行路がありません</span>`}`).join("<br>"));
+  };
+  $("clearAttend").onclick = async () => {
+    if (await box("全員の出勤を外しますか？<br>司令員・信号扱いの出勤も外れます。行路の割り当てはそのまま残ります。", ["はい", "いいえ"], true) === "はい") await act("POST", "/crew/attend/clear");
+  };
+  $("loadDuties").onclick = async () => {
+    const f = $("dutyFile").value;
+    if (!f) return;
+    if (await box(`行路表を ${esc(f)} に切り替えますか？<br>割り当ては消えません（${esc(f)} にない行路番号は「行路表にない」と出ます）。`, ["はい", "いいえ"]) !== "はい") return;
+    const r = await act("POST", "/duties/load", { file: f });
+    if (r) await box(`${esc(r.file)} を読み込みました。<br>行路 ${r.count} 件・注意 ${r.problems} 件`);
+  };
+  $("makeUnyo").onclick = async () => {
+    const from = $("unyoFrom").value, to = $("unyoTo").value;
+    if (!from || !to) return;
+    const name = $("unyoName").value.trim().replace(/^Duties\./i, "").replace(/\.csv$/i, "") || "unyo";
+    const file = `Duties.${name}.csv`;
+    if (await box(`${esc(from)}〜${esc(to)} の行路を運行番号から作りますか？<br>行路表は ${esc(file)} に切り替わり、いまの割り当て（臨変も）はすべて外れます。`
+      + ((data.dutyFiles || []).includes(file) ? `<br>${esc(file)} はもうあるので、上書きします。` : ""), ["はい", "いいえ"], true) !== "はい") return;
+    const r = await act("POST", "/duties/unyo", { from, to, maxTransfer: Number($("unyoTransfer").value) || 30, name });
+    if (r) await box(esc(r.message));
+  };
+  $("duties").addEventListener("click", async (ev) => {
+    const x = ev.target.closest("button[data-extra]");
+    if (x && await box(`ID:${esc(x.dataset.user)} の臨変（行路 ${esc(x.dataset.extra)}）を外しますか？`, ["はい", "いいえ"], true) === "はい")
+      await act("POST", "/crew/extra/remove", { duty: x.dataset.extra, user: x.dataset.user });
+    const b = ev.target.closest("button[data-unassign]");
+    if (b && await box(`行路 ${esc(b.dataset.unassign)} の割り当てを外しますか？`, ["はい", "いいえ"], true) === "はい")
+      await act("POST", "/crew/assign", { duty: b.dataset.unassign, user: null });
+  });
+  $("duties").addEventListener("change", async (ev) => {
+    const s = ev.target.closest("select[data-duty]");
+    if (s) { s.blur(); await act("POST", "/crew/assign", { duty: s.dataset.duty, user: s.value || null }); }
+  });
+  $("onlyRunning").onchange = draw;
+  $("trainFilter").oninput = draw;
+  showTab();
+  GokkoClock.ready.finally(refresh); // ロープレ時刻を読んでから
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

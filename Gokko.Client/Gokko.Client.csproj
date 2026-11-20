@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Gokko.Client</RootNamespace>
+    <AssemblyName>GokkoClient</AssemblyName>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+
+    <!-- 配布用: dotnet publish -c Release で、exe 1つだけを出力する -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishDir>publish\</PublishDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <!-- ServerAddress.Local.cs があれば、そこに書いた接続先を使う -->
+  <PropertyGroup Condition="Exists('ServerAddress.Local.cs')">
+    <DefineConstants>$(DefineConstants);LOCAL_SERVER_ADDRESS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 列車無線の音声の圧縮（Opus。純粋な C#。BSD 系のライセンス） -->
+    <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.11" />
+    <!-- 列車無線の録音・再生（MIT ライセンス） -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- ログインのパスワードを記憶するときの暗号化（Windows の DPAPI） -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 防護無線の警報音（EXE に埋め込む） -->
+    <EmbeddedResource Include="Audio\bougo_radio_alarm.wav" />
+    <!-- 一斉通告の開始チャイム（ピン・ポン・パーン。約3.6秒。作者は共同制作者） -->
+    <EmbeddedResource Include="Audio\broadcast_chime.wav" />
+    <!-- 列車無線の呼出音（ピン・ポン。約2.7秒をくり返す。作者は共同制作者） -->
+    <EmbeddedResource Include="Audio\private_call_chime.wav" />
+    <!-- 車掌用操作盤の車掌スイッチの絵（作者はこのソフトの利用者本人。4枚とも同じ大きさの透明な PNG） -->
+    <!-- 列車無線の縦型受話器の絵（radio_vertical.png。作者は共同制作者） -->
+    <EmbeddedResource Include="Images\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gokko.Common\Gokko.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TRAIN CREW の公式の入出力ライブラリ（溝月レイル/Acty）。ソフトに同梱する形での再配布は可。解析・改変はしない -->
+    <Reference Include="TrainCrewInput">
+      <HintPath>lib\TrainCrewInput.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

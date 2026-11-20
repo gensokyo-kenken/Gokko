@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乗務メニュー</title>
+<style>
+  /* タブレット・スマホ向けの画面の入口。色は乗務タブレット（tablet.html）にそろえる */
+  :root {
+    --bg: #1b2533; --panel: #22304a; --panel-hover: #2a3a58; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c;
+    --info: #2f6fc0; --ok: #1f8a4c; --warn: #c98400; --relay: #6d5a2e; --dia: #6a3f8a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif;
+    font-size: 14px; line-height: 1.5; padding: 16px; max-width: 960px; margin: 0 auto;
+  }
+  .header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; background: var(--bar); border-radius: 10px; padding: 10px 16px; margin-bottom: 16px; }
+  .header h1 { margin: 0; font-size: 20px; }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .clock { font-family: "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", monospace; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .tile {
+    display: grid; grid-template-columns: 56px 1fr; gap: 4px 14px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+    color: inherit; text-decoration: none; min-height: 104px; transition: background .12s, border-color .12s;
+  }
+  .tile[hidden] { display: none; }
+  .tile:hover, .tile:focus-visible { background: var(--panel-hover); border-color: #4b6280; outline: none; }
+  .tile:active { transform: translateY(1px); }
+  .icon { grid-row: span 2; width: 56px; height: 56px; border-radius: 12px; display: grid; place-items: center; }
+  .icon svg { width: 30px; height: 30px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .name { font-size: 17px; font-weight: 700; align-self: end; }
+  .desc { color: var(--muted); font-size: 12px; align-self: start; }
+  .who { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; margin-left: 6px; background: #3a4b66; color: var(--muted); vertical-align: 2px; }
+  footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+  button.tile { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; }
+  /* スマホでログインする QR コード */
+  .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: grid; place-items: center; padding: 16px; z-index: 10; }
+  .modal[hidden] { display: none; }
+  .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: min(360px, 100%); display: grid; gap: 10px; text-align: center; }
+  .sheet h2 { margin: 0; font-size: 18px; }
+  .qr { background: #fff; border-radius: 8px; padding: 10px; display: grid; place-items: center; min-height: 200px; color: #111; }
+  .qr svg { width: 100%; height: auto; max-width: 280px; }
+  .sheet .err { color: #ff8a80; font-size: 13px; }
+  .sheet button { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bar); color: var(--fg); cursor: pointer; }
+  .notice { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; }
+  .notice[hidden] { display: none; }
+  /* ログイン（メニューがログインの元。タイルから開いた画面へ引き継ぐ） */
+  .loginbox { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; align-items: end;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  .loginbox[hidden] { display: none; }
+  .loginbox h2 { grid-column: 1 / -1; margin: 0; font-size: 17px; }
+  .loginbox label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+  .loginbox input { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .loginbox button { font: inherit; font-size: 16px; padding: 9px; border-radius: 8px; border: 1px solid #4b7fc4; background: var(--info); color: #fff; cursor: pointer; }
+  .loginbox .err { grid-column: 1 / -1; color: #ff8a80; font-size: 13px; }
+  .loginbox .err:empty { display: none; }
+  .loginbox .muted { grid-column: 1 / -1; }
+  .loginbox a, footer a { color: #9cc3f5; }
+  button.link { font: inherit; font-size: 12px; background: none; border: none; color: #9cc3f5; cursor: pointer; padding: 0; text-decoration: underline; }
+  button.link[hidden] { display: none; }
+  /* 司令員・信号扱いの出勤者（roleattend.js） */
+  .attendees { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px; margin-bottom: 16px; }
+  .attendees h2 { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+  /* Discord ログイン */
+  .loginbox button.discord, .linkbox button { background: #5865f2; border-color: #5865f2; }
+  .loginbox .discord { grid-column: 1 / -1; }
+  .pwpart { display: contents; }
+  .pwpart[hidden] { display: none; }
+  .linkbox { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; background: var(--panel); border: 1px solid #5865f2; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+  .linkbox[hidden] { display: none; }
+  .linkbox div { flex: 1 1 260px; }
+  .linkbox button { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 8px; border: 1px solid; color: #fff; cursor: pointer; }
+  .linkbox button.later { background: none; border-color: var(--line); color: var(--muted); }
+</style>
+<script src="roleattend.js"></script>
+<script src="crewsession.js"></script>
+</head>
+<body>
+<div class="notice" id="notice" hidden></div>
+<div class="header">
+  <h1>乗務メニュー</h1>
+  <span class="spacer"></span>
+  <span class="muted" id="login"></span>
+  <button type="button" class="link" id="logout" hidden>ログアウト</button>
+  <span class="clock" id="clock"></span>
+</div>
+
+<form class="loginbox" id="loginBox" hidden>
+  <h2>ログイン</h2>
+  <button type="button" class="discord" id="discordGo" hidden>Discord でログイン</button>
+  <span class="pwpart" id="pwPart">
+    <label>社員番号<input id="loginId" autocomplete="username" inputmode="numeric" maxlength="8"></label>
+    <label>パスワード<input id="loginPw" type="password" autocomplete="current-password"></label>
+    <button type="submit" id="loginGo">ログイン</button>
+  </span>
+  <span class="err" id="loginErr"></span>
+  <span class="muted" id="loginNote">ここでログインすると、メニューから開く画面では入り直さなくて済みます。</span>
+</form>
+
+<div class="linkbox" id="linkBox" hidden>
+  <div id="linkText">Discord と紐づけてください。</div>
+  <button type="button" id="linkGo">Discord と紐づける</button>
+  <button type="button" class="later" id="linkLater">あとで</button>
+</div>
+<section class="attendees"><h2>出勤者（司令員・信号扱い）</h2><div id="attendees"><span class="muted">読み込み中…</span></div></section>
+
+<div class="grid">
+  <a class="tile" href="tablet.html" data-handoff>
+    <span class="icon" style="background: var(--info)">
+      <svg viewBox="0 0 24 24"><rect x="4" y="2.5" width="16" height="19" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
+    </span>
+    <span class="name">乗務タブレット</span>
+    <span class="desc">行路・時刻表・後運用。運転士と車掌が乗務中に見る画面</span>
+  </a>
+
+  <a class="tile" href="tablet-arrivals.html">
+    <span class="icon" style="background: #2f8f9d">
+      <svg viewBox="0 0 24 24"><path d="M4 20V8l8-4 8 4v12"/><path d="M8 20v-6h8v6M8 11h8"/></svg>
+    </span>
+    <span class="name">駅の接近案内</span>
+    <span class="desc">駅へ向かってくる列車と到着番線を、着く順に出す</span>
+  </a>
+
+  <a class="tile" href="radio.html" data-handoff>
+    <span class="icon" style="background: var(--ok)">
+      <svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>
+    </span>
+    <span class="name">列車無線</span>
+    <span class="desc">スマホを受話器にする。PC のクライアントで参加している本人の無線機につながる</span>
+  </a>
+
+  <a class="tile" href="radio-monitor.html" data-handoff>
+    <span class="icon" style="background: #6f7276">
+      <svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="15" rx="1.5"/><path d="M8 7V2M8 11h8M8 14h8M8 17h4"/></svg>
+    </span>
+    <span class="name">列車無線モニター</span>
+    <span class="desc">共通通話と一斉通告を聞くだけ（話せない）。スマホでも聞ける</span>
+  </a>
+
+  <a class="tile" href="shukkinbo.html">
+    <span class="icon" style="background: #3f7f6a">
+      <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/><path d="M15 15.5l1.5 1.5 3-3"/></svg>
+    </span>
+    <span class="name">出勤簿</span>
+    <span class="desc">行路と担当する運転士・車掌、各駅の信号扱い、司令員の出勤を一覧で見る</span>
+  </a>
+
+  <a class="tile" href="tid.html">
+    <span class="icon" style="background: var(--warn)">
+      <svg viewBox="0 0 24 24"><path d="M2 9h20M2 15h20"/><rect x="6" y="7" width="5" height="4" rx="1"/><rect x="13" y="13" width="5" height="4" rx="1"/></svg>
+    </span>
+    <span class="name">在線位置</span>
+    <span class="desc">路線のどこに列車がいるか。軌道回路・進路・列番</span>
+  </a>
+
+  <a class="tile" href="diagramview.html">
+    <span class="icon" style="background: var(--dia)">
+      <svg viewBox="0 0 24 24"><path d="M3 4v16h18"/><path d="M6 17l5-8 3 4 5-8"/></svg>
+    </span>
+    <span class="name">ダイヤグラム</span>
+    <span class="desc">走っている列車と計画の線を見る。運行の編集はしない</span>
+  </a>
+
+  <a class="tile" href="relaypanel.html" id="relayTile" data-handoff data-role="信号扱い" hidden>
+    <span class="icon" style="background: var(--relay)">
+      <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M8 12l2.5-2.5M14 10h4M14 14h4"/></svg>
+    </span>
+    <span class="name">信号制御盤<span class="who">信号扱い</span></span>
+    <span class="desc">てこと着点ボタンで駅の進路を扱う。指でも扱える</span>
+  </a>
+
+  <a class="tile" href="kintai.html" id="kintaiTile" data-handoff data-role="司令員" hidden>
+    <span class="icon" style="background: #4a6b8a">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="17" rx="2"/><path d="M3.5 9h17M8 2.5v3M16 2.5v3M7.5 13h3M7.5 17h3M13.5 13h3M13.5 17h3"/></svg>
+    </span>
+    <span class="name">勤怠管理<span class="who">司令員</span></span>
+    <span class="desc">行路の割り当て・出勤者への自動割り当て・臨変。乗務員の登録は管理者だけ</span>
+  </a>
+
+  <a class="tile" href="diasettings.html" id="diaTile" data-handoff data-role="司令員" hidden>
+    <span class="icon" style="background: #8a3f4f">
+      <svg viewBox="0 0 24 24"><path d="M3 4v16h18"/><path d="M6 16l4-6 3 3 4-6"/><circle cx="18" cy="6" r="2.5"/></svg>
+    </span>
+    <span class="name">司令用管理画面<span class="who">司令員</span></span>
+    <span class="desc">ダイヤグラムの操作・運転整理・接続待ち・特発の解除</span>
+  </a>
+
+  <button class="tile" type="button" id="qrTile" hidden>
+    <span class="icon" style="background: #3d5a73">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h3M21 18v3h-3"/></svg>
+    </span>
+    <span class="name">スマホでログイン</span>
+    <span class="desc">QR コードを出す。スマホで読むと、パスワードなしで同じ社員番号でログインできる</span>
+  </button>
+</div>
+
+<div class="modal" id="qrModal" hidden>
+  <div class="sheet">
+    <h2>スマホでログイン</h2>
+    <div class="qr" id="qrBox">作っています…</div>
+    <div class="muted" id="qrInfo"></div>
+    <div class="err" id="qrErr"></div>
+    <button type="button" id="qrClose">閉じる</button>
+  </div>
+</div>
+
+<footer>ここでログインすると、このメニューのタイルから開いた画面では入り直さなくて済みます。画面のアドレスを直接開いたときは、勝手に扱われないように、もう一度ログインを求めます。ダイヤグラム・在線位置・駅の接近案内は、ログインなしで見られます。</footer>
+
+<script>
+  // 乗務メニューがログインの元。合い札はこのブラウザ（localStorage の gokkoTabletId・gokkoTabletToken）に覚え、役職はサーバーに聞く（/api/tid/crew/me）
+  // 信号制御盤のタイルは、役職「信号扱い」がある人にだけ出す
+  // 勤怠管理・司令用管理画面のタイルは、役職「司令員」がある人にだけ出す。［スマホでログイン］はログインしている人みんなに出す
+  // ログインが要る画面（data-handoff のタイル）は、押すとサーバーから引き継ぎ札（30秒・1回だけ）をもらい、画面#handoff=札 で開く。
+  // 開いた画面は札を合い札に替えて、そのタブの中だけに覚える（crewsession.js）。URL を直接開いたタブには札がないので、ログインを求める
+  // スマホで QR コードを読むと #qr=使い捨ての番号 で開くので、その番号でログインして、合い札をこのブラウザに覚える
+  let token = "";
+  const $ = (id) => document.getElementById(id);
+  const notice = (text) => { const n = $("notice"); n.textContent = text; n.hidden = !text; };
+  const getLs = (k) => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
+  function save(id, tok) {
+    try {
+      if (id) { localStorage.setItem("gokkoTabletId", id); localStorage.setItem("gokkoTabletToken", tok); }
+      else { localStorage.removeItem("gokkoTabletId"); localStorage.removeItem("gokkoTabletToken"); }
+    } catch (e) {}
+  }
+
+  // ログインしていないときの見た目（ログインの欄を出し、役職のタイルとスマホの QR を隠す）
+  function showLoggedOut(text) {
+    token = "";
+    $("login").textContent = text || "未ログイン";
+    $("logout").hidden = true;
+    $("loginBox").hidden = false;
+    $("linkBox").hidden = true;
+    for (const t of ["relayTile", "kintaiTile", "diaTile", "qrTile"]) $(t).hidden = true;
+    // Discord が使えるサーバーなら［Discord でログイン］を出す。パスワードの期限を過ぎたら、パスワードの欄を隠す
+    GokkoCrew.discordConfig().then((c) => {
+      $("discordGo").hidden = !c.enabled;
+      $("pwPart").hidden = !!(c.enabled && c.passwordClosed);
+      if (c.enabled) $("loginNote").textContent = "はじめての人も［Discord でログイン］から申請できます。"
+        + (c.passwordClosed ? "" : `社員番号とパスワードでのログインは${c.passwordUntil ? " " + GokkoCrew.linkUntil(c.passwordUntil) : "、移行のあいだだけ使えます"}（ログインしたら Discord と紐づけてください）。`);
+    });
+  }
+
+  // Discord と紐づけていない人に、紐づけを勧める（［あとで］を押したら、このタブを閉じるまで出さない）
+  function showLink(me) {
+    let later = false;
+    try { later = sessionStorage.getItem("gokkoLinkLater") === "1"; } catch (e) {}
+    $("linkBox").hidden = !me.discordEnabled || me.discordLinked || later;
+    $("linkText").textContent = `Discord と紐づけてください。紐づけると、次からは［Discord でログイン］だけで入れます（パスワードは使えなくなります）。`
+      + (me.linkUntil ? `パスワードでのログインは ${GokkoCrew.linkUntil(me.linkUntil)}。` : "");
+  }
+
+  // 覚えている合い札で、社員番号と役職をサーバーに聞いてタイルを出す
+  async function load() {
+    const id = getLs("gokkoTabletId");
+    token = getLs("gokkoTabletToken");
+    if (!id || !token) { showLoggedOut(); return; }
+    $("login").textContent = `ID:${id}`;
+    try {
+      const res = await fetch("/api/tid/crew/me", { headers: { "X-Crew-Token": token }, cache: "no-store" });
+      if (res.status === 401) { save("", ""); showLoggedOut("未ログイン（ログインし直してください）"); return; }
+      if (!res.ok) throw new Error();
+      const me = await res.json();
+      if (me.id !== id) save(me.id, token); // 勤怠管理で社員番号が変わった
+      const roles = me.roles || [];
+      $("login").textContent = `ID:${me.id} でログイン中`;
+      $("logout").hidden = false;
+      $("loginBox").hidden = true;
+      $("relayTile").hidden = !roles.includes("信号扱い");
+      $("kintaiTile").hidden = !roles.includes("司令員");
+      $("diaTile").hidden = !roles.includes("司令員");
+      $("qrTile").hidden = false;
+      showLink(me);
+    } catch (e) { $("login").textContent = `ID:${id}（サーバーにつながりません）`; }
+  }
+
+  (async () => {
+    // 前の版で信号制御盤だけに覚えていたログイン（relayCrew）は、メニューのログインに移す
+    try {
+      const old = JSON.parse(localStorage.getItem("relayCrew") || "null");
+      if (old && old.id && old.token && !getLs("gokkoTabletToken")) save(old.id, old.token);
+      localStorage.removeItem("relayCrew");
+    } catch (e) {}
+    const qr = new URLSearchParams(location.hash.slice(1)).get("qr");
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search); // 番号をアドレスに残さない
+    if (qr) {
+      try {
+        const res = await fetch("/api/tid/login/qr", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: qr }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.message || "ログインできませんでした");
+        save(j.id, j.token);
+        notice(`ID:${j.id} でログインしました`);
+      } catch (e) { notice(e.message); }
+    }
+    if (GokkoCrew.justLinked) notice("Discord と紐づけました。次からは［Discord でログイン］で入れます");
+    else if (GokkoCrew.discordLoggedIn) notice(`ID:${GokkoCrew.id()} でログインしました`);
+    await load();
+    redrawAttendees(); // 自分の名前の横に［退勤］を出すため（合い札が分かってから）
+  })();
+
+  // Discord でログイン（Discord のページへ行き、戻ってきたら crewsession.js がこのブラウザに覚える）
+  $("discordGo").onclick = async () => {
+    $("loginErr").textContent = "";
+    try { await GokkoCrew.discordLogin(); } catch (e) { $("loginErr").textContent = e.message; }
+  };
+  $("linkGo").onclick = async () => {
+    try { await GokkoCrew.discordLink(token); } catch (e) { notice(e.message); }
+  };
+  $("linkLater").onclick = () => {
+    try { sessionStorage.setItem("gokkoLinkLater", "1"); } catch (e) {}
+    $("linkBox").hidden = true;
+  };
+
+  // ログイン（社員番号とパスワード。乗務タブレットと同じ POST /api/tid/login）
+  $("loginBox").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    $("loginErr").textContent = "";
+    try {
+      const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { $("loginErr").textContent = j.message || "ログインできませんでした"; return; }
+      save(j.id, j.token);
+      $("loginPw").value = "";
+      notice("");
+      await load();
+      redrawAttendees();
+    } catch (e) { $("loginErr").textContent = "サーバーにつながりません"; }
+  });
+  $("logout").onclick = async () => {
+    if (!confirm(`${$("login").textContent.replace(" でログイン中", "")} をログアウトしますか？`)) return;
+    try { await fetch("/api/tid/logout", { method: "POST", headers: { "X-Crew-Token": token } }); } catch (e) {}
+    save("", "");
+    notice("");
+    showLoggedOut();
+    redrawAttendees();
+  };
+
+  // ログインが要る画面のタイル: 引き継ぎ札を付けて開く（同じタブで）。札をもらえなければ、札なしで開く（その画面でログインを求める）
+  for (const a of document.querySelectorAll("a[data-handoff]")) {
+    a.addEventListener("click", async (ev) => {
+      if (!token || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button !== 0) return; // 新しいタブで開くときは引き継がない
+      ev.preventDefault();
+      const open = async (station) => {
+        let code = "";
+        try {
+          const res = await fetch("/api/tid/crew/handoff", { method: "POST", headers: { "X-Crew-Token": token } });
+          if (res.ok) code = (await res.json()).code || "";
+        } catch (e) {}
+        location.href = a.getAttribute("href") + (station ? "?st=" + encodeURIComponent(station) : "") + (code ? "#handoff=" + encodeURIComponent(code) : "");
+      };
+      // 司令員・信号扱いの画面は、その役職で出勤してから開く（出勤していなければ「出勤」のポップ）。信号扱いは出勤した駅の盤を開く
+      if (a.dataset.role) GokkoRoleAttend.guard(a.dataset.role, token, open); else open("");
+    });
+  }
+
+  // 司令員・信号扱いの出勤者（自分の名前の横に［退勤］）
+  const redrawAttendees = GokkoRoleAttend.panel($("attendees"), () => token);
+
+  // スマホでログインする QR コード（5分で切れ、1回だけ使える。閉じるか4分半たったら出し直す）
+  let qrTimer = null;
+  async function showQr() {
+    const box = document.getElementById("qrBox"), info = document.getElementById("qrInfo"), err = document.getElementById("qrErr");
+    document.getElementById("qrModal").hidden = false;
+    box.textContent = "作っています…"; info.textContent = ""; err.textContent = "";
+    clearTimeout(qrTimer);
+    try {
+      const res = await fetch("/api/tid/crew/qr", { method: "POST", headers: { "Content-Type": "application/json", "X-Crew-Token": token }, body: JSON.stringify({ origin: location.origin }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.message || "QR コードを作れませんでした");
+      box.innerHTML = j.svg; // サーバーが作った SVG（QR コードの絵だけ）
+      const until = new Date(j.until).toLocaleTimeString("ja-JP", { hour12: false, hour: "2-digit", minute: "2-digit" });
+      info.textContent = `スマホのカメラで読んでください。ID:${j.id} でログインします（${until} まで・1回だけ使えます）`;
+      if (/^(localhost|127\.|\[::1\])/.test(location.hostname))
+        err.textContent = "この画面は localhost で開いているので、スマホからはつながりません。スマホから見えるアドレス（PC の IP など）でこの画面を開き直してください";
+      qrTimer = setTimeout(showQr, 270000);
+    } catch (e) { box.textContent = ""; err.textContent = e.message; }
+  }
+  document.getElementById("qrTile").onclick = showQr;
+  document.getElementById("qrClose").onclick = () => { document.getElementById("qrModal").hidden = true; clearTimeout(qrTimer); };
+
+  // 時計（PC の時刻）
+  const clock = document.getElementById("clock");
+  const tick = () => { clock.textContent = new Date().toLocaleTimeString("ja-JP", { hour12: false }); };
+  tick();
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>

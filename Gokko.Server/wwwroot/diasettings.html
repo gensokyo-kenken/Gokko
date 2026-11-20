@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>司令用管理画面</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #2563eb; --danger: #c62828; --ok: #1b7f3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171c; --panel: #1d2128; --text: #e6e8eb; --muted: #9aa3ae; --line: #2e333c;
+      --accent: #6b9cff; --danger: #ff6b6b; --ok: #5fd08a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+  header h1 { font-size: 16px; margin: 0 12px 0 0; }
+  main { display: grid; gap: 16px; padding: 16px; grid-template-columns: 1fr 1fr; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  input, button, select { font: inherit; color: inherit; }
+  .rpclock { margin-left: auto; display: flex; align-items: baseline; gap: 6px; }
+  #rpClock { font-family: "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", monospace; font-size: 20px; font-weight: bold; font-variant-numeric: tabular-nums; }
+  #rpClockNote { font-size: 12px; }
+  input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  button { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .muted { color: var(--muted); }
+  .clock { font-size: 28px; font-variant-numeric: tabular-nums; font-weight: bold; }
+  .status { font-weight: bold; }
+  .ok { color: var(--ok); } .ng { color: var(--danger); }
+  table { border-collapse: collapse; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  #error { color: var(--danger); }
+  #connAlert { display: none; background: var(--danger); color: #fff; border-radius: 6px; padding: 2px 10px; font-weight: bold; cursor: pointer; animation: connBlink 1s step-end infinite; }
+  @keyframes connBlink { 50% { opacity: .55; } }
+  section.conn-alert { border: 2px solid var(--danger); }
+  tr.conn-alert td { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+  tr.conn-cut td { opacity: .55; }
+</style>
+<script src="menulink.js"></script>
+<script src="crewsession.js"></script>
+</head>
+<body>
+<header>
+  <a href="menu.html" data-menu-link style="color:inherit">‹ メニュー</a>
+  <h1>司令用管理画面</h1>
+  <label>合言葉 <input id="key" type="password" size="16" autocomplete="off"></label>
+  <button id="saveKey">保存</button>
+  <span id="conn" class="status muted">未接続</span>
+  <span id="error"></span>
+  <span id="chime"></span>
+  <span id="connAlert" title="押すと接続待ちの欄へ"></span>
+  <span class="rpclock" title="ロープレ時刻（管理画面で設定する時刻）"><span id="rpClockNote" class="muted"></span><span id="rpClock">--:--:--</span></span>
+</header>
+
+<main>
+  <section class="wide">
+    <div id="mode" style="margin-bottom:8px"></div>
+    <iframe id="diagramFrame" src="diagrammarker.html?scope=dia&embed=1" title="ダイヤグラム" style="width:100%; height:480px; border:0; display:block"></iframe>
+  </section>
+  <section class="wide">
+    <h2>出発順序・単線区間の走行順</h2>
+    <div id="orders"></div>
+  </section>
+  <section class="wide">
+    <div id="queue"></div>
+  </section>
+  <section class="wide">
+    <h2>列車別設定</h2>
+    <div id="trains"></div>
+  </section>
+  <section class="wide" id="connSection">
+    <h2>接続待ち</h2>
+    <div id="connections"></div>
+  </section>
+  <section class="wide">
+    <h2>手動進路構成</h2>
+    <iframe id="circuitMap" src="tid.html?names=1&embed=1" title="軌道回路名つきの配線" style="width:100%; height:320px; border:1px solid var(--line); border-radius:6px; margin-bottom:8px; background:#fff"></iframe>
+    <div id="manual"></div>
+  </section>
+  <section class="wide">
+    <div id="continues"></div>
+  </section>
+  <section class="wide">
+    <div id="blockSignals"></div>
+  </section>
+  <section>
+    <h2>ロープレ時刻</h2>
+    <div class="row"><span id="gameTime" class="clock">--:--:--</span><span id="clockState" class="muted"></span></div>
+    <div class="row">
+      <input id="clockInput" placeholder="11:00" size="8">
+      <button id="clockSet" class="primary">この時刻から開始</button>
+      <button id="clockPause">停止</button>
+      <button id="clockResume">再開</button>
+    </div>
+    <div class="muted">設定した時刻から実時間と同じ速さで進みます。設定すると、手で入れたダイヤの指示（列車ごとの指示・出発順序・走行順・後運用の差し替え）を取り消します。</div>
+  </section>
+  <section>
+    <h2>駅の扱い</h2>
+    <div id="stationModes"></div>
+  </section>
+  <section>
+    <h2>自動退避設定</h2>
+    <div id="passing"></div>
+  </section>
+  <section class="wide">
+    <h2>作動中の特発</h2>
+    <div id="incidents"></div>
+  </section>
+</main>
+
+<script src="gameclock.js"></script>
+<script>
+  // 右上のロープレ時刻。未設定ならこの PC の時刻を出し、そうと書く
+  (() => {
+    const tick = () => {
+      document.getElementById("rpClock").textContent = GokkoClock.fmt(GokkoClock.now(), true);
+      document.getElementById("rpClockNote").textContent = GokkoClock.isSet() ? "ロープレ時刻" : "実時刻（ロープレ時刻 未設定）";
+    };
+    GokkoClock.ready.then(tick); setInterval(tick, 250);
+  })();
+</script>
+<script src="diapanel.js"></script>
+<script src="tokuhatsu-chime.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let key = "";
+  try { key = localStorage.getItem("gokkoDiaKey") || ""; } catch (e) {}
+  $("key").value = key;
+  // 乗務メニュー・乗務タブレットから開いた司令員は、合言葉なしで入る（このタブだけのログインの合い札。crewsession.js）
+  // URL を直接開いたタブでは引き継がないので、合言葉か、乗務メニューからのログインが要る
+  const crewToken = GokkoCrew.token();
+
+  // 中身が変わったときだけ描き直す（毎秒作り直すと、押している途中のボタンが消えて押し損ねるため）
+  function setHtml(el, html) {
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  }
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function api(method, path, body) {
+    const res = await fetch("/api/dia" + path, {
+      method,
+      headers: { "X-Dia-Key": key, ...(crewToken ? { "X-Crew-Token": crewToken } : {}), "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store"
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((json && (json.message || json.detail)) || ("HTTP " + res.status));
+    return json;
+  }
+
+  async function act(method, path, body) {
+    try { await api(method, path, body); $("error").textContent = ""; await refresh(); }
+    catch (e) { $("error").textContent = e.message; }
+  }
+
+
+  // ---- ロープレ時刻（管理画面と同じ操作。状態は /api/clock から読む） ----
+  let clockRunning = null, pausedSec = null;
+  async function readClock() {
+    try {
+      const c = await (await fetch("/api/clock", { cache: "no-store" })).json();
+      clockRunning = c.running;
+      pausedSec = !c.running && c.daySec != null ? Math.floor(c.daySec) : null; // 止めているときは、止めた時刻のまま出す
+    } catch (e) {}
+  }
+  const hms = (s) => [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((n) => String(n).padStart(2, "0")).join(":");
+  function drawClock() {
+    $("gameTime").textContent = !GokkoClock.isSet() ? "--:--:--" : pausedSec != null ? hms(pausedSec) : GokkoClock.fmt(GokkoClock.now(), true);
+    $("clockState").textContent = GokkoClock.isSet() ? (clockRunning ? "進行中" : "停止中") : "未設定";
+  }
+  async function clockAct(body) {
+    await act("POST", "/clock", body);
+    await Promise.all([GokkoClock.sync(), readClock()]);
+    drawClock();
+  }
+  $("clockSet").onclick = () => {
+    if (!confirm("ロープレ時刻を設定すると、手で入れたダイヤの指示（列車ごとの指示・出発順序・走行順・後運用の差し替え）を取り消します。よろしいですか？")) return;
+    clockAct({ time: $("clockInput").value, running: true });
+  };
+  $("clockPause").onclick = () => clockAct({ running: false });
+  $("clockResume").onclick = () => clockAct({ running: true });
+  Promise.all([GokkoClock.ready, readClock()]).then(() => { drawClock(); setInterval(drawClock, 250); });
+  setInterval(readClock, 5000);
+
+  // ---- ダイヤグラム・順序・進路を取る順番・列車別設定・継続乗務申請・駅の扱い・自動退避設定（diapanel.js の共通部品。管理画面と同じ） ----
+  const orders = GokkoDia.orderEditor({ el: $("orders"), act });
+  const trainSettings = GokkoDia.trainEditor({ el: $("trains"), act });
+  const queue = GokkoDia.queuePanel({ el: $("queue"), api, help: false });
+  const continues = GokkoDia.continuePanel({ el: $("continues"), act, help: false });
+  const blockSignals = GokkoDia.blockSignalPanel({ el: $("blockSignals"), api, act, help: false });
+  const mode = GokkoDia.modePanel({ el: $("mode"), act, help: false });
+  const stationModes = GokkoDia.stationModePanel({ el: $("stationModes"), act });
+  const passing = GokkoDia.passingPanel({ el: $("passing"), act });
+  // 手動進路構成: 不用意に取り消さないよう、取消のたびに「通告は完了したか？」を確かめる（開通は確かめない）
+  const manual = GokkoDia.manualRoutePanel({ el: $("manual"), api, after: () => refresh(), confirm: true });
+  // 接続待ち（ダイヤの「(接)」の組）。接続で待つ列車が遅れる見込みなら赤くして、ヘッダーにも出す
+  function renderConnections(c) {
+    const rows = (c && c.rows) || [];
+    const alerts = rows.filter((r) => r.alert);
+    const head = $("connAlert");
+    head.style.display = alerts.length ? "inline-block" : "none";
+    head.textContent = alerts.length ? `⚠ 接続の遅れ見込み ${alerts.length}件` : "";
+    $("connSection").classList.toggle("conn-alert", alerts.length > 0);
+    const tr = (n) => n == null ? "" : `${n}番線`;
+    const state = (r) => {
+      if (r.cut) return `<span class="muted">接続を切った（待たない）</span>`;
+      if (r.feederState === "接近中") {
+        const eta = r.feederEta ? `${esc(r.feederEta)} 着見込み` : "着く見込み不明";
+        const late = r.delaySeconds > 0 ? `・<b class="ng">${esc(r.waiter)} が約${Math.ceil(r.delaySeconds / 60)}分遅れる見込み</b>` : "";
+        return `${eta}${late}${r.waiting ? "・<b>接続待ち中</b>" : ""}`;
+      }
+      if (r.feederState === "走っていない") return `<span class="muted">${esc(r.feeder)} が走っていない（待たずに発車）</span>`;
+      return `<span class="muted">${esc(r.feederState)}</span>`;
+    };
+    const html = rows.length === 0
+      ? `<div class="muted">走っている列車の接続待ちはありません（ダイヤの「(接)」の組 ${c ? c.total : 0}件）</div>`
+      : `<table><tr class="muted"><td>駅</td><td>待つ列車</td><td>接続を受ける列車</td><td>状態</td><td></td></tr>${rows.map((r) => `
+          <tr class="${r.alert ? "conn-alert" : r.cut ? "conn-cut" : ""}">
+            <td><b>${esc(r.station)}</b></td>
+            <td><b>${esc(r.waiter)}</b> ${tr(r.waiterTrack)} ${esc(r.waiterDep)}発${r.waiterRunning ? "" : ` <span class="muted">（まだ走っていない）</span>`}</td>
+            <td><b>${esc(r.feeder)}</b> ${tr(r.feederTrack)} ${esc(r.feederArr)}着</td>
+            <td>${state(r)}</td>
+            <td>${r.cut ? `<button data-conn="${esc(r.key)}" data-cut="0">接続を戻す</button>`
+                        : `<button data-conn="${esc(r.key)}" data-cut="1" class="danger">接続を切る</button>`}</td></tr>`).join("")}</table>
+        <div class="muted" style="margin-top:6px">接続を受ける列車が着くまで、待つ列車の出発進路を開けません（待つ上限はありません）。接続を受ける列車が走っていなければ待ちません。「接続を切る」と待たずに発車します。</div>`;
+    setHtml($("connections"), html);
+  }
+  $("connections").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-conn]");
+    if (!b) return;
+    const cut = b.dataset.cut === "1";
+    const [, waiter, feeder] = b.dataset.conn.split("|");
+    if (cut && !(await GokkoDia.ask(`${waiter} の ${feeder} 待ちを切りますか？`, "切ると、接続を待たずに発車します。"))) return;
+    await act("POST", "/route/connection", { key: b.dataset.conn, cut });
+  });
+  $("connAlert").onclick = () => $("connSection").scrollIntoView({ behavior: "smooth" });
+
+  function renderDiagram(d) {
+    renderConnections(d.connections);
+    orders.update(d); queue.update(d); continues.update(d); blockSignals.update(); mode.update(d); stationModes.update(d); passing.update(d);
+  }
+
+  // 作動中の特発（作動を続ける時間の変更と、解除。作動はできない）
+  GokkoChime.mount($("chime"));
+  function renderIncidents(list) {
+    GokkoChime.watch(list.map((i) => i.crossing)); // 新しく作動したらチャイム
+    const html = list.length === 0 ? `<div class="muted">作動中の特発はありません</div>`
+      : `<table>${list.map((i) => { const c = GokkoDia.esc(i.crossing); const timed = i.releaseInSeconds != null; return `<tr><td><b>${c}</b></td><td class="muted">${GokkoDia.esc(i.reason)}</td>
+          <td class="muted">${GokkoDia.esc(i.source)}・${GokkoDia.hhmm(Date.parse(i.started), true)}</td>
+          <td>${timed ? `あと<b data-left="${c}"></b>秒で自動復帰` : `<b class="ng">解除まで動作</b>`}</td>
+          <td><button data-extend="${c}" data-sec="10" title="自動復帰を10秒のばす（解除まで動作のときは、いまから10秒後に自動復帰）">＋10秒</button>
+            <button data-extend="${c}" data-sec="-10" title="自動復帰を10秒早める"${timed ? "" : " disabled"}>－10秒</button>
+            <button data-extend="${c}" data-until="1" title="自動では復帰させず、解除するまで作動を続ける"${timed ? "" : " disabled"}>解除まで動作</button></td>
+          <td><button data-release="${c}">解除</button></td></tr>`; }).join("")}</table>`;
+    // 表は中身が変わったときだけ作り直し、残り秒数は数字だけ書き換える（毎秒作り直すと、押している途中のボタンが消えるため）
+    if ($("incidents").dataset.key !== html) {
+      $("incidents").dataset.key = html;
+      $("incidents").innerHTML = html;
+    }
+    for (const i of list) {
+      const el = [...$("incidents").querySelectorAll("b[data-left]")].find((b) => b.dataset.left === i.crossing);
+      if (el) el.textContent = i.releaseInSeconds;
+    }
+  }
+  $("incidents").addEventListener("click", async (ev) => {
+    const e = ev.target.closest("button[data-extend]");
+    if (e) {
+      await act("POST", "/extend", e.dataset.until ? { crossing: e.dataset.extend, untilRelease: true } : { crossing: e.dataset.extend, seconds: Number(e.dataset.sec) });
+      return;
+    }
+    const b = ev.target.closest("button[data-release]");
+    if (!b || !confirm(`${b.dataset.release} の特発を解除しますか？`)) return;
+    await act("POST", "/release", { crossing: b.dataset.release });
+  });
+
+  async function refresh() {
+    if (!key && !crewToken) { $("conn").textContent = "合言葉を入力してください（司令員は、乗務メニューでログインしてから開いてください）"; $("conn").className = "status muted"; return; }
+    try {
+      renderDiagram(await api("GET", "/diagram"));
+      const trains = (await api("GET", "/trains")).trains;
+      trainSettings.update(trains);
+      manual.update(trains);
+      renderIncidents((await api("GET", "/incidents")).incidents);
+      $("conn").textContent = key || !crewToken ? "接続中" : "司令員のログインで接続中"; $("conn").className = "status ok";
+      $("error").textContent = "";
+    } catch (e) {
+      $("conn").textContent = "接続できません"; $("conn").className = "status ng";
+      $("error").textContent = e.message;
+    }
+  }
+
+  $("saveKey").onclick = () => {
+    key = $("key").value;
+    try { localStorage.setItem("gokkoDiaKey", key); } catch (e) {}
+    refresh();
+  };
+  $("key").addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("saveKey").click(); });
+
+  // 軌道回路名つきの配線（埋め込み）: 図の高さに合わせる
+  window.addEventListener("message", (ev) => {
+    if (ev.origin === location.origin && ev.data && ev.data.gokkoTidHeight) $("circuitMap").style.height = ev.data.gokkoTidHeight + "px";
+    if (ev.origin === location.origin && ev.data && ev.data.gokkoDiagramHeight) $("diagramFrame").style.height = ev.data.gokkoDiagramHeight + "px"; // ダイヤグラム（diagrammarker.html）
+  });
+
+  refresh();
+  setInterval(refresh, 1000);
+})();
+</script>
+</body>
+</html>

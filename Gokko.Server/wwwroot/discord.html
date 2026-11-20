@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discord ログイン</title>
+<style>
+  /* Discord ログインのあとの画面（お知らせと、名簿にいない人の申請）。色は乗務メニュー（menu.html）にそろえる */
+  :root { --bg: #1b2533; --panel: #22304a; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c; --info: #2f6fc0; --discord: #5865f2; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: "Yu Gothic UI", "Meiryo", "Hiragino Sans", sans-serif; font-size: 14px; line-height: 1.6; padding: 16px; }
+  main { max-width: 480px; margin: 24px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 12px; }
+  h1 { margin: 0; font-size: 19px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+  input, select { font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .row label { display: flex; gap: 6px; align-items: center; color: var(--fg); font-size: 14px; }
+  button { font: inherit; font-size: 16px; padding: 9px; border-radius: 8px; border: 1px solid #4b7fc4; background: var(--info); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button { flex: 1; background: var(--bar); border-color: var(--line); font-size: 14px; }
+  .tabs button[aria-pressed="true"] { background: var(--discord); border-color: var(--discord); }
+  .err { color: #ff8a80; font-size: 13px; }
+  .err:empty { display: none; }
+  a { color: #9cc3f5; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main id="main"><h1>Discord ログイン</h1><div class="muted">読み込んでいます…</div></main>
+<script>
+  // #msg=お知らせ&return=戻る画面 … お知らせを出す（許可されなかった・承認待ち・クライアントに戻ってください など）
+  // #apply=札 … まだ社員番号と紐づいていない Discord の人。3つから選ぶ
+  //   ・社員番号とパスワードが分かる人: その場で紐づける（承認なし。パスワードでのログインの期限まで）
+  //   ・はじめての人: ユーザー名・入社年度・所属で申請（勤怠管理で承認）
+  //   ・パスワードを忘れた人: 社員番号で申請（勤怠管理で承認すると、その社員番号に紐づく）
+  const h = new URLSearchParams(location.hash.slice(1));
+  history.replaceState(null, "", location.pathname); // 札をアドレスに残さない
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let ret = h.get("return") || "";
+  const back = () => ret.startsWith("/") && !ret.startsWith("//") ? `<a href="${esc(ret)}">‹ もとの画面に戻る</a>` : "";
+  const main = $("main");
+
+  function message(text) {
+    main.innerHTML = `<h1>Discord ログイン</h1><div>${esc(text)}</div>${back()}`;
+  }
+
+  async function post(path, body) {
+    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || "うまくいきませんでした");
+    return j;
+  }
+
+  async function apply(ticket) {
+    let o;
+    try {
+      const res = await fetch("/api/auth/discord/apply?ticket=" + encodeURIComponent(ticket), { cache: "no-store" });
+      o = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(o.message || "申請の画面を開けませんでした");
+    } catch (e) { message(e.message); return; }
+    ret = o.returnTo || "";
+    const years = []; for (let y = o.joinYearTo; y >= o.joinYearFrom; y--) years.push(y);
+    const era = (y) => y >= 2019 ? `令和${y === 2019 ? "元" : y - 2018}年度` : y >= 1989 ? `平成${y === 1989 ? "元" : y - 1988}年度` : `昭和${y - 1925}年度`;
+    const tabs = [
+      ...(o.passwordOpen ? [["link", "社員番号とパスワードが分かる"]] : []),
+      ["new", "はじめての人"],
+      ["old", "パスワードを忘れた"],
+    ];
+    main.innerHTML = `<h1>Discord と社員番号を紐づける</h1>
+      <div>Discord の <b>${esc(o.discordName)}</b> さんは、まだ社員番号と紐づいていません。</div>
+      <div class="tabs">${tabs.map(([k, t]) => `<button type="button" data-tab="${k}">${t}</button>`).join("")}</div>
+      <div data-pane="link" style="display:grid;gap:12px">
+        <div class="muted">社員番号とパスワードを入れると、その場で紐づけます（承認は要りません）。紐づけたら、パスワードは使えなくなります。</div>
+        <label>社員番号（8桁）<input id="linkId" inputmode="numeric" maxlength="8" autocomplete="username"></label>
+        <label>パスワード<input id="linkPw" type="password" autocomplete="current-password"></label>
+      </div>
+      <div data-pane="new" style="display:grid;gap:12px">
+        <div class="muted">申請すると、勤怠管理の担当者が承認します。社員番号は、承認のときに入社年度から決まります。</div>
+        <label>ユーザー名（20文字まで。ほかの人と同じ名前は使えません）<input id="name" maxlength="20"></label>
+        <label>入社年度<select id="year"><option value="">選んでください</option>${years.map((y) => `<option value="${y}">${y}年度（${era(y)}）</option>`).join("")}</select></label>
+        <div class="row">所属 ${o.depots.map((d) => `<label><input type="radio" name="depot" value="${esc(d)}"> ${esc(d)}</label>`).join("")}</div>
+      </div>
+      <div data-pane="old" style="display:grid;gap:12px">
+        <div class="muted">${o.passwordOpen ? "パスワードを忘れた人はこちら。" : "パスワードでのログインの期限を過ぎたので、社員番号を持っている人もこちらから申請してください。"}承認されると、その社員番号に Discord が紐づきます。</div>
+        <label>社員番号（8桁）<input id="oldId" inputmode="numeric" maxlength="8"></label>
+      </div>
+      <button type="button" id="send">紐づける</button>
+      <div class="err" id="err"></div>
+      <div class="muted">保存するのは、Discord の ID を鍵つきで変換した値だけです（メールアドレスなどは受け取りません）。申請のときの Discord のユーザー名は、担当者が本人か確かめるためだけに使い、承認・却下のあとで消します。</div>
+      ${back()}`;
+    let mode = "";
+    const tab = (k) => {
+      mode = k;
+      main.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === k)));
+      main.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== k; });
+      $("send").textContent = k === "link" ? "紐づける" : "申請する";
+    };
+    main.querySelectorAll("[data-tab]").forEach((b) => { b.onclick = () => tab(b.dataset.tab); });
+    tab(tabs[0][0]);
+    main.querySelectorAll("input").forEach((i) => i.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("send").click(); }));
+
+    $("send").onclick = async () => {
+      $("err").textContent = "";
+      let path = "/api/auth/discord/apply";
+      const body = { ticket };
+      if (mode === "link") {
+        path = "/api/auth/discord/apply/link";
+        body.id = $("linkId").value.trim();
+        body.password = $("linkPw").value;
+        if (!body.id || !body.password) { $("err").textContent = "社員番号とパスワードを入れてください"; return; }
+      } else if (mode === "old") {
+        body.existingId = $("oldId").value.trim();
+        if (!body.existingId) { $("err").textContent = "社員番号を入れてください"; return; }
+      } else {
+        body.name = $("name").value.trim();
+        body.joinYear = Number($("year").value);
+        body.depot = (document.querySelector('input[name="depot"]:checked') || {}).value;
+        if (!body.joinYear) { $("err").textContent = "入社年度を選んでください"; return; }
+        if (!body.depot) { $("err").textContent = "所属を選んでください"; return; }
+      }
+      $("send").disabled = true;
+      try {
+        const j = await post(path, body);
+        if (j.next) { location.href = j.next; return; } // 紐づけてログインした。もとの画面へ
+        message(j.message);
+      } catch (e) { $("err").textContent = e.message; $("send").disabled = false; }
+    };
+  }
+
+  if (h.get("apply")) apply(h.get("apply"));
+  else message(h.get("msg") || "この画面は、Discord でログインしたあとに開きます。");
+</script>
+</body>
+</html>
