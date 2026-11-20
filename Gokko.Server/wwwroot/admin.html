@@ -40,6 +40,14 @@
   #log { max-height: 260px; overflow-y: auto; font-size: 13px; }
   #log div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
   #error { color: var(--danger); }
+  .load-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .load-tiles div { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  .load-tiles b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .load-tiles span { color: var(--muted); font-size: 12px; }
+  .load-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .load-charts figure { margin: 0; }
+  .load-charts figcaption { color: var(--muted); font-size: 12px; }
+  .load-charts canvas { width: 100%; height: 90px; display: block; border-bottom: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -108,6 +116,17 @@
   <section>
     <h2>記録</h2>
     <div id="log"></div>
+  </section>
+
+  <section class="wide">
+    <h2>サーバーの負荷 <span id="loadNote" class="muted"></span></h2>
+    <div class="muted" style="margin-bottom:6px">5秒ごとに測った値です（グラフは直近1時間）。1分ごとにまとめた値を、サーバーの logs/load-日付.log にも書いています。配信は、進路の処理と全員への状態の配信を1回するのにかかった時間です。</div>
+    <div id="loadTiles" class="load-tiles"></div>
+    <div class="load-charts">
+      <figure><figcaption>CPU（%）</figcaption><canvas id="loadCpu"></canvas></figure>
+      <figure><figcaption>メモリ（MB。線: このサーバー、点線: マシンの空き）</figcaption><canvas id="loadMem"></canvas></figure>
+      <figure><figcaption>配信1回の時間（ms。線: 平均、点線: 最大）</figcaption><canvas id="loadBc"></canvas></figure>
+    </div>
   </section>
 
   <section class="wide">
@@ -406,8 +425,63 @@
     loadDutyFiles();
   });
 
+  // サーバーの負荷（5秒ごと）
+  function drawLoad(canvas, series, opts) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const all = series.flatMap((s) => s.values).filter((v) => v != null);
+    const max = Math.max(opts.min || 1, ...all) * 1.1;
+    g.fillStyle = css.getPropertyValue("--muted"); g.font = "11px system-ui";
+    g.fillText(max.toFixed(max < 10 ? 1 : 0), 2, 11);
+    for (const s of series) {
+      const n = s.values.length;
+      if (n < 2) continue;
+      g.strokeStyle = css.getPropertyValue(s.color); g.lineWidth = 1.5; g.setLineDash(s.dash ? [4, 3] : []);
+      g.beginPath();
+      let started = false;
+      s.values.forEach((v, i) => {
+        if (v == null) { started = false; return; }
+        const x = (i / (opts.count - 1)) * w + (opts.count - n) / (opts.count - 1) * w;
+        const y = h - (v / max) * (h - 4);
+        if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; }
+      });
+      g.stroke();
+    }
+  }
+  async function refreshLoad() {
+    if (!key) return;
+    try {
+      const r = await api("GET", "/load");
+      const c = r.current;
+      if (!c) { $("loadNote").textContent = "（測り始めたところです）"; return; }
+      $("loadNote").textContent = `（${r.cores}コア）`;
+      const tile = (label, value) => `<div><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+      const mb = (v) => v == null ? "-" : `${Math.round(v)} MB`;
+      setHtml($("loadTiles"), [
+        tile("CPU", `${c.cpuPercent.toFixed(1)} %`),
+        tile("このサーバーのメモリ", mb(c.processMb)),
+        tile("マシンの空きメモリ", c.machineAvailableMb == null ? "-" : `${mb(c.machineAvailableMb)} / ${mb(c.machineTotalMb)}`),
+        tile("ロードアベレージ", c.loadAverage1 == null ? "-" : c.loadAverage1.toFixed(2)),
+        tile("配信1回（平均/最大）", `${c.broadcastAvgMs.toFixed(1)} / ${c.broadcastMaxMs.toFixed(1)} ms`),
+        tile("参加者 / にぎやかし", `${c.players} / ${c.aiTrains}`),
+      ].join(""));
+      const h = r.history, count = 720;
+      drawLoad($("loadCpu"), [{ values: h.map((x) => x.cpuPercent), color: "--accent" }], { count, min: 10 });
+      drawLoad($("loadMem"), [{ values: h.map((x) => x.processMb), color: "--accent" }, { values: h.map((x) => x.machineAvailableMb), color: "--ok", dash: true }], { count, min: 100 });
+      drawLoad($("loadBc"), [{ values: h.map((x) => x.broadcastAvgMs), color: "--accent" }, { values: h.map((x) => x.broadcastMaxMs), color: "--danger", dash: true }], { count, min: 5 });
+    } catch (e) { $("loadNote").textContent = e.message; }
+  }
+
   if (key) refresh().then(loadDutyFiles); else refresh();
   setInterval(refresh, 1000);
+  refreshLoad();
+  setInterval(refreshLoad, 5000);
 })();
 </script>
 <script>
