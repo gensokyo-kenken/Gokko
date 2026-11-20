@@ -60,6 +60,7 @@ public static class AdminEndpoints
     public sealed record PassingRequest(int? MarginSeconds, int? ToleranceSeconds);
     public sealed record ConnectionCutRequest(string? Key, bool Cut);
     public sealed record AiTrainRequest(string? Train, int? Cars, string? Station, string? Id);
+    public sealed record AiTrainModeRequest(bool On);
 
     /// <summary>駅の出発順序（Direction は使わない。上下まとめて1つの順序）。</summary>
     public sealed record OrderRequest(string Station, string? Direction, List<string>? Trains);
@@ -762,7 +763,13 @@ public static class AdminEndpoints
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
-        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(ai.List()));
+        // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
+        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List() }));
+        g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
+        {
+            ai.SetEnabled(req.On);
+            return Results.Ok(new { ok = true, enabled = ai.Enabled });
+        });
         g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { ok = false, message = "列車番号を入れてください" });
