@@ -164,6 +164,27 @@ public sealed partial class RouteEngine
         return NowSec() < t - DepartLeadSeconds ? $"入換時刻待ち（{FormatDiaTime(t)} 入換。{DepartLeadSeconds}秒前に開通）" : null;
     }
 
+    /// <summary>
+    /// ダイヤ運転中の始発の入換: 入換で入る番線を、ダイヤでそれより先に使う列車（その番線に着いて出ていく列車）が、まだ駅を出ていなければ待つ。
+    /// 先の列車が遅れていても、入換の列車が先に番線をふさがないように（ふさぐと、先の列車が場内に入れず、出発順序の待ち合いで止まる）。
+    /// プレイヤーの列車も自動運転の列車も同じに扱う。比べるのは、自分の入換時刻（なければ発車時刻）と、相手のこの駅の発車時刻（なければ着時刻）。
+    /// </summary>
+    private string? DiaShuntTrackHold(TrainRun run, StationRun st, int to)
+    {
+        if (!DiaMode || run.Dia == null) return null;
+        var mine = DiaShuntTimes.TryGetValue(run.Dia.Number, out var t) ? t : DiaSec(run, st.St.Id, depart: true);
+        if (mine == null) return null;
+        var first = new List<string>();
+        foreach (var other in _runs.Values.Where(o => o != run && o.Dia != null))
+        {
+            if (other.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is not { Done: false } os || IsCutOff(other, os)) continue;
+            if ((os.Track ?? other.Dia!.Stops.FirstOrDefault(x => x.StationId == st.St.Id)?.Track) != to) continue;
+            if (DiaSec(other, st.St.Id, depart: true) is { } theirs && theirs < mine) first.Add(other.Train);
+        }
+
+        return first.Count > 0 ? $"番線を先に使う列車待ち（{string.Join("・", first)} が {to}番線を出てから入換）" : null;
+    }
+
     /// <summary>出発まで開けてから場内を開ける駅（ダイヤ運転中。浜園）。</summary>
     private bool DepartBeforeArrive(StationRun st) => DiaMode && _data.DepartBeforeArrive.Contains(st.St.Id);
 
@@ -2183,7 +2204,7 @@ public sealed partial class RouteEngine
             var wait = st.ForceShunt ? InterlockConflict(run, path, occupied)
                 : PanelControlled(run, st) ? PanelWait
                 : _central.IsHeld(run.Train, st.St.Id) ? "抑止（集中扱い）"
-                : TimeWait(run, st, now) ?? DiaShuntHold(run, st) ?? Conflict(run, st, path, occupied, departure: false);
+                : TimeWait(run, st, now) ?? DiaShuntHold(run, st) ?? DiaShuntTrackHold(run, st, to) ?? Conflict(run, st, path, occupied, departure: false);
             if (wait != null)
             {
                 (st.Shunt, st.ShuntWait) = (GroupState.Waiting, wait);
