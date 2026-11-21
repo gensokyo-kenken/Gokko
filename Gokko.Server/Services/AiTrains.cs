@@ -830,6 +830,10 @@ public sealed class AiTrains : BackgroundService
         var m = System.Text.RegularExpressions.Regex.Match(def.To, @"^(\d+)番線$");
         if (m.Success && _rail.Stations.TryGetValue(def.StationId, out var st) && st.TrackCircuit.TryGetValue(int.Parse(m.Groups[1].Value), out var tc) && set.Contains(tc))
             targets.Add(tc);
+        else if (ToCircuit(def, set) is { } toCircuit)
+            // 行き先が軌道回路（大道寺の 1RC は「42ﾛT」）: その回路まで。1RB と同じ信号機で、41T の先に 3R も 4R もあるので、
+            // 次の信号機の手前の回路で探すと、近い 41T（3R の手前）で切れて、開いていない 3R で止まってしまう
+            targets.Add(toCircuit);
         else if (_rail.Signals.TryGetValue(def.Signal, out var sig))
         {
             var after = sig.Next.SelectMany(FirstCircuits).Where(c => !set.Contains(c)).ToHashSet();
@@ -864,6 +868,14 @@ public sealed class AiTrains : BackgroundService
         }
 
         return Order(def.Circuits, from);
+    }
+
+    /// <summary>進路の行き先が軌道回路の名前なら、その回路（データには半角の「ﾛ」もあるので、全角にそろえて比べる）。</summary>
+    private static string? ToCircuit(RouteDef def, HashSet<string> set)
+    {
+        var to = def.To.Normalize(System.Text.NormalizationForm.FormKC);
+        if (to.Length == 0) return null;
+        return set.FirstOrDefault(c => c == to || c.EndsWith("_" + to, StringComparison.Ordinal));
     }
 
     private List<string> Order(IReadOnlyList<string> circuits, string from)
