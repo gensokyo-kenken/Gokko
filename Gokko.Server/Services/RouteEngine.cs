@@ -3181,6 +3181,8 @@ public sealed partial class RouteEngine
         lock (_lock)
         {
             var list = new List<object>();
+            var plannedAll = PlannedTrains();
+            var ranks = ForecastRanks(plannedAll);
             foreach (var station in _data.ControlStations)
             {
                 // 出発順序は上り・下りで別々（片方だけ自動に戻せる）
@@ -3195,40 +3197,10 @@ public sealed partial class RouteEngine
                     .Where(x => x.St != null && !IsCutOff(x.Run, x.St))
                     .ToList();
 
-                // 表示の並び（在線位置の画面の出発・到着の枠）: 実際に進路を取る順。
-                // 出発: もう出発進路を取った列車（取った順）→ 進路を取る順序（手で決めた順、ダイヤ運転中はダイヤの順）→ 抑止中は後ろ → 時刻
-                //       （ダイヤ運転中はダイヤの発車時刻、そうでなければ見込み）
-                // 到着: もう場内を取った列車（取った順）→ 着く見込みの時刻
-                var nowSec = NowSec();
-                double Eta(TrainRun r, StationRun s, bool dep)
-                {
-                    double? sec = s.IsStart ? 0 : _model.SecondsTo(RunType(r), r.Dir, r.Front, r.Fraction, station.Id);
-                    if (sec != null && dep) sec += DwellSeconds(r, s);
-                    return sec is { } v ? nowSec + v : double.MaxValue;
-                }
-                long Taken(TrainRun r, StationRun s, bool dep) =>
-                    r.Requests.Where(q => q.Station == s && q.Departure == dep && q.CancelledUtc == null).Select(q => q.Id).DefaultIfEmpty(long.MaxValue).Min();
-                var departRank = new Dictionary<string, int>();
-                var arriveRank = new Dictionary<string, int>();
-                foreach (var dir in new[] { Dir.Down, Dir.Up })
-                {
-                    var eff = EffectiveOrder(station.Id, dir)?.ToList() ?? new List<string>();
-                    var mine = here.Where(x => x.Run.Dir == dir).ToList();
-                    var dep = mine
-                        .OrderBy(x => x.St!.Depart == GroupState.Requested ? 0 : 1)
-                        .ThenBy(x => x.St!.Depart == GroupState.Requested ? Taken(x.Run, x.St, true) : 0)
-                        .ThenBy(x => eff.IndexOf(x.Run.Train) is var i && i >= 0 ? i : int.MaxValue)
-                        .ThenBy(x => (_central.Hold(x.Run.Train, station.Id) & HoldKind.Depart) != 0)
-                        .ThenBy(x => DiaMode && DiaSec(x.Run, station.Id, depart: true) is { } d ? d : Eta(x.Run, x.St!, true))
-                        .ToList();
-                    for (var i = 0; i < dep.Count; i++) departRank[dep[i].Run.Train] = i;
-                    var arr = mine
-                        .OrderBy(x => x.St!.Arrive == GroupState.Requested ? 0 : 1)
-                        .ThenBy(x => x.St!.Arrive == GroupState.Requested ? Taken(x.Run, x.St, false) : 0)
-                        .ThenBy(x => Eta(x.Run, x.St!, false))
-                        .ToList();
-                    for (var i = 0; i < arr.Count; i++) arriveRank[arr[i].Run.Train] = i;
-                }
+                // 表示の並び（在線位置の画面の出発・到着の枠）: RouteEngine.Forecast.cs（ForecastRanks）
+                var down = ranks.GetValueOrDefault((station.Id, Dir.Down));
+                var upr = ranks.GetValueOrDefault((station.Id, Dir.Up));
+                ForecastRank? RankOf(Dir d) => d == Dir.Down ? down : upr;
 
                 var trains = here
                     .Select(x =>
@@ -3264,8 +3236,8 @@ public sealed partial class RouteEngine
                             // 出発抑止中（順序に入っていても、ほかの列車を先に出す）
                             held = (_central.Hold(x.Run.Train, station.Id) & HoldKind.Depart) != 0,
                             // 在線位置の画面の並び（出発・到着）。小さいほど先
-                            departRank = departRank.GetValueOrDefault(x.Run.Train, int.MaxValue),
-                            arriveRank = arriveRank.GetValueOrDefault(x.Run.Train, int.MaxValue),
+                            departRank = RankOf(x.Run.Dir)?.Depart.GetValueOrDefault(x.Run.Train, int.MaxValue) ?? int.MaxValue,
+                            arriveRank = RankOf(x.Run.Dir)?.Arrive.GetValueOrDefault(x.Run.Train, int.MaxValue) ?? int.MaxValue,
                             status = Status(x.Run, x.St)
                         };
                     })
@@ -3282,7 +3254,20 @@ public sealed partial class RouteEngine
                     fixedOrder = trains.Any(t => t.index >= 0),
                     fixedUp = trains.Any(t => t.index >= 0 && t.direction == "上り"),
                     fixedDown = trains.Any(t => t.index >= 0 && t.direction == "下り"),
-                    trains
+                    trains,
+                    // ダイヤ運転中の、まだ走っていない後運用の列車（在線位置の画面の到着・出発の表だけに出す。出発順序の編集には出さない）
+                    planned = plannedAll.Where(p => PlannedPasses(p, station.Id) && !trains.Any(t => t.train == p.Train)).Select(p => new
+                    {
+                        train = p.Train,
+                        type = p.Dia.Type,
+                        direction = p.Dir.Label(),
+                        from = p.From.Train,
+                        planned = true,
+                        ends = p.Dia.TerminalId == station.Id,
+                        arrived = p.StartId == station.Id,
+                        departRank = RankOf(p.Dir)?.Depart.GetValueOrDefault(p.Train, int.MaxValue) ?? int.MaxValue,
+                        arriveRank = RankOf(p.Dir)?.Arrive.GetValueOrDefault(p.Train, int.MaxValue) ?? int.MaxValue
+                    }).ToList()
                 });
             }
 
