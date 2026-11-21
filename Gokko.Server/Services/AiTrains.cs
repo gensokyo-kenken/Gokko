@@ -71,6 +71,7 @@ public sealed class AiTrains : BackgroundService
 
     // ---- 自動運転列車アリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す） ----
     private bool _enabled;
+    private readonly HashSet<string> _errorLogged = new(); // 例外を記録した列車（同じ列車で何度も書かない）
     private readonly HashSet<string> _spawned = new(); // 自動で出した・続けて走った列番（同じ列車を二度出さない）
     private HashSet<string> _userTrains = new();       // ユーザーの列車（出勤した行路の列車・入力した列番）
     private HashSet<string> _userInGame = new();       // 運転画面に出ているユーザーの列番
@@ -251,6 +252,9 @@ public sealed class AiTrains : BackgroundService
                 // 入ってしまった進路は消さない（ゲームの接近鎖錠の代わり）。まだ入っていなければ、道筋もそこまでに縮める
                 var i = t.Path.FindIndex(s => s.Route is { } d && d.Interlock == r.Interlocking && d.Name == r.RouteName);
                 if (i >= 0 && t.Path[i].Start <= t.Head) continue;
+                // 接近の区間にいる進路も消さない（ゲームなら接近鎖錠で断られる）。駒野の第二出発2L は、手前の 6LT が駒野〜館浜の区間の回路なので、
+                // 最後尾が 9LCT を出ると自動進路構成は駒野を抜けたとして消しにくるが、列車はまだ 6LT を走っていて、これから 2L に入る
+                if (i >= 0 && t.Path[i].Route is { Approach.Count: > 0 } ap && t.Info.TrackCircuits.Any(ap.Approach.Contains)) continue;
                 if (i > 0) t.Path.RemoveRange(i, t.Path.Count - i);
                 t.Info.GameRoutes.Remove((r.Interlocking, r.RouteName));
             }
@@ -315,7 +319,16 @@ public sealed class AiTrains : BackgroundService
                             continue;
                         }
 
-                        Step(t, dt * _clock.Speed, now);
+                        // 1本の列車で例外が出ても、ほかの列車は動かし続ける（周期ごと止まると、後ろに並ぶ列車がすべて動かなくなる）
+                        try
+                        {
+                            Step(t, dt * _clock.Speed, now);
+                        }
+                        catch (Exception stepError)
+                        {
+                            if (_errorLogged.Add(t.Id)) _logger?.LogError(stepError, "にぎやかしの列車 {Train} でエラー", t.Number);
+                            continue;
+                        }
                         if (t.WantDeparture) { departures.Add(t.Id); t.WantDeparture = false; }
                         if (t.FinishedUtc is { } f && now - f > TerminalLinger)
                         {
@@ -398,6 +411,17 @@ public sealed class AiTrains : BackgroundService
                         t.ShuntStartHead = t.Head;
                         t.ShuntStation = stopNow;
                         t.Status = "入換（引上げ）中";
+                        UpdateInfo(t);
+                        return;
+                    }
+
+                    // 自動進路構成が扱う駅がもうない（入換の進路を開けない。江ノ原信号場10番線に下りで着いたときの 10→13 など）まま、
+                    // 次の列番の発車1分前になったら、この列車は消す（次の列番は、その時刻にダイヤの番線へ出す）
+                    if (t.PlanDetail == null && nowGame is { } ng1 && _rail.DiaOf(sn)?.Stops.FirstOrDefault(s => s.StationId == stopNow.StationId) is { } ns
+                        && Time(ns.Dep ?? ns.Arr) is { } nsDep && ng1 >= nsDep - TimeSpan.FromSeconds(60))
+                    {
+                        t.FinishedUtc ??= utcNow - TerminalLinger;
+                        t.Status = $"{stopNow.Name} で入換の進路が開かないので終わり（{sn} は {stopNow.Name} の番線に出します）";
                         UpdateInfo(t);
                         return;
                     }
@@ -489,7 +513,8 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 駅に着いた（停止位置の表がなく、線路の終わり（先に信号機がない）で止まったときも、次の停車駅に着いたとする）
-        var atEnd = next != null && stopX == null && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
+        // 停止位置が線路の終わりより先にある（回路の長さの見込みが短い行き止まりなど）ときも、線路の終わりで止まったら着いたとする
+        var atEnd = next != null && (stopX == null || stopX > t.PathEnd - 2) && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
         if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
         {
             t.Dwelling = true;
@@ -689,11 +714,15 @@ public sealed class AiTrains : BackgroundService
                     var open = defs.FirstOrDefault(d => t.Info.GameRoutes.Contains((d.Interlock, d.Name)) && d.Circuits.Count > 0 && Adjacent(lastCircuit, d.Circuits));
                     open ??= defs.FirstOrDefault(d => t.Info.GameRoutes.Contains((d.Interlock, d.Name)) && d.Circuits.Count > 0);
                     if (open == null) continue;
-                    seg = MakeSeg(name, open, RoutePath(open, lastCircuit), last.End);
+                    // 進路の回路が、もう道筋に入っている（新野崎の入換25LD は 22L の先の 5LT まで。22L の回路は 5LT だけ）なら、
+                    // 長さ 0 の区間にして、その信号機を過ぎたことにする（その先へ道筋を延ばせるように）
+                    var path = RoutePath(open, lastCircuit);
+                    seg = path.Count > 0 ? MakeSeg(name, open, path, last.End)
+                        : new Seg(name, open, last.End, last.End, [new SegCircuit(lastCircuit, last.End, last.End)]);
                 }
-                else if (_rail.Signals.TryGetValue(name, out var sig) && sig.Protects.Count > 0)
+                else if (_rail.Signals.TryGetValue(name, out var sig) && sig.Protects.Count > 0 && Order(sig.Protects, lastCircuit) is { Count: > 0 } protects)
                 {
-                    seg = MakeSeg(name, null, Order(sig.Protects, lastCircuit), last.End);
+                    seg = MakeSeg(name, null, protects, last.End);
                 }
 
                 if (seg != null) break;
@@ -724,7 +753,8 @@ public sealed class AiTrains : BackgroundService
             if (!_rail.Routes.TryGetValue(key, out var d) || d.Circuits.Count == 0 || t.RedSignals.Contains(d.Signal)) continue;
             if (t.Path.Any(s => s.Route == d) || d.Circuits.Any(inPath.Contains)) continue;
             if (!near.Contains(d.Circuits[0]) && !near.Contains(d.Circuits[^1])) continue;
-            return MakeSeg(d.Signal, d, RoutePath(d, lastCircuit), last.End);
+            if (RoutePath(d, lastCircuit) is not { Count: > 0 } path) continue;
+            return MakeSeg(d.Signal, d, path, last.End);
         }
 
         return null;
@@ -754,6 +784,7 @@ public sealed class AiTrains : BackgroundService
     /// <summary>道筋の最後の区間の先にある信号機（並んで建つものは全部）。</summary>
     private List<string> NextSignals(Train? t, Seg last)
     {
+        if (last.Circuits.Count == 0) return new List<string>();
         var lastCircuit = last.Circuits[^1].Name;
         IEnumerable<string> raw;
         if (last.Signal != null && _rail.Signals.TryGetValue(last.Signal, out var sig)) raw = sig.Next;
@@ -866,7 +897,8 @@ public sealed class AiTrains : BackgroundService
         if (st != null)
             foreach (var c in t.Path.SelectMany(s => s.Circuits))
             {
-                if (c.End <= t.Head - 1) continue;
+                // 先頭がもう終わりまで来ている回路は除く（引上線で折り返した直後は、今いる引上線の回路も「番線の回路」なので）
+                if (c.End <= t.Head + 1) continue;
                 var k = st.TrackCircuit.FirstOrDefault(kv => kv.Value == c.Name);
                 if (k.Value == null) continue;
                 (track, platform) = (k.Key, c);
