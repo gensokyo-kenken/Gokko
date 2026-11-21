@@ -2360,10 +2360,23 @@ public sealed partial class RouteEngine
             && c.Contains(platform) && FullyInTrack(owner, r.Station, c))
             return [platform];
 
+        // 行き先が軌道回路の進路（大道寺の 22RE〜26RE・32LE は「ET」）も同じ。行き先の回路に入りきっていれば、その回路だけ。
+        // 22RE などは ET の先の 50ロT が、32LE は ET の先の 48T が後ろに並ぶ。E線で停まっている列車が、Y線への入換や 4番線の発着をふさがないように
+        if (DestCircuitOf(r.Def) is { } dest && owner.Player.TrackCircuits.Contains(dest)
+            && c.Where(x => x != dest).All(x => !owner.Player.TrackCircuits.Contains(x)))
+            return [dest];
 
         for (var i = 0; i < c.Count; i++)
             if (owner.Player.TrackCircuits.Contains(c[i])) return c.Skip(i);
         return c;
+    }
+
+    /// <summary>進路の行き先が軌道回路の名前なら、その回路（データには半角の「ﾛ」もあるので、全角にそろえて比べる）。</summary>
+    private static string? DestCircuitOf(RouteDef def)
+    {
+        var to = def.To.Normalize(System.Text.NormalizationForm.FormKC);
+        if (to.Length == 0) return null;
+        return def.Circuits.FirstOrDefault(c => c == to || c.EndsWith("_" + to, StringComparison.Ordinal));
     }
 
     /// <summary>
