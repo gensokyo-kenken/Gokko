@@ -2347,11 +2347,20 @@ public sealed partial class RouteEngine
 
     /// <summary>
     /// 他の列車の進路のうち、まだ使う回路。列車がその進路に入っていれば、列車より後ろの回路は使い終わっている
-    /// （1番線に入りきった列車の場内進路が、2番線への場内とぶつかって見えないように）。回路は進路の順に並んでいる。
+    /// （1番線に入りきった列車の場内進路が、2番線への場内とぶつかって見えないように）。回路はおおむね進路の順に並んでいる。
     /// </summary>
     private static IEnumerable<string> LiveCircuits(TrainRun owner, RouteReq r)
     {
         var c = r.Def.Circuits;
+
+        // 番線に入る進路で、列車が番線に入りきっていれば、まだ使うのは番線の回路だけ。
+        // 回路の並びが進路の順になっていない進路がある（水越の 12R は「21イT・12RT・21ロT」で、21ロT は 12RT より後ろに並ぶが、
+        // 列車は通らない）。並びのまま見ると、1番線に停まっている列車の 12R が、2番線から出る 13L と重なって見えて、出られなくなる
+        if (!r.Departure && r.Station.Track is { } t && r.Station.St.TrackCircuit.TryGetValue(t, out var platform)
+            && c.Contains(platform) && FullyInTrack(owner, r.Station, c))
+            return [platform];
+
+
         for (var i = 0; i < c.Count; i++)
             if (owner.Player.TrackCircuits.Contains(c[i])) return c.Skip(i);
         return c;
