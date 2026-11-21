@@ -3531,29 +3531,42 @@ public sealed partial class RouteEngine
     /// 段は 1 列車の「着」と「発」。待避などで、あとから来る列車を先に出す列車は、「着」の段と「発」の段に分け、「発」の段は先に出す列車の段のあとに置く。
     /// 時刻はダイヤの時刻。arr・dep は "HH:mm:ss"、"split"（ほかの段で出す）、"none"（時刻がない。通過の着・始発の着・終着の発・ダイヤにない列車）。
     /// 順は、駅にいる列車が先、あとは駅からの近さ（watch.Distance。回路の数）の順。監視の範囲（watch.Range）にいない列車は出さない。maxTrains 列車まで。
+    /// ダイヤ運転中は、この駅で折り返して次になる列車（後運用）を、折り返す前の列車が範囲に入ったら、折り返す前から「発」の段（状態は「折返」）で出す。
+    /// 先に出す順は、予告の並び（ForecastRanks の出発の順。司令員が決めた出発順序・抑止を含む）。
     /// </summary>
     public object ArrivalBoard(ArrivalBoards.StationWatch watch, int maxTrains)
     {
         lock (_lock)
         {
             var zone = _data.Line.ZoneOfStation(watch.Id);
+            var planned = PlannedTrains();
+            var ranks = ForecastRanks(planned);
+
+            // 駅からの近さ（駅にいれば 0）。この駅へ向かっていない・範囲にいなければ null
+            (StationRun St, int Dist, bool Here)? Near(TrainRun r)
+            {
+                var st = r.Stations.FirstOrDefault(s => s.St.Id == watch.Id && !s.Done);
+                if (!r.HasPosition || st == null || r.ActualDep.ContainsKey(watch.Id) || IsCutOff(r, st)) return null;
+                var here = r.Player.Zones.Contains(zone) || (zone - r.Front) * r.Dir.Step() <= 0;
+                var dist = here ? 0 : r.Player.TrackCircuits.Where(watch.Range.Contains).Select(c => watch.Distance.TryGetValue(c, out var d) ? d : int.MaxValue).DefaultIfEmpty(-1).Min();
+                return dist < 0 ? null : (st, dist, here);
+            }
+
             var boards = new List<object>();
             foreach (var dir in new[] { Dir.Down, Dir.Up })
             {
-                var step = dir.Step();
-                var cands = new List<(TrainRun Run, StationRun St, int Dist, double T)>();
+                // Run が null の候補は後運用の列車（P）。近さは折り返す前の列車のもの
+                var cands = new List<(TrainRun? Run, StationRun? St, PlannedTrain? P, int Dist, double T)>();
                 foreach (var r in _runs.Values.Where(r => r.HasPosition && r.Dir == dir))
-                {
-                    var st = r.Stations.FirstOrDefault(s => s.St.Id == watch.Id && !s.Done);
-                    if (st == null || r.ActualDep.ContainsKey(watch.Id) || IsCutOff(r, st)) continue;
-                    var here = r.Player.Zones.Contains(zone) || (zone - r.Front) * step <= 0;
-                    var dist = here ? 0 : r.Player.TrackCircuits.Where(watch.Range.Contains).Select(c => watch.Distance.TryGetValue(c, out var d) ? d : int.MaxValue).DefaultIfEmpty(-1).Min();
-                    if (dist < 0) continue;
-                    cands.Add((r, st, dist, DiaSec(r, watch.Id, depart: here) ?? double.MaxValue));
-                }
+                    if (Near(r) is { } n) cands.Add((r, n.St, null, n.Dist, DiaSec(r, watch.Id, depart: n.Here) ?? double.MaxValue));
+                foreach (var p in planned.Where(p => p.Dir == dir && p.StartId == watch.Id))
+                    if (Near(p.From) is { } n) cands.Add((null, null, p, n.Dist, PlannedDiaSec(p, watch.Id, depart: true) ?? double.MaxValue));
 
-                cands = cands.OrderBy(c => c.Dist).ThenBy(c => c.T).ToList();
-                var order = EffectiveOrder(watch.Id, dir);
+                // 後運用の列車は、折り返す前の列車より前に出さない
+                cands = cands.OrderBy(c => c.Dist).ThenBy(c => c.P != null ? 1 : 0).ThenBy(c => c.T).ToList();
+                // 先に出す順（手で決めた順・ダイヤ運転中だけ。ダイヤ運転でなく手で決めていなければ、待たない）
+                var order = EffectiveOrder(watch.Id, dir) == null && !DiaMode ? null
+                    : ranks.GetValueOrDefault((watch.Id, dir))?.Depart.OrderBy(x => x.Value).Select(x => x.Key).ToList();
                 var stages = new List<ArrivalStage>();
                 var trains = new List<string>();
                 var emitted = new HashSet<string>();
@@ -3583,7 +3596,37 @@ public sealed partial class RouteEngine
 
                 foreach (var c in cands)
                 {
-                    var (r, st) = (c.Run, c.St);
+                    if (c.P is { } pl)
+                    {
+                        // 後運用の列車: 出発の順で前の列車（範囲にいるもの）のあとに「発」の段を置く。
+                        // 折り返す前の列車は（向きが同じなら）その段のあと。ふつうは逆向きなので、反対の向きの表の終着の段になる
+                        trains.Add(pl.Train);
+                        var stop0 = pl.Dia.Stops.FirstOrDefault(x => x.StationId == watch.Id);
+                        var afterP = new HashSet<string>();
+                        if (pl.From.Dir == dir) afterP.Add(pl.From.Train);
+                        if (order != null)
+                            foreach (var t in order.TakeWhile(t => t != pl.Train))
+                                if (cands.Any(o => (o.Run?.Train ?? o.P?.Train) == t)) afterP.Add(t);
+                        var stageP = new ArrivalStage(
+                            pl.Train,
+                            pl.Dia.Number,
+                            TrainInfo(pl.Train)?.Type ?? pl.Dia.Type,
+                            pl.Dia.TypeLabel,
+                            pl.Dia.Stops.Count > 0 ? pl.Dia.Stops[^1].Name : "",
+                            _central.TrackOverride(pl.Train, watch.Id) ?? stop0?.Track ?? (pl.Dia.Stations.TryGetValue(watch.Id, out var pds) ? pds.Track : null),
+                            "none",
+                            stop0?.Dep ?? stop0?.Arr ?? "none",
+                            "発",
+                            "折返",
+                            null);
+                        if (afterP.IsSubsetOf(emitted)) stages.Add(stageP);
+                        else deferred.Add((afterP, stageP));
+                        emitted.Add(pl.Train);
+                        Flush();
+                        continue;
+                    }
+
+                    var (r, st) = (c.Run!, c.St!);
                     var stop = r.Dia?.Stops.FirstOrDefault(x => x.StationId == watch.Id);
                     var arrT = stop?.Arr ?? (st.StopType != "通過" ? stop?.Dep : null);
                     var depT = stop?.Dep ?? stop?.Arr;
@@ -3595,11 +3638,11 @@ public sealed partial class RouteEngine
                         // この列車より先に出す列車（待避の相手・発車順で前の列車）で、まだこの駅を出ていないもの。
                         // まだ範囲にいない待避の相手も待つ（その「発」の段は最後に置く）
                         var after = st.Partners.Select(p => p.Train)
-                            .Where(t => t != r.Train && (cands.Any(o => o.Run.Train == t) || !PassedStation(t, watch.Id)))
+                            .Where(t => t != r.Train && (cands.Any(o => o.Run?.Train == t) || !PassedStation(t, watch.Id)))
                             .ToHashSet();
                         if (order != null)
                             foreach (var t in order.TakeWhile(t => t != r.Train))
-                                if (cands.Any(o => o.Run.Train == t && (o.Dist > c.Dist || o.Dist == 0 && c.Dist == 0))) after.Add(t);
+                                if (cands.Any(o => (o.Run?.Train ?? o.P?.Train) == t && (o.Dist > c.Dist || o.Dist == 0 && c.Dist == 0))) after.Add(t);
                         var arrived = st.IsStart || r.ActualArr.ContainsKey(watch.Id);
                         if (after.Count == 0) stages.Add(Stage(r, st, st.IsStart ? null : arrT, depT, st.IsStart ? "発" : "着発"));
                         else
@@ -3627,7 +3670,7 @@ public sealed partial class RouteEngine
     private bool PassedStation(string train, string stationId) =>
         _runs.Values.FirstOrDefault(r => r.Train == train) is not { } r || r.ActualDep.ContainsKey(stationId) || r.Stations.All(s => s.St.Id != stationId || s.Done);
 
-    /// <summary>接近案内の 1 段。arr・dep は "HH:mm:ss"・"split"・"none"。stage は "着発"・"着"・"発"・"通過"・"終着"。status は "接近"・"到着"・"通過中"・"始発"。</summary>
+    /// <summary>接近案内の 1 段。arr・dep は "HH:mm:ss"・"split"・"none"。stage は "着発"・"着"・"発"・"通過"・"終着"。status は "接近"・"到着"・"通過中"・"始発"・"折返"（折り返して次になる、まだ走っていない列車）。</summary>
     public sealed record ArrivalStage(
         [property: System.Text.Json.Serialization.JsonIgnore] string Run,
         string Train, string Kind, string Type, string Dest, int? Track, string Arr, string Dep, string Stage, string Status, int? Delay);
