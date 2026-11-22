@@ -2348,14 +2348,36 @@ public sealed partial class RouteEngine
 
     /// <summary>
     /// 他の列車の進路のうち、まだ使う回路。列車がその進路に入っていれば、列車より後ろの回路は使い終わっている
-    /// （1番線に入りきった列車の場内進路が、2番線への場内とぶつかって見えないように）。回路は進路の順に並んでいる。
+    /// （1番線に入りきった列車の場内進路が、2番線への場内とぶつかって見えないように）。回路はおおむね進路の順に並んでいる。
     /// </summary>
     private static IEnumerable<string> LiveCircuits(TrainRun owner, RouteReq r)
     {
         var c = r.Def.Circuits;
+
+        // 番線に入る進路で、列車が番線に入りきっていれば、まだ使うのは番線の回路だけ。
+        // 回路の並びが進路の順になっていない進路がある（水越の 12R は「21イT・12RT・21ロT」で、21ロT は 12RT より後ろに並ぶが、
+        // 列車は通らない）。並びのまま見ると、1番線に停まっている列車の 12R が、2番線から出る 13L と重なって見えて、出られなくなる
+        if (!r.Departure && r.Station.Track is { } t && r.Station.St.TrackCircuit.TryGetValue(t, out var platform)
+            && c.Contains(platform) && FullyInTrack(owner, r.Station, c))
+            return [platform];
+
+        // 行き先が軌道回路の進路（大道寺の 22RE〜26RE・32LE は「ET」）も同じ。行き先の回路に入りきっていれば、その回路だけ。
+        // 22RE などは ET の先の 50ロT が、32LE は ET の先の 48T が後ろに並ぶ。E線で停まっている列車が、Y線への入換や 4番線の発着をふさがないように
+        if (DestCircuitOf(r.Def) is { } dest && owner.Player.TrackCircuits.Contains(dest)
+            && c.Where(x => x != dest).All(x => !owner.Player.TrackCircuits.Contains(x)))
+            return [dest];
+
         for (var i = 0; i < c.Count; i++)
             if (owner.Player.TrackCircuits.Contains(c[i])) return c.Skip(i);
         return c;
+    }
+
+    /// <summary>進路の行き先が軌道回路の名前なら、その回路（データには半角の「ﾛ」もあるので、全角にそろえて比べる）。</summary>
+    private static string? DestCircuitOf(RouteDef def)
+    {
+        var to = def.To.Normalize(System.Text.NormalizationForm.FormKC);
+        if (to.Length == 0) return null;
+        return def.Circuits.FirstOrDefault(c => c == to || c.EndsWith("_" + to, StringComparison.Ordinal));
     }
 
     /// <summary>
