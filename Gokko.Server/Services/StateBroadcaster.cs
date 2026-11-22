@@ -104,6 +104,7 @@ public sealed class StateBroadcaster : BackgroundService
     private async Task BroadcastAsync()
     {
         var players = _players.Snapshot();
+        var playerCount = players.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)); // 接続している人だけ（にぎやかしの列車・継続乗務の在線は数えない）
         _occupancy.Record(players); // 在線の記録（変わった列車だけ logs/occupancy-*.log へ）
         var conductors = _crew.Conductors();
         var riders = _crew.Riders();
@@ -173,7 +174,7 @@ public sealed class StateBroadcaster : BackgroundService
                     .Where(i => _data.IsNear(i.Crossing, p.TrackCircuits, p.Zones))
                     .Select(i => new IncidentView { Crossing = i.Crossing, Reason = i.Reason, StartedGameTime = i.StartedGameTime })
                     .ToList(),
-                PlayerCount = players.Count
+                PlayerCount = playerCount
             };
 
             if (p.Mode == ShareMode.Shared)
@@ -249,7 +250,7 @@ public sealed class StateBroadcaster : BackgroundService
             {
                 state = new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = players.Count,
+                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     RouteMessage = c.TrainNumber.Length == 0 ? "列車番号を入れてください" : $"列番 {c.TrainNumber} の運転士がいません"
                 };
             }
@@ -269,7 +270,7 @@ public sealed class StateBroadcaster : BackgroundService
             foreach (var id in dispatchers.Keys)
                 sends.Add(SendAsync(id, new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = players.Count,
+                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     TrainRadio = radioViews.GetValueOrDefault(id), DispatcherProtection = protection, ProtectionSources = sources
                 }));
         }
