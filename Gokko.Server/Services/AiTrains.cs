@@ -261,7 +261,9 @@ public sealed class AiTrains : BackgroundService
                 if (i >= 0 && t.Path[i].Start <= t.Head) continue;
                 // 接近の区間にいる進路も消さない（ゲームなら接近鎖錠で断られる）。駒野の第二出発2L は、手前の 6LT が駒野〜館浜の区間の回路なので、
                 // 最後尾が 9LCT を出ると自動進路構成は駒野を抜けたとして消しにくるが、列車はまだ 6LT を走っていて、これから 2L に入る
-                if (i >= 0 && t.Path[i].Route is { Approach.Count: > 0 } ap && t.Info.TrackCircuits.Any(ap.Approach.Contains)) continue;
+                // 駅で停車中なら消す（ホームで出発を待つ列車は、出発の進路の接近の区間にいる。自動進路構成が先行列車に譲らせた進路を
+                // 持ち続けると、先行列車がその進路を取れない）
+                if (i >= 0 && !t.Dwelling && t.Path[i].Route is { Approach.Count: > 0 } ap && t.Info.TrackCircuits.Any(ap.Approach.Contains)) continue;
                 if (i > 0) t.Path.RemoveRange(i, t.Path.Count - i);
                 t.Info.GameRoutes.Remove((r.Interlocking, r.RouteName));
             }

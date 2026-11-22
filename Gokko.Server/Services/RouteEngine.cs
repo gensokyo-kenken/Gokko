@@ -2382,10 +2382,18 @@ public sealed partial class RouteEngine
         foreach (var c in circuits)
             if (occupied.TryGetValue(c, out var o) && o != run) return $"在線（{o.Train}）";
         foreach (var other in _runs.Values.Where(o => o != run))
-            if (other.Requests.Any(r => !r.Released && r.CancelledUtc == null && LiveCircuits(other, r).Any(circuits.Contains)))
+            if (other.Requests.Any(r => StillHeld(other, r) && LiveCircuits(other, r).Any(circuits.Contains)))
                 return $"進路が重なる（{other.Train}）";
         return null;
     }
+
+    /// <summary>
+    /// 他の列車の進路が、まだその列車のものとして残っているか。取り消した進路も、その列車のゲームに残っている間は残っているとみなす
+    /// （接近の区間にいて消せない進路。プレイヤーの列車ならゲームの連動が重なる進路を断るが、にぎやかしの列車はサーバーの判断だけで開けるので、
+    /// ここで見ないと、取り消したつもりの進路と重なる進路を前の列車に開けてしまい、2本が同じ回路へ進む）。
+    /// </summary>
+    private static bool StillHeld(TrainRun owner, RouteReq r) =>
+        !r.Released && (r.CancelledUtc == null || owner.Player.GameRoutes.Contains((r.Def.Interlock, r.Def.Name)));
 
     /// <summary>
     /// 他の列車の進路のうち、まだ使う回路。列車がその進路に入っていれば、列車より後ろの回路は使い終わっている
@@ -2483,7 +2491,7 @@ public sealed partial class RouteEngine
 
         foreach (var other in _runs.Values.Where(o => o != run))
         {
-            if (other.Requests.Any(r => !r.Released && r.CancelledUtc == null && LiveCircuits(other, r).Any(circuits.Contains)))
+            if (other.Requests.Any(r => StillHeld(other, r) && LiveCircuits(other, r).Any(circuits.Contains)))
                 return $"進路が重なる（{other.Train}）";
 
             // 同じ方向で後ろにいる列車は、順番待ちの相手にしない（前の列車が先。AheadHold で後ろの列車が待つ）
@@ -2709,7 +2717,15 @@ public sealed partial class RouteEngine
         foreach (var other in _runs.Values.Where(o => o != run && o.HasPosition && o.Dir == run.Dir && (o.Front - run.Front) * step > 0))
         {
             if (other.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is not { Done: false } os || IsCutOff(other, os)) continue;
-            if (os.Terminal || IsTurnbackTrack(other, os)) continue; // この駅で終わる列車は抜けないので待たない（番線のふさがりは在線で判断）
+            // この駅で終わる列車は抜けないので、場内を取ったあとは待たない（番線のふさがりは在線・進路の重なりで判断）。
+            // まだ場内を取っていないうちは、自分の進路がその場内と重なれば前の列車が先。後ろの列車が先に取ると、前の列車は場内に入れず、
+            // 後ろの列車も前の列車がいて進めない（江ノ原信号場で、検車区へ入る列車の場内より先に、後ろの通過列車が本線を取るなど）
+            if (os.Terminal || IsTurnbackTrack(other, os))
+            {
+                if (os.IsStart || os.Arrive == GroupState.Requested
+                    || !Circuits(PendingPaths(other, os)).Any(Circuits(st.ArrivePath.Concat(st.DepartPath)).ToHashSet().Contains)) continue;
+                return $"先行列車（{other.Train}）が先";
+            }
             if (WaitingForRequest(other, os)) continue; // 出発要求をしないまま止まっている列車（始発・待避線）は追い越してよい
             // ダイヤ運転中: ダイヤでこちらが先に出る（通る）始発列車は待たない（江ノ原検車区から出る列車より先に、本線の列車を通す）
             if (os.IsStart && DiaMode && DiaSec(other, st.St.Id, depart: true) is { } od && DiaSec(run, st.St.Id, depart: true) is { } rd && rd < od) continue;
