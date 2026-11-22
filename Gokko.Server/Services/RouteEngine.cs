@@ -663,8 +663,17 @@ public sealed partial class RouteEngine
             var key = $"{m.Groups[1].Value}/{m.Groups[2].Value}";
             var reply = m.Groups[3].Value;
             // ゲームが断った進路は記録に残す（サーバーが送らなかったのか、ゲームが断ったのかを、あとから区別できるように）
+            // 返事は、ほかの列車の進路を写したもの（OtherRoutes）の分も届く。どちらか分かるように印を付け、
+            // 鎖錠・競合の相手が分かるように、そのときゲームにあった同じ連動装置の進路も残す
             if (reply != "OK" && !reply.Contains("同一進路") && run.Results.GetValueOrDefault(key) != reply)
-                RouteLogLine(DateTime.UtcNow, $"ゲームが進路を断った: {run.Train} {m.Groups[1].Value} {m.Groups[2].Value}「{reply}」（在線 {string.Join(" ", run.Player.TrackCircuits)}）");
+            {
+                var (il, name) = (m.Groups[1].Value, m.Groups[2].Value);
+                var mirrored = !run.Requests.Any(r => !r.Released && r.Def.Interlock == il && r.Def.Name == name)
+                               && _mirroredTo.TryGetValue(connId, out var sent) && sent.Contains((il, name));
+                var inGame = run.Player.GameRoutes.Where(g => g.Interlock == il).Select(g => g.Route).Order().ToList();
+                RouteLogLine(DateTime.UtcNow, $"ゲームが進路を断った: {run.Train} {il} {name}{(mirrored ? "（ほかの列車の進路を写したもの）" : "")}「{reply}」"
+                                              + $"（在線 {string.Join(" ", run.Player.TrackCircuits)}／ゲームの進路 {(inGame.Count > 0 ? string.Join(" ", inGame) : "なし")}）");
+            }
             run.Results[key] = reply;
             run.ResultAt[key] = DateTime.UtcNow;
         }
