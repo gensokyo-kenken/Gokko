@@ -702,6 +702,7 @@ public sealed partial class RouteEngine
 
                 if (TrainInfo(number) is not { } info) continue;
                 var dia = _data.DiaOf(number) ?? _data.DiaOf(requested); // 接尾辞を付けた列車は、元の列番のダイヤで走る
+                NoteSeen(number);
                 _runs[p.ConnectionId] = new TrainRun
                 {
                     ConnId = p.ConnectionId, Train = number, GameTrain = requested, Type = dia?.Type ?? info.Type, Dir = info.Dir, Player = p,
@@ -3261,7 +3262,7 @@ public sealed partial class RouteEngine
                         train = p.Train,
                         type = p.Dia.Type,
                         direction = p.Dir.Label(),
-                        from = p.From.Train,
+                        from = p.From?.Train,
                         planned = true,
                         ends = p.Dia.TerminalId == station.Id,
                         arrived = p.StartId == station.Id,
@@ -3560,7 +3561,7 @@ public sealed partial class RouteEngine
                 foreach (var r in _runs.Values.Where(r => r.HasPosition && r.Dir == dir))
                     if (Near(r) is { } n) cands.Add((r, n.St, null, n.Dist, DiaSec(r, watch.Id, depart: n.Here) ?? double.MaxValue));
                 foreach (var p in planned.Where(p => p.Dir == dir && p.StartId == watch.Id))
-                    if (Near(p.From) is { } n) cands.Add((null, null, p, n.Dist, PlannedDiaSec(p, watch.Id, depart: true) ?? double.MaxValue));
+                    if (p.From != null && Near(p.From) is { } n) cands.Add((null, null, p, n.Dist, PlannedDiaSec(p, watch.Id, depart: true) ?? double.MaxValue));
 
                 // 後運用の列車は、折り返す前の列車より前に出さない
                 cands = cands.OrderBy(c => c.Dist).ThenBy(c => c.P != null ? 1 : 0).ThenBy(c => c.T).ToList();
@@ -3603,7 +3604,7 @@ public sealed partial class RouteEngine
                         trains.Add(pl.Train);
                         var stop0 = pl.Dia.Stops.FirstOrDefault(x => x.StationId == watch.Id);
                         var afterP = new HashSet<string>();
-                        if (pl.From.Dir == dir) afterP.Add(pl.From.Train);
+                        if (pl.From is { } pf && pf.Dir == dir) afterP.Add(pf.Train);
                         if (order != null)
                             foreach (var t in order.TakeWhile(t => t != pl.Train))
                                 if (cands.Any(o => (o.Run?.Train ?? o.P?.Train) == t)) afterP.Add(t);

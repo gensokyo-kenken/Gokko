@@ -7,8 +7,27 @@ namespace Gokko.Server.Services;
 //   手前の駅の出発順序を司令員が変えれば（遅れた列車を津崎で待たせるなど）、先の駅の到着の順もそれに合わせて変わる
 public sealed partial class RouteEngine
 {
-    /// <summary>折り返して次になる列車（まだ走っていない）。From は折り返す前の列車、StartId は折り返す駅。</summary>
-    private sealed record PlannedTrain(string Train, DiaTrain Dia, Dir Dir, TrainRun From, string StartId);
+    /// <summary>
+    /// まだ走っていない列車。From は折り返す前の列車、StartId は走り始める駅（線区の外から来るなら ""）。
+    /// OnlyAt があれば、その駅の表にだけ出す（赤山町の下りの、時刻表から出す列車。From は null）。
+    /// </summary>
+    private sealed record PlannedTrain(string Train, DiaTrain Dia, Dir Dir, TrainRun? From, string StartId, string? OnlyAt = null);
+
+    /// <summary>赤山町（線区の三郷方の端）。下りの表は、まだ走っていない列車も時刻表から出す。</summary>
+    private const string EdgeStation = "TH58";
+    /// <summary>赤山町の下りに時刻表から出す列車の数（在線位置の画面の表の段の数）。</summary>
+    private const int EdgeScheduled = 5;
+    /// <summary>発車時刻をこれだけ過ぎても出ていない列車は、時刻表から出すのをやめる（秒）。</summary>
+    private const double EdgeLateSeconds = 600;
+
+    /// <summary>列番 → 走り始めたロープレ時刻（運転日の秒）。赤山町の下りの表で、もう走った列車を出さないために使う。</summary>
+    private readonly Dictionary<string, double> _seenAt = new();
+
+    /// <summary>列車が走り始めたことを覚える（時刻を戻したら、それより後に覚えたものは無いものとして扱う）。</summary>
+    private void NoteSeen(string train) => _seenAt[train] = NowSec();
+
+    /// <summary>ダイヤの時刻（運転日の秒）。4時より前は翌日として扱う（NowSec と合わせる）。</summary>
+    private static double? DaySec(string? text) => ParseDiaTime(text) is { } v ? (v < 4 * 3600 ? v + 86400 : v) : null;
 
     /// <summary>駅・向きごとの予告の並び（列番 → 順位。小さいほど先）。</summary>
     private sealed class ForecastRank
@@ -37,6 +56,22 @@ public sealed partial class RouteEngine
             list.Add(new PlannedTrain(number, dia, info.Dir, r, turn));
         }
 
+        // 赤山町の下り: まだ走っていない列車を、発車（通過）時刻の順に EdgeScheduled 本まで。
+        // もう走った列車・発車時刻を EdgeLateSeconds 過ぎた列車は出さない
+        var now = NowSec();
+        var edge = new List<(PlannedTrain P, double T)>();
+        foreach (var dia in _data.Dia.Values)
+        {
+            if (running.Contains(dia.Number) || list.Any(p => p.Train == dia.Number) || dia.TerminalId == EdgeStation) continue;
+            if (TrainInfo(dia.Number) is not { Dir: Dir.Down } info) continue;
+            var stop = dia.Stops.FirstOrDefault(x => x.StationId == EdgeStation);
+            if (stop == null || stop.Stop == "運停" || DaySec(stop.Dep ?? stop.Arr) is not { } t || t < now - EdgeLateSeconds) continue;
+            if (_seenAt.TryGetValue(dia.Number, out var seen) && seen <= now + 1 && now - seen < 6 * 3600) continue;
+            var start = dia.Stops[0].StationId == EdgeStation ? EdgeStation : "";
+            edge.Add((new PlannedTrain(dia.Number, dia, info.Dir, null, start, EdgeStation), t));
+        }
+        list.AddRange(edge.OrderBy(x => x.T).Take(EdgeScheduled).Select(x => x.P));
+
         return list;
     }
 
@@ -53,15 +88,15 @@ public sealed partial class RouteEngine
         return null;
     }
 
-    /// <summary>後運用の列車が、その駅を通る（着く・出る）か。</summary>
+    /// <summary>まだ走っていない列車が、その駅を通る（着く・出る）か。OnlyAt があれば、その駅だけ。</summary>
     private static bool PlannedPasses(PlannedTrain p, string stationId) =>
-        p.Dia.Stops.Any(s => s.StationId == stationId && s.Stop != "運停");
+        (p.OnlyAt == null || p.OnlyAt == stationId) && p.Dia.Stops.Any(s => s.StationId == stationId && s.Stop != "運停");
 
     private static double? PlannedDiaSec(PlannedTrain p, string stationId, bool depart)
     {
         var stop = p.Dia.Stops.FirstOrDefault(x => x.StationId == stationId);
         if (stop == null) return null;
-        return depart ? ParseDiaTime(stop.Dep) ?? ParseDiaTime(stop.Arr) : ParseDiaTime(stop.Arr) ?? ParseDiaTime(stop.Dep);
+        return depart ? DaySec(stop.Dep) ?? DaySec(stop.Arr) : DaySec(stop.Arr) ?? DaySec(stop.Dep);
     }
 
     /// <summary>
