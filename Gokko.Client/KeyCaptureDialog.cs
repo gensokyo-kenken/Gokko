@@ -70,6 +70,7 @@ public sealed class KeyCaptureDialog : Form
     {
         >= Keys.D0 and <= Keys.D9 => ((int)(k - Keys.D0)).ToString(),
         >= Keys.NumPad0 and <= Keys.NumPad9 => "テンキー" + (int)(k - Keys.NumPad0),
+        Keys.Decimal => "テンキー.",
         _ => k.ToString()
     };
 

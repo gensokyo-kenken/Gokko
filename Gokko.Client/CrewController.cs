@@ -275,6 +275,16 @@ public sealed class CrewController
     private void ShowPanel()
     {
         if (_panel != null) return;
+        // 前の既定値（D で左の開など。WASD 移動とぶつかる）のままのキーは、1 度だけテンキーの既定値に移す（自分で変えたキーは残す）
+        if (!_config.ConductorKeysMoved)
+        {
+            foreach (var (name, old) in ConductorPanelForm.OldDefaultKeys)
+                if (_config.ConductorKeys.TryGetValue(name, out var saved) && saved == old.ToString())
+                    _config.ConductorKeys.Remove(name);
+            _config.ConductorKeysMoved = true;
+            _config.Save();
+        }
+
         var keys = new Dictionary<string, Keys>();
         foreach (var (name, text) in _config.ConductorKeys)
             if (Enum.TryParse<Keys>(text, out var k)) keys[name] = k;

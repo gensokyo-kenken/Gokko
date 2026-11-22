@@ -24,8 +24,19 @@ public sealed class ConductorPanelForm : Form
 
     private static readonly TimeSpan Cooldown = TimeSpan.FromMilliseconds(300);
 
-    /// <summary>キーの割り当ての既定値（ConductorApp と同じ）。</summary>
+    /// <summary>
+    /// キーの割り当ての既定値。ゲームの WASD 移動や運転のキーとぶつからないよう、テンキーにまとめる
+    /// （左の列が左側・右の列が右側。上から鍵・開・閉、0 と . が再開閉）。
+    /// </summary>
     public static readonly IReadOnlyDictionary<string, Keys> DefaultKeys = new Dictionary<string, Keys>
+    {
+        ["LeftKey"] = Keys.NumPad7, ["LeftOpen"] = Keys.NumPad4, ["LeftClose"] = Keys.NumPad1, ["LeftReOpen"] = Keys.NumPad0,
+        ["RightKey"] = Keys.NumPad9, ["RightOpen"] = Keys.NumPad6, ["RightClose"] = Keys.NumPad3, ["RightReOpen"] = Keys.Decimal,
+        ["ToggleEB"] = Keys.NumPad8, ["Joukou"] = Keys.NumPad2, ["Buzzer"] = Keys.NumPad5
+    };
+
+    /// <summary>前の既定値（D・E・F など）。保存してある割り当てがこれと同じなら、新しい既定値に置き換える。</summary>
+    public static readonly IReadOnlyDictionary<string, Keys> OldDefaultKeys = new Dictionary<string, Keys>
     {
         ["LeftKey"] = Keys.D3, ["LeftOpen"] = Keys.D, ["LeftClose"] = Keys.E, ["LeftReOpen"] = Keys.F,
         ["RightKey"] = Keys.D6, ["RightOpen"] = Keys.H, ["RightClose"] = Keys.Y, ["RightReOpen"] = Keys.G,
@@ -479,6 +490,7 @@ public sealed class ConductorPanelForm : Form
     {
         >= Keys.D0 and <= Keys.D9 => ((int)(k - Keys.D0)).ToString(),
         >= Keys.NumPad0 and <= Keys.NumPad9 => "テンキー" + (int)(k - Keys.NumPad0),
+        Keys.Decimal => "テンキー.",
         _ => k.ToString()
     };
 
@@ -493,9 +505,12 @@ public sealed class ConductorPanelForm : Form
         _leftCsw.Set(_leftOpen, _leftKey);
         _rightCsw.Set(_rightOpen, _rightKey);
 
-        _keysLabel.Text = $"鍵 {KeyText(_keys["LeftKey"])}/{KeyText(_keys["RightKey"])}　開 {KeyText(_keys["LeftOpen"])}/{KeyText(_keys["RightOpen"])}　" +
-                          $"閉 {KeyText(_keys["LeftClose"])}/{KeyText(_keys["RightClose"])}　再開閉 {KeyText(_keys["LeftReOpen"])}/{KeyText(_keys["RightReOpen"])}\n" +
-                          $"非常 {KeyText(_keys["ToggleEB"])}　乗降促進 {KeyText(_keys["Joukou"])}　ブザー {KeyText(_keys["Buzzer"])}　（左/右）";
+        // 全部テンキーなら「テンキー」を頭に1度だけ書き、数字だけ並べる（折り返さないように）
+        var pad = _keys.Values.All(k => k is >= Keys.NumPad0 and <= Keys.NumPad9 or Keys.Decimal);
+        string K(string name) => !pad ? KeyText(_keys[name]) : _keys[name] == Keys.Decimal ? "." : ((int)(_keys[name] - Keys.NumPad0)).ToString();
+        _keysLabel.Text = (pad ? "テンキー　" : "") + $"鍵 {K("LeftKey")}/{K("RightKey")}　開 {K("LeftOpen")}/{K("RightOpen")}　" +
+                          $"閉 {K("LeftClose")}/{K("RightClose")}　再開閉 {K("LeftReOpen")}/{K("RightReOpen")}\n" +
+                          $"非常 {K("ToggleEB")}　乗降促進 {K("Joukou")}　ブザー {K("Buzzer")}　（左/右）";
     }
 
     /// <summary>見本の画像を作る（開発用）。</summary>
