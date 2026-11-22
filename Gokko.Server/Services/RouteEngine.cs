@@ -3069,7 +3069,7 @@ public sealed partial class RouteEngine
                         stopOverride = _central.StopOverride(r.Train, s.St.Id),
                         terminal = s.Terminal,
                         stopType = s.StopType, // 停車・通過（臨時停車・臨時通過の指定を入れたもの）
-                        manual = ManualOptions(r, s).Select(o => new { action = o.Action, label = o.Label }),
+                        manual = ManualOptions(r, s).Select(o => new { action = o.Action, label = o.Label }).ToList(),
                         singleNext = NextControlStation(r, s) is { } nx && _data.IsSingleTrack(s.St.Id, nx) ? nx : null,
                         status = Status(r, s),
                         track = s.Track,
@@ -3084,10 +3084,10 @@ public sealed partial class RouteEngine
                     train = r.Train,
                     type = r.Type,
                     direction = r.Dir.Label(),
-                    history = r.History.Select(h => new { t = h.Utc, y = h.Y, row = h.Row }),
+                    history = r.History.Select(h => new { t = h.Utc, y = h.Y, row = h.Row }).ToList(), // lock の中で写す（JSON にするのは lock の外。Tick が書き足すと「Collection was modified」になる）
                     forecast,
                     // 駅ごとの番線（通った駅も含む。ダイヤグラムの番線の段に線を引くため）
-                    tracks = r.Stations.Where(s => s.Track != null).Select(s => new { y = s.Zone, track = s.Track }),
+                    tracks = r.Stations.Where(s => s.Track != null).Select(s => new { y = s.Zone, track = s.Track }).ToList(),
                     markers,
                     // 後運用（ダイヤの列車だけ。◆の窓で差し替える）
                     unyo = r.Dia != null ? _data.Turns.UnyoOf(r.Dia) : null,
@@ -3921,7 +3921,7 @@ public sealed partial class RouteEngine
                     held = _central.IsHeld(r.Train, s.St.Id),
                     holdArrive = (_central.Hold(r.Train, s.St.Id) & HoldKind.Arrive) != 0,
                     holdDepart = (_central.Hold(r.Train, s.St.Id) & HoldKind.Depart) != 0,
-                    manual = ManualOptions(r, s).Select(o => new { action = o.Action, label = o.Label }),
+                    manual = ManualOptions(r, s).Select(o => new { action = o.Action, label = o.Label }).ToList(),
                     forced = _central.IsForced(r.Train, s.St.Id),
                     status = Status(r, s)
                 })

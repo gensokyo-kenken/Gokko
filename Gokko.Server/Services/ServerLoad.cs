@@ -9,38 +9,77 @@ namespace Gokko.Server.Services;
 ///
 /// 5秒ごとに、このプロセスの CPU（全コアで 100%）・メモリ、マシン全体のメモリとロードアベレージ（Linux だけ）、
 /// 配信1回（進路の処理と全員への状態の配信）にかかった時間、参加者とにぎやかしの列車の数を測る。
-/// 直近1時間ぶんを画面用に持ち、1分ごとにまとめた1行（平均と最大）をファイルに書く。1行 150 バイトほどで、1日で 200KB くらい。
+/// 配信は、そのうち進路の処理（Tick）と送り終わるのを待った時間も分けて測る。画面の API（HTTP）とハブの呼び出し（SignalR）は、
+/// 種類ごとの回数と時間を数える（どこが重いかを見るため。直近1分の多い順を画面に、1分ごとに上位5つをファイルに）。
+/// 直近1時間ぶんを画面用に持ち、1分ごとにまとめた1行（平均と最大）をファイルに書く。1行 300 バイトほどで、1日で 400KB くらい。
 /// </summary>
 public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
 {
     private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(5);
     private const int HistoryCount = 720; // 5秒 × 720 = 1時間
+    private const int WorkHistoryCount = 12; // 5秒 × 12 = 1分
     private const long MaxBytesPerDay = 10L * 1024 * 1024;
 
     public sealed record Sample(
         DateTime Utc, double CpuPercent, double ProcessMb, double GcHeapMb, int Threads,
         double? MachineTotalMb, double? MachineAvailableMb, double? LoadAverage1,
-        double BroadcastAvgMs, double BroadcastMaxMs, int Broadcasts, int Players, int AiTrains);
+        double BroadcastAvgMs, double BroadcastMaxMs, int Broadcasts, int Players, int AiTrains,
+        double TickAvgMs, double SendAvgMs, double WorkMs, int WorkCount);
+
+    /// <summary>画面の API・ハブの呼び出し1種類の、ある間の回数と時間（ミリ秒）。</summary>
+    public sealed record Work(string Name, int Count, double TotalMs, double MaxMs);
+
+    private sealed class WorkSum
+    {
+        public int Count;
+        public double TotalMs, MaxMs;
+    }
 
     private readonly object _lock = new();
     private readonly List<Sample> _history = new();
     private readonly List<Sample> _minute = new();
-    private double _bcSumMs, _bcMaxMs;
+    private double _bcSumMs, _bcMaxMs, _tickSumMs, _sendSumMs;
     private int _bcCount;
+    private Dictionary<string, WorkSum> _work = new();
+    private readonly Queue<Dictionary<string, WorkSum>> _workHistory = new(); // 画面用の直近1分
+    private readonly List<Dictionary<string, WorkSum>> _workMinute = new(); // ファイルに書く1分ぶん
     private string _fileDay = "";
     private long _fileBytes;
     private bool _full;
 
-    /// <summary>配信1回にかかった時間（StateBroadcaster から呼ぶ）</summary>
-    public void RecordBroadcast(double ms)
+    /// <summary>配信1回にかかった時間（StateBroadcaster から呼ぶ）。tickMs はそのうち進路の処理、sendMs は送り終わるのを待った時間</summary>
+    public void RecordBroadcast(double ms, double tickMs = 0, double sendMs = 0)
     {
         lock (_lock)
         {
             _bcSumMs += ms;
+            _tickSumMs += tickMs;
+            _sendSumMs += sendMs;
             _bcCount++;
             if (ms > _bcMaxMs) _bcMaxMs = ms;
         }
     }
+
+    /// <summary>画面の API・ハブの呼び出し1回にかかった時間（name は "GET /api/..." や "GameHub.Report"）</summary>
+    public void RecordWork(string name, double ms)
+    {
+        lock (_lock)
+        {
+            if (!_work.TryGetValue(name, out var w)) _work[name] = w = new WorkSum();
+            w.Count++;
+            w.TotalMs += ms;
+            if (ms > w.MaxMs) w.MaxMs = ms;
+        }
+    }
+
+    /// <summary>いくつかの間の合計を、時間の多い順に count 件。</summary>
+    private static List<Work> Top(IEnumerable<Dictionary<string, WorkSum>> parts, int count) =>
+        parts.SelectMany(d => d)
+            .GroupBy(kv => kv.Key)
+            .Select(g => new Work(g.Key, g.Sum(kv => kv.Value.Count), Math.Round(g.Sum(kv => kv.Value.TotalMs), 1), Math.Round(g.Max(kv => kv.Value.MaxMs), 1)))
+            .OrderByDescending(w => w.TotalMs)
+            .Take(count)
+            .ToList();
 
     public object View()
     {
@@ -51,6 +90,7 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
                 intervalSeconds = (int)SampleInterval.TotalSeconds,
                 current = _history.Count > 0 ? _history[^1] : null,
                 history = _history.ToList(),
+                work = Top(_workHistory, 20), // 直近1分の、画面の API・ハブの呼び出し（時間の多い順）
             };
     }
 
@@ -76,34 +116,46 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
 
                 var (total, avail) = MachineMemory();
                 var list = players.Snapshot();
-                double bcAvg, bcMax;
+                double bcAvg, bcMax, tickAvg, sendAvg;
                 int bcCount;
+                Dictionary<string, WorkSum> work;
                 lock (_lock)
                 {
                     bcAvg = _bcCount > 0 ? _bcSumMs / _bcCount : 0;
                     bcMax = _bcMaxMs;
                     bcCount = _bcCount;
-                    _bcSumMs = _bcMaxMs = 0;
+                    tickAvg = _bcCount > 0 ? _tickSumMs / _bcCount : 0;
+                    sendAvg = _bcCount > 0 ? _sendSumMs / _bcCount : 0;
+                    _bcSumMs = _bcMaxMs = _tickSumMs = _sendSumMs = 0;
                     _bcCount = 0;
+                    work = _work;
+                    _work = new();
                 }
 
                 var s = new Sample(DateTime.UtcNow, Math.Round(cpuPercent, 1), Mb(proc.WorkingSet64), Mb(GC.GetTotalMemory(false)), proc.Threads.Count,
                     total, avail, LoadAverage(), Math.Round(bcAvg, 2), Math.Round(bcMax, 2), bcCount,
-                    list.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)), list.Count(p => p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix)));
+                    list.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)), list.Count(p => p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix)),
+                    Math.Round(tickAvg, 2), Math.Round(sendAvg, 2), Math.Round(work.Values.Sum(w => w.TotalMs), 1), work.Values.Sum(w => w.Count));
 
                 List<Sample>? minute = null;
+                List<Dictionary<string, WorkSum>>? workMinute = null;
                 lock (_lock)
                 {
                     _history.Add(s);
                     if (_history.Count > HistoryCount) _history.RemoveAt(0);
+                    _workHistory.Enqueue(work);
+                    while (_workHistory.Count > WorkHistoryCount) _workHistory.Dequeue();
                     if (_minute.Count > 0 && _minute[0].Utc.ToLocalTime().Minute != s.Utc.ToLocalTime().Minute)
                     {
                         minute = _minute.ToList();
                         _minute.Clear();
+                        workMinute = _workMinute.ToList();
+                        _workMinute.Clear();
                     }
                     _minute.Add(s);
+                    _workMinute.Add(work);
                 }
-                if (minute != null) Write(minute);
+                if (minute != null) Write(minute, workMinute!);
             }
             catch
             {
@@ -155,7 +207,7 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
     }
 
     /// <summary>1分ぶんをまとめて1行書く（平均/最大）</summary>
-    private void Write(List<Sample> m)
+    private void Write(List<Sample> m, List<Dictionary<string, WorkSum>> work)
     {
         try
         {
@@ -170,18 +222,23 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
                 _fileBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
                 _full = false;
                 if (_fileBytes == 0)
-                    Append(path, "# 時刻 CPU%(平均/最大) プロセスMB(平均/最大) GCヒープMB マシンの空きMB/全体MB ロードアベレージ 配信ms(平均/最大) 参加者 にぎやかし" + Environment.NewLine);
+                    Append(path, "# 時刻 CPU%(平均/最大) プロセスMB(平均/最大) GCヒープMB マシンの空きMB/全体MB ロードアベレージ 配信ms(平均/最大) 参加者 にぎやかし" +
+                                 " 進路の処理ms(平均) 送信待ちms(平均) API・ハブ(回数/合計ms) 上位(名前=回数/合計ms)" + Environment.NewLine);
             }
             if (_full) return;
 
             var last = m[^1];
             var bcCount = m.Sum(x => x.Broadcasts);
             var bcAvg = bcCount > 0 ? m.Sum(x => x.BroadcastAvgMs * x.Broadcasts) / bcCount : 0;
+            double PerBroadcast(Func<Sample, double> f) => bcCount > 0 ? m.Sum(x => f(x) * x.Broadcasts) / bcCount : 0;
+            var top = string.Join(";", Top(work, 5).Select(w => string.Create(CultureInfo.InvariantCulture, $"{w.Name.Replace(' ', '_')}={w.Count}/{w.TotalMs:0}")));
             var line = string.Create(CultureInfo.InvariantCulture,
                 $"{at:yyyy-MM-dd HH:mm} cpu {m.Average(x => x.CpuPercent):0.0}/{m.Max(x => x.CpuPercent):0.0} " +
                 $"mem {m.Average(x => x.ProcessMb):0}/{m.Max(x => x.ProcessMb):0} gc {last.GcHeapMb:0} " +
                 $"machine {Num(m.Min(x => x.MachineAvailableMb))}/{Num(last.MachineTotalMb)} load {Num(last.LoadAverage1, "0.00")} " +
-                $"bc {bcAvg:0.0}/{m.Max(x => x.BroadcastMaxMs):0.0} players {m.Max(x => x.Players)} ai {m.Max(x => x.AiTrains)}{Environment.NewLine}");
+                $"bc {bcAvg:0.0}/{m.Max(x => x.BroadcastMaxMs):0.0} players {m.Max(x => x.Players)} ai {m.Max(x => x.AiTrains)} " +
+                $"tick {PerBroadcast(x => x.TickAvgMs):0.0} send {PerBroadcast(x => x.SendAvgMs):0.0} work {m.Sum(x => x.WorkCount)}/{m.Sum(x => x.WorkMs):0} " +
+                $"top {top}{Environment.NewLine}");
             if (_fileBytes > MaxBytesPerDay)
             {
                 _full = true;
