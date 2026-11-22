@@ -663,6 +663,14 @@ public sealed partial class RouteEngine
                     MoveRun(owner, g.ConnectionId);
             }
 
+            // 引き継ぎ: 継続乗務の在線を、ほかの列車（自動運転の列車）が同じ列番で引き継いだら、その列車（進路・駅の状態）を移す
+            foreach (var p in snapshot.Where(p => p.TakesOver != null && !_runs.ContainsKey(p.ConnectionId)))
+            {
+                var from = p.TakesOver!;
+                if (snapshot.All(q => q.ConnectionId != from) && _runs.TryGetValue(from, out var r1) && r1.Player.TrainNumber == p.TrainNumber)
+                    MoveRun(from, p.ConnectionId);
+            }
+
             // 列車の入れ替わり
             foreach (var id in _runs.Keys.Where(id => snapshot.All(p => p.ConnectionId != id)).ToList()) _runs.Remove(id);
             foreach (var id in _mirroredTo.Keys.Where(id => !_runs.ContainsKey(id)).ToList()) _mirroredTo.Remove(id);

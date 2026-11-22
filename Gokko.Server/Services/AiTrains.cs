@@ -45,6 +45,8 @@ public sealed class AiTrains : BackgroundService
     private const int EntryTrack = 3;
     private const double EntryLeadSeconds = 20;
     private static readonly TimeSpan TerminalLinger = TimeSpan.FromSeconds(60);
+    /// <summary>ダイヤ運転中、継続乗務の在線がこれだけ残ったら、自動運転の列車として引き継ぐ。</summary>
+    private static readonly TimeSpan GhostTakeOverAfter = TimeSpan.FromMinutes(3);
 
     private readonly RailData _rail;
     private readonly PlayerRegistry _players;
@@ -77,6 +79,7 @@ public sealed class AiTrains : BackgroundService
     private HashSet<string> _userInGame = new();       // 運転画面に出ているユーザーの列番
     private DateTime _lastSpawnUtc;
     private TimeSpan? _lastGame;
+    private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
         IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ILogger<AiTrains>? logger = null)
@@ -95,6 +98,7 @@ public sealed class AiTrains : BackgroundService
         _routesBySignal = rail.Routes.Values.Where(r => r.Signal.Length > 0).GroupBy(r => r.Signal).ToDictionary(g => g.Key, g => g.ToList());
         LoadDistances(Path.Combine(dataDir, "AiTrains.json"));
         players.VirtualTrains = Snapshot;
+        players.GhostDeleted += OnGhostDeleted;
     }
 
     // =========================================================================================
@@ -133,7 +137,7 @@ public sealed class AiTrains : BackgroundService
     /// <summary>ダイヤの列車を、これから発車する最初の駅（時刻が来ていない、進路を扱う駅）に出す。</summary>
     public (bool Ok, string Message) Add(string number, int cars, string? stationName) => Add(number, cars, stationName, false);
 
-    private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto, int? forceTrack = null)
+    private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto, int? forceTrack = null, PlayerInfo? takesOver = null)
     {
         number = RailData.NormalizeTrain(number);
         if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
@@ -205,14 +209,16 @@ public sealed class AiTrains : BackgroundService
             train.Info = new PlayerInfo
             {
                 ConnectionId = train.Id, Mode = ShareMode.Shared, InGame = true, TrainCrewConnected = true, TrainNumber = number,
-                TrainNumberTyped = true, JoinedUtc = DateTime.UtcNow, LastReportUtc = DateTime.UtcNow,
+                TrainNumberTyped = true, JoinedUtc = DateTime.UtcNow, LastReportUtc = DateTime.UtcNow, TakesOver = takesOver?.ConnectionId,
+                // 引き継いだ在線の進路（ゲームに開通している進路）も引き継ぐ。空のまま始めると、RouteEngine が「ゲームで解除された」と見て、その進路を捨てる
+                GameRoutes = takesOver != null ? new HashSet<(string, string)>(takesOver.GameRoutes) : new HashSet<(string, string)>(),
                 Stops = train.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList()
             };
             train.Status = $"{st.Name} {track}番線で発車待ち";
             UpdateInfo(train);
             _trains[train.Id] = train;
             _spawned.Add(number);
-            _log.Note($"にぎやかし: {number}（{cars}両）を {st.Name} {track}番線に出しました" + (auto ? "（自動）" : ""));
+            _log.Note($"にぎやかし: {number}（{cars}両）を {st.Name} {track}番線に出しました" + (takesOver != null ? "（継続乗務の在線を引き継ぎ）" : auto ? "（自動）" : ""));
             return (true, $"{number} を {st.Name} {track}番線に出しました");
         }
     }
@@ -347,6 +353,7 @@ public sealed class AiTrains : BackgroundService
                 {
                     _lastSpawnUtc = now;
                     AutoSpawn(users);
+                    TakeOverStaleGhosts();
                 }
             }
             catch (Exception ex)
@@ -446,7 +453,8 @@ public sealed class AiTrains : BackgroundService
 
             if (ready && !t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; }
             // 出発の進路が開いて、道筋が延びたら発車
-            if (ready && t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
+            // 信号をまだ受け取っていなければ待つ（道筋が出した番線だけのまま、出発信号機の先まで出てしまう）
+            if (ready && t.Received && t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
             {
                 // 次の周期から走る（この周期の「次に止まる駅」は今の駅なので、ここで動かすと、また着いたことになる）
                 t.Dwelling = false;
@@ -465,7 +473,7 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 最初の駅: 発車時刻まで待つ
-        if (t.PlanIndex == 0 && t.Speed == 0 && t.Plan.Count > 0 && Math.Abs(t.Head - t.StartHead) < 0.5 && !t.FromShunt)
+        if (t.PlanIndex == 0 && t.Speed == 0 && t.Plan.Count > 0 && Math.Abs(t.Head - t.StartHead) < 0.5 && !t.FromShunt && !t.MidLine)
         {
             t.Dwelling = true;
             t.DwellIndex = 0;
@@ -1098,6 +1106,145 @@ public sealed class AiTrains : BackgroundService
         t.Status = $"{t.Plan[t.DwellIndex].Name} に到着（{number} はユーザーの列車なので、ここで消します）";
     }
 
+    // =========================================================================================
+    // 継続乗務の在線の引き継ぎ（ダイヤ運転中、ユーザーが運転画面を出たあと）
+    // =========================================================================================
+
+    /// <summary>ダイヤ運転中、継続乗務の在線が3分残ったら、自動運転の列車として引き継ぐ（自動運転列車のアリ/ナシによらない）。</summary>
+    private void TakeOverStaleGhosts()
+    {
+        if (!_central.DiaMode) return;
+        var now = DateTime.UtcNow;
+        foreach (var g in _players.Ghosts().Where(g => now - g.SinceUtc >= GhostTakeOverAfter))
+        {
+            if (_players.TakeGhost(g.Id) is not { } taken) continue;
+            var (ok, message) = TakeOver(taken);
+            if (ok) { _takeOverLogged.Remove(g.Id); continue; }
+            _players.RestoreGhost(taken); // 引き継げなければ、在線は残したまま（2秒ごとに試し直す）
+            if (_takeOverLogged.Add(g.Id)) _log.Note($"にぎやかし: 継続乗務 {g.Info.TrainNumber} を引き継げません（{message}）");
+        }
+    }
+
+    /// <summary>ダイヤ運転中、継続乗務の在線が消されたとき、自動運転列車アリなら、自動運転の列車として引き継ぐ。</summary>
+    private void OnGhostDeleted(PlayerRegistry.Ghost g)
+    {
+        if (!_central.DiaMode || !Enabled) return;
+        try
+        {
+            var (ok, message) = TakeOver(g);
+            if (!ok) _log.Note($"にぎやかし: 継続乗務 {g.Info.TrainNumber} を引き継げません（{message}）");
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "継続乗務 {Train} の引き継ぎでエラー", g.Info.TrainNumber);
+        }
+    }
+
+    /// <summary>
+    /// 継続乗務の在線（レジストリから外したもの）を、自動運転の列車として、その場所から走らせる。進路・駅の状態は RouteEngine が引き継ぐ。
+    /// ・進路を扱う駅の番線にいる: その駅・番線に出したのと同じ（ダイヤの発車時刻まで待って発車）
+    /// ・それ以外（駅間・進路を扱わない駅など）: 踏んでいる軌道回路から、最後に過ぎた信号機の先として走り出す。
+    ///   ダイヤで止まる駅にいれば、そこに止まっていることにする
+    /// 両数は分からないので6両にする。
+    /// </summary>
+    private (bool Ok, string Message) TakeOver(PlayerRegistry.Ghost g)
+    {
+        var info = g.Info;
+        var number = RailData.NormalizeTrain(info.TrainNumber);
+        if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
+        if (_routes.DirOfTrain(number) is not { } dir) return (false, $"{number}: 列車番号の形が違います");
+        if (info.TrackCircuits.Count == 0) return (false, "在線の位置が分かりません");
+
+        // 進路を扱う駅の番線にいる
+        foreach (var st in _rail.Stations.Values.Where(s => s.RouteControl))
+        {
+            var k = st.TrackCircuit.FirstOrDefault(kv => info.TrackCircuits.Contains(kv.Value));
+            if (k.Value == null) continue;
+            if (dia.Stops.FirstOrDefault(s => s.StationId == st.Id) is not { } ds) break; // ダイヤで通らない駅（番線を変えて逃がした先など）: 駅間と同じ扱い
+            return Add(number, 6, ds.Name, true, k.Key, info);
+        }
+
+        lock (_lock)
+        {
+            if (_trains.Values.Any(t => t.Number == number)) return (false, $"{number} はもう走っています");
+            var step = dir.Step();
+            // 踏んでいる軌道回路を、後ろから前へ
+            var sorted = info.TrackCircuits.OrderBy(c => (_rail.Line.ZoneOfCircuit(c) ?? 0) * step).ToList();
+            var ordered = new List<string> { sorted[0] };
+            ordered.AddRange(Order(sorted.Skip(1).ToList(), sorted[0]));
+
+            // 最後に過ぎた信号機: 前の回路から、その回路を通る自分の進路の信号機、なければその回路を守る同じ向きの信号機
+            string? signal = null;
+            RouteDef? route = null;
+            for (var i = ordered.Count - 1; i >= 0 && signal == null; i--)
+            {
+                var c = ordered[i];
+                foreach (var key in info.GameRoutes)
+                    if (_rail.Routes.TryGetValue(key, out var d) && d.Signal.Length > 0 && d.Circuits.Contains(c)) { signal = d.Signal; route = d; break; }
+                if (signal != null) break;
+                signal = _rail.Signals.Values
+                    .Where(s => s.Protects.Contains(c) && !_routesBySignal.ContainsKey(s.Name) && (s.Direction == null || s.Direction == dir))
+                    .OrderByDescending(s => s.Direction == dir).FirstOrDefault()?.Name;
+            }
+
+            if (signal == null) return (false, $"{string.Join(" ", info.TrackCircuits)} の手前の信号機が分かりません");
+
+            var train = new Train
+            {
+                Id = $"{PlayerRegistry.AiPrefix}{++_seq}", Seq = _seq, Number = number, Dia = dia, Dir = dir, Cars = 6,
+                Length = 6 * CarLength, StartStation = "", Auto = true, MidLine = true
+            };
+            var x = 0.0;
+            var circuits = new List<SegCircuit>();
+            foreach (var c in ordered)
+            {
+                var len = LengthOf(c);
+                circuits.Add(new SegCircuit(c, x, x + len));
+                x += len;
+            }
+
+            train.Path.Add(new Seg(signal, route, 0, x, circuits));
+            train.Head = x - 1;
+            train.StartHead = train.Head;
+
+            // 停車・通過の一覧（今いる所から先）
+            var front = info.Zones.Count > 0 ? (dir == Dir.Down ? info.Zones.Max() : info.Zones.Min()) : _rail.Line.ZoneOfCircuit(ordered[^1]) ?? -1;
+            foreach (var s in dia.Stops)
+            {
+                if (s.StationId == null || !InArea(s.StationId)) continue;
+                var zone = _rail.Line.ZoneOfStation(s.StationId);
+                if (front >= 0 && (zone - front) * step < 0) continue;
+                train.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
+            }
+
+            train.Info = new PlayerInfo
+            {
+                ConnectionId = train.Id, Mode = ShareMode.Shared, InGame = true, TrainCrewConnected = true, TrainNumber = number,
+                TrainNumberTyped = true, JoinedUtc = DateTime.UtcNow, LastReportUtc = DateTime.UtcNow, TakesOver = info.ConnectionId,
+                GameRoutes = new HashSet<(string, string)>(info.GameRoutes), // 進路も引き継ぐ（Add と同じ）
+                Stops = train.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList()
+            };
+
+            // ダイヤで止まる駅にいる: そこに止まっていることにする（発車時刻が来て、出発の進路が開いたら発車）
+            var here = train.Plan.FindIndex(p => p.Stops && _rail.Line.ZoneOfStation(p.StationId) == front);
+            if (here >= 0)
+            {
+                train.Dwelling = true;
+                train.DwellIndex = here;
+                train.PlanIndex = here;
+                train.ArrivedUtc = DateTime.UtcNow.AddSeconds(-MinDwellSeconds);
+            }
+
+            var where = _rail.Line.DescribeZones(info.Zones) ?? string.Join(" ", info.TrackCircuits);
+            train.Status = here >= 0 ? $"{train.Plan[here].Name} に停車中" : "停止";
+            UpdateInfo(train);
+            _trains[train.Id] = train;
+            _spawned.Add(number);
+            _log.Note($"にぎやかし: 継続乗務 {number} の在線を、自動運転の列車として {where} から走らせます");
+            return (true, $"{number} を {where} から走らせます");
+        }
+    }
+
     /// <summary>
     /// ダイヤの列車のうち、進路を扱う駅の発車時刻が近い（2分前〜30秒過ぎ）ものを、その駅に出す。
     /// 出さないもの: ユーザーの列車、もう出した・走っている列番、走っている列車がこのあと続けて・折り返して走る列番。
@@ -1315,5 +1462,6 @@ public sealed class AiTrains : BackgroundService
         public PlanStop? ShuntStation { get; set; }
         public bool ShuntMoved { get; set; }      // 引上線から番線へ、道筋が延びた
         public bool FromShunt { get; set; }       // 引上線から折り返した（ホームへの入換を待つ。発車時刻まで止まらずに番線へ入る）
+        public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
     }
 }

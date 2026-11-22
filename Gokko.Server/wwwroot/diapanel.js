@@ -1439,6 +1439,7 @@
         <label><input type="radio" name="${name}" value="off"> ナシ</label>
         <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
       </div>
+      <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は6両）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
       <div class="row">
         <input data-ai="train" placeholder="列番（例: 1651）" size="12">
         <input data-ai="cars" type="number" value="6" min="1" max="10" style="width:4em"><span>両</span>
