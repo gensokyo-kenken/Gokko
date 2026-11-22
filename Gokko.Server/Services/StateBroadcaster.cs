@@ -108,6 +108,8 @@ public sealed class StateBroadcaster : BackgroundService
         var conductors = _crew.Conductors();
         var riders = _crew.Riders();
         var dispatchers = _trainRadio.Dispatchers();
+        // 接続している人の数: 運転士・車掌・司令員（にぎやかしの列車・継続乗務の在線は数えない）
+        var playerCount = players.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)) + conductors.Count + dispatchers.Count;
         if (players.Count == 0 && conductors.Count == 0 && riders.Count == 0 && dispatchers.Count == 0) return;
         var radioViews = _trainRadio.Views(); // 列車無線（その人から見た状態）
         var onboardViews = _onboard.Views(); // 列車ごとの放送装置（その人から見た状態）
@@ -173,7 +175,7 @@ public sealed class StateBroadcaster : BackgroundService
                     .Where(i => _data.IsNear(i.Crossing, p.TrackCircuits, p.Zones))
                     .Select(i => new IncidentView { Crossing = i.Crossing, Reason = i.Reason, StartedGameTime = i.StartedGameTime })
                     .ToList(),
-                PlayerCount = players.Count
+                PlayerCount = playerCount
             };
 
             if (p.Mode == ShareMode.Shared)
@@ -249,7 +251,7 @@ public sealed class StateBroadcaster : BackgroundService
             {
                 state = new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = players.Count,
+                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     RouteMessage = c.TrainNumber.Length == 0 ? "列車番号を入れてください" : $"列番 {c.TrainNumber} の運転士がいません"
                 };
             }
@@ -269,7 +271,7 @@ public sealed class StateBroadcaster : BackgroundService
             foreach (var id in dispatchers.Keys)
                 sends.Add(SendAsync(id, new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = players.Count,
+                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     TrainRadio = radioViews.GetValueOrDefault(id), DispatcherProtection = protection, ProtectionSources = sources
                 }));
         }
