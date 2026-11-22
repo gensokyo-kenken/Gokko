@@ -3118,7 +3118,7 @@ public sealed partial class RouteEngine
     private PlanResult Plan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart)
     {
         // ダイヤ運転中のダイヤの列車: この先はダイヤどおりの線（遅れていればその分ずらす）。過去は実績（history）のまま
-        if (DiaMode && r.Dia != null && DiaPlan(r, now) is { } dp) return dp;
+        if (DiaMode && r.Dia != null && DiaPlan(r, now, minDepart) is { } dp) return dp;
 
         var step = r.Dir.Step();
         var type = RunType(r);
@@ -3179,9 +3179,10 @@ public sealed partial class RouteEngine
     /// <summary>
     /// ダイヤ運転中の見込み: この先の駅を、ダイヤの着・発の時刻に、いまの遅れの分だけ遅らせて引く。
     /// 遅れ = 今いる駅ならダイヤの発車時刻からの遅れ（まだ発車時刻前なら0）、駅間なら次の駅に着く見込み（標準運転時分）とダイヤの着の差（早着は0）。
-    /// 時刻はロープレ時刻なので、ダイヤグラムの横軸（実時間）に直す（時計を早回ししていれば、その速さで割る）
+    /// 時刻はロープレ時刻なので、ダイヤグラムの横軸（実時間）に直す（時計を早回ししていれば、その速さで割る）。
+    /// minDepart（スジずらし・走行順・出発順序）でダイヤより遅く出る駅は、その時刻に出し、延びた分をこの先の駅にも足す
     /// </summary>
-    private PlanResult? DiaPlan(TrainRun r, DateTime now)
+    private PlanResult? DiaPlan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart)
     {
         var step = r.Dir.Step();
         var nowSec = NowSec();
@@ -3229,6 +3230,12 @@ public sealed partial class RouteEngine
             arrAt[z] = arr;
             if (z != r.Front || !atStation) points.Add(new { t = arr, y = (double)z });
             if (z == terminalZone) break;
+            // スジずらし（◆を横にずらした発車時刻）・走行順・出発順序で、ダイヤより遅く出るなら、その時刻に出る。延びた分は、この先の駅にも足す
+            if (minDepart(z) is { } md && md > dep)
+            {
+                shift += (md - dep).TotalSeconds * speed;
+                dep = md;
+            }
             depAt[z] = dep;
             if (dep > arr) points.Add(new { t = dep, y = (double)z });
         }
