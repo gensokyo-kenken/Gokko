@@ -91,8 +91,10 @@ public sealed class StateBroadcaster : BackgroundService
             {
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 _routes.Tick();
-                await BroadcastAsync();
-                _load.RecordBroadcast(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds); // 負荷の記録（管理画面・logs/load-*.log）
+                var tickMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                var sendMs = await BroadcastAsync();
+                // 負荷の記録（管理画面・logs/load-*.log）。全体と、そのうち進路の処理（Tick）と送り終わるのを待った時間
+                _load.RecordBroadcast(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, tickMs, sendMs);
             }
             catch (Exception ex)
             {
@@ -101,7 +103,8 @@ public sealed class StateBroadcaster : BackgroundService
         }
     }
 
-    private async Task BroadcastAsync()
+    /// <summary>全員へ配信する。戻り値は、送り終わるのを待った時間（ミリ秒。遅い回線の人がいると長くなる）。</summary>
+    private async Task<double> BroadcastAsync()
     {
         var players = _players.Snapshot();
         _occupancy.Record(players); // 在線の記録（変わった列車だけ logs/occupancy-*.log へ）
@@ -110,7 +113,7 @@ public sealed class StateBroadcaster : BackgroundService
         var dispatchers = _trainRadio.Dispatchers();
         // 接続している人の数: 運転士・車掌・司令員（にぎやかしの列車・継続乗務の在線は数えない）
         var playerCount = players.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)) + conductors.Count + dispatchers.Count;
-        if (players.Count == 0 && conductors.Count == 0 && riders.Count == 0 && dispatchers.Count == 0) return;
+        if (players.Count == 0 && conductors.Count == 0 && riders.Count == 0 && dispatchers.Count == 0) return 0;
         var radioViews = _trainRadio.Views(); // 列車無線（その人から見た状態）
         var onboardViews = _onboard.Views(); // 列車ごとの放送装置（その人から見た状態）
         var conductorCount = conductors.Where(c => c.TrainNumber.Length > 0).GroupBy(c => c.TrainNumber).ToDictionary(g => g.Key, g => g.Count());
@@ -240,8 +243,9 @@ public sealed class StateBroadcaster : BackgroundService
             ClientState state;
             if (c.TrainNumber.Length > 0 && driverStates.TryGetValue(c.TrainNumber, out var d))
             {
-                // 丸ごと複製する（あとで配信の項目が増えても、車掌に同じものが届くように）。運転士だけのものは消す
-                state = System.Text.Json.JsonSerializer.Deserialize<ClientState>(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(d))!;
+                // 丸ごと複製する（あとで配信の項目が増えても、車掌に同じものが届くように）。運転士だけのものは消す。
+                // 浅い複製なので、一覧の中身は書き換えず、プロパティごと差し替える（以前は JSON に書いて読み直していて、車掌の人数だけ重かった）
+                state = d.Clone();
                 state.DriverPresent = true;
                 state.ProtectionRadioSending = false;
                 state.CanRequestDeparture = false;
@@ -276,7 +280,9 @@ public sealed class StateBroadcaster : BackgroundService
                 }));
         }
 
+        var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         await Task.WhenAll(sends);
+        return System.Diagnostics.Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds;
     }
 
     /// <summary>

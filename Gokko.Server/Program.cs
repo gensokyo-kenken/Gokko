@@ -2,6 +2,7 @@ using Gokko.Common;
 using Gokko.Server;
 using Gokko.Server.Hubs;
 using Gokko.Server.Services;
+using Microsoft.AspNetCore.SignalR;
 
 // 設定・データ・管理画面は、exe と同じ場所から読む（systemd などで作業フォルダが違っても動くように）
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -52,6 +53,7 @@ builder.Services.AddSingleton(sp => new AiTrains(dataDir, rail, sp.GetRequiredSe
     sp.GetRequiredService<RouteEngine>(), sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<IncidentManager>(),
     sp.GetRequiredService<CrewRoster>(), sp.GetRequiredService<DutyRosters>(), sp.GetRequiredService<CrewRelay>(), sp.GetService<ILogger<AiTrains>>())); // にぎやかしの列車（サーバーだけで走る。Data/AiTrains.json）
 builder.Services.AddSingleton<ServerLoad>(); // サーバーの負荷（管理画面・logs/load-*.log）
+builder.Services.AddSingleton<ResponseCache>(); // 何人もの画面が読みに来る API の答えを、少しのあいだ使い回す（ダイヤグラム）
 builder.Services.AddSingleton<StateBroadcaster>();
 builder.Services.AddSingleton<RelayPanels>(); // 信号制御盤（relaypanel.html）。盤の状態はサーバーだけが持ち、開いている全員に配る
 builder.Services.AddSingleton(sp => new ArrivalBoards(dataDir, sp.GetRequiredService<IWebHostEnvironment>(), rail, sp.GetService<ILogger<ArrivalBoards>>())); // 駅の接近案内（tablet-arrivals.html）で見る回路
@@ -70,6 +72,7 @@ builder.Services.AddSignalR(o =>
     o.KeepAliveInterval = TimeSpan.FromSeconds(10);
     o.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
     o.MaximumReceiveMessageSize = 64 * 1024;
+    o.AddFilter<HubTiming>(); // ハブの呼び出しごとの時間（サーバーの負荷）
 });
 
 var app = builder.Build();
@@ -97,6 +100,9 @@ else if (options.Discord.PasswordUntil is { } until)
     app.Logger.LogInformation("パスワードでのログインは {Until} まで", until);
 if (string.IsNullOrEmpty(options.Password))
     app.Logger.LogWarning("Gokko:Password が未設定です。URL を知っていれば誰でも参加できます");
+
+// 画面の API ごとの時間（サーバーの負荷）。操作のあとは、使い回している答えを捨てる
+app.UseLoadTiming(app.Services.GetRequiredService<ServerLoad>(), app.Services.GetRequiredService<ResponseCache>());
 
 // 管理画面・ダイヤグラムの画面は、差し替えたらすぐ反映されるように、毎回確かめさせる（古い diapanel.js が残らないように）
 app.UseStaticFiles(new StaticFileOptions
