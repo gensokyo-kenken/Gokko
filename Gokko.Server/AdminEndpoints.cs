@@ -403,7 +403,9 @@ public static class AdminEndpoints
             running = clock.IsRunning
         }));
 
-        view.MapGet("/state", (RouteEngine engine, GameClock clock, RelayPanels panels) => Results.Ok(new
+        // 在線位置の画面（tid.html）・信号制御盤・タブレットが、開いている画面ごとに1秒に1回読む（11/22 のデバッグ運転で1分に約650回、
+        // 画面の API の時間の約6割）。出発順序の見込み（OrdersView）まで毎回計算し直していたので、答えを 0.5 秒使い回す
+        view.MapGet("/state", (RouteEngine engine, GameClock clock, RelayPanels panels, ResponseCache cache) => cache.Get("tid-state", TimeSpan.FromMilliseconds(500), () => new
         {
             gameTime = clock.NowText,
             tid = engine.TidView(),
@@ -1003,8 +1005,9 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示だけ（読むだけの画面と共通）。</summary>
     private static void MapDiagramViews(RouteGroupBuilder g)
     {
-        // 開いている画面の数だけ読まれるので、0.5秒は同じ答えを使い回す（操作した直後は ResponseCache.Clear で作り直す）
-        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache) => cache.Get("diagram", TimeSpan.FromMilliseconds(500), () => new
+        // 開いている画面の数だけ（/api/admin・/api/dia・/api/diaview とも同じ答え）1秒に1回読まれ、作るのに約20ms かかる（11/22 のデバッグ運転）。
+        // 画面は1秒ごとに読むので、1秒は同じ答えを使い回す（操作した直後は ResponseCache.Clear で作り直す）
+        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache) => cache.Get("diagram", TimeSpan.FromSeconds(1), () => new
         {
             now = DateTimeOffset.UtcNow,
             stations = rail.Line.StationIds.Select(id => new
