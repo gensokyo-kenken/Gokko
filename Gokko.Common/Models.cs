@@ -82,6 +82,9 @@ public sealed class ClientReport
     /// <summary>ユーザーが選んだ番線（駅ID → 番線）。</summary>
     public Dictionary<string, int> TrackChoices { get; set; } = new();
 
+    /// <summary>ユーザーが「ここで打ち切り・入換」を選んだ駅（駅ID → 番線）。その駅を終着にして、入りきったら入換（引上げ）を要求できる。</summary>
+    public Dictionary<string, int> EndChoices { get; set; } = new();
+
     /// <summary>
     /// 継続乗務ボタンが押されているか。押している間に運転画面を出ると、サーバーは最後の在線位置を5分間残す
     /// （同じ番線から次のシナリオを始めると、その列番の列車として続ける）。
@@ -330,6 +333,18 @@ public sealed class StationPlanView
 
     /// <summary>選べる番線。</summary>
     public List<int> TrackOptions { get; set; } = new();
+
+    /// <summary>選ぶとこの駅で打ち切り、入換（引上げ）ができる番線（「◯番線（打ち切り・入換）」として出す）。</summary>
+    public List<int> EndOptions { get; set; } = new();
+
+    /// <summary>行き止まりの番線（入るとこの駅で打ち切り。「◯番線（打ち切り）」と出す）。</summary>
+    public List<int> TurnbackTracks { get; set; } = new();
+
+    /// <summary>番線を使わずに通過もできる駅か（江ノ原信号場）。番線の欄に「通過」も出す。</summary>
+    public bool CanPass { get; set; }
+
+    /// <summary>運転士の「打ち切り・入換」の選択で、この駅が終着になっているか。</summary>
+    public bool EndHere { get; set; }
 
     /// <summary>番線の決め方（所定 / 選択 / 待避 / 集中）。</summary>
     public string TrackSource { get; set; } = "";
