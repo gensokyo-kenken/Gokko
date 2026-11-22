@@ -92,6 +92,7 @@ public sealed class StateBroadcaster : BackgroundService
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 _routes.Tick();
                 var tickMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                BuildViews();
                 var sendMs = await BroadcastAsync();
                 // 負荷の記録（管理画面・logs/load-*.log）。全体と、そのうち進路の処理（Tick）と送り終わるのを待った時間
                 _load.RecordBroadcast(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, tickMs, sendMs);
@@ -100,6 +101,22 @@ public sealed class StateBroadcaster : BackgroundService
             {
                 _logger.LogError(ex, "配信でエラー");
             }
+        }
+    }
+
+    /// <summary>
+    /// 画面用の答え（在線位置の画面・ダイヤグラム）を作り置く（RouteEngine.View。画面の API が RouteEngine のロックを待たないように）。
+    /// 失敗しても配信は止めない（画面の API は、作り置きがなければその場で作る）。
+    /// </summary>
+    private void BuildViews()
+    {
+        try
+        {
+            foreach (var (kind, ms) in _routes.BuildViews()) _load.RecordWork($"(作り置き) {kind}", ms); // 種類ごとに（どれが重いかを見るため）
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "画面用の答えの作り置きでエラー");
         }
     }
 
