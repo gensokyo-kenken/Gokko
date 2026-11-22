@@ -110,10 +110,9 @@ public sealed class StateBroadcaster : BackgroundService
     /// </summary>
     private void BuildViews()
     {
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            if (_routes.BuildViews() > 0) _load.RecordWork("(作り置き)", System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            foreach (var (kind, ms) in _routes.BuildViews()) _load.RecordWork($"(作り置き) {kind}", ms); // 種類ごとに（どれが重いかを見るため）
         }
         catch (Exception ex)
         {

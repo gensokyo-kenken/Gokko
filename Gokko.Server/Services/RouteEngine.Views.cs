@@ -22,7 +22,12 @@ public sealed partial class RouteEngine
     /// <summary>作り置きがこれより古ければ使わず、その場で作る（配信のループが止まっているときなど）。</summary>
     private static readonly TimeSpan ViewMaxAge = TimeSpan.FromSeconds(2);
 
-    private sealed record ViewSet(long At, Dictionary<string, object> Items);
+    /// <summary>作り直す間隔の下限（種類ごと）。ダイヤグラムは作るのが重く（約20ms）、画面も1秒ごとに読むので、1秒ごとにする
+    /// （配信のループは0.5秒ごとなので、少し短めの 0.9 秒にする。1.0 秒だと、ちょうど1秒後の回が足りずに 1.5 秒ごとになる）。</summary>
+    private static TimeSpan ViewInterval(string kind) => kind == ViewDiagram ? TimeSpan.FromMilliseconds(900) : TimeSpan.Zero;
+
+    private sealed record ViewItem(long At, object Value);
+    private sealed record ViewSet(Dictionary<string, ViewItem> Items);
 
     private readonly ConcurrentDictionary<string, long> _viewWanted = new();
     private volatile ViewSet? _views;
@@ -49,31 +54,45 @@ public sealed partial class RouteEngine
         var now = Stopwatch.GetTimestamp();
         _viewWanted[kind] = now;
         var set = _views;
-        if (set != null && Stopwatch.GetElapsedTime(set.At, now) < ViewMaxAge && set.Items.TryGetValue(kind, out var item)) return item;
+        if (set != null && set.Items.TryGetValue(kind, out var item) && Stopwatch.GetElapsedTime(item.At, now) < ViewMaxAge) return item.Value;
         return ViewBuilder(kind)();
     }
 
     /// <summary>
     /// 作り置きを作り直す（配信のループが Tick のすぐあとに呼ぶ）。見ている画面がある種類だけを、1回のロックでまとめて作る。
-    /// 戻り値は作った種類の数。
+    /// 戻り値は作り直した種類と、かかった時間（ミリ秒。負荷の記録用）。
     /// </summary>
-    public int BuildViews()
+    public List<(string Kind, double Ms)> BuildViews()
     {
         var now = Stopwatch.GetTimestamp();
         var kinds = _viewWanted.Where(kv => Stopwatch.GetElapsedTime(kv.Value, now) < WantedFor).Select(kv => kv.Key).ToList();
         if (kinds.Count == 0)
         {
             _views = null;
-            return 0;
+            return new();
         }
 
         var gen = Interlocked.Read(ref _viewGen);
-        var items = new Dictionary<string, object>();
-        lock (_lock) // 各 View も同じロックを取る（入れ子でもよい）。まとめて取って、同じ時点の答えにそろえる
+        var old = _views;
+        var items = new Dictionary<string, ViewItem>();
+        var built = new List<(string Kind, double Ms)>();
+        lock (_lock) // 各 View も同じロックを取る（入れ子でもよい）。まとめて1回で取る
             foreach (var kind in kinds)
-                items[kind] = ViewBuilder(kind)();
-        if (Interlocked.Read(ref _viewGen) == gen) _views = new ViewSet(now, items);
-        return items.Count;
+            {
+                // 前に作ってから間隔の下限がたっていなければ、前のものをそのまま使う
+                if (old != null && old.Items.TryGetValue(kind, out var prev) && Stopwatch.GetElapsedTime(prev.At, now) < ViewInterval(kind))
+                {
+                    items[kind] = prev;
+                    continue;
+                }
+
+                var started = Stopwatch.GetTimestamp();
+                items[kind] = new ViewItem(now, ViewBuilder(kind)());
+                built.Add((kind, Stopwatch.GetElapsedTime(started).TotalMilliseconds));
+            }
+
+        if (Interlocked.Read(ref _viewGen) == gen) _views = new ViewSet(items);
+        return built;
     }
 
     /// <summary>作り置きを捨てる（操作のすぐあと。◆をずらしたなどが、次に読んだときにすぐ見えるように、次はその場で作る）。</summary>
