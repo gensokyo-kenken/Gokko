@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Gokko.Common;
 
 namespace Gokko.Client;
@@ -34,6 +35,8 @@ public sealed partial class MainForm : Form
     private readonly OtherRouteApplier _otherRoutes = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
     private readonly Dictionary<string, int> _trackChoices = new();
+    /// <summary>「◯番線（打ち切り・入換）」を選んだ駅（駅ID → 番線）。</summary>
+    private readonly Dictionary<string, int> _endChoices = new();
 
     /// <summary>番線を選んだときの列車番号（列車が替わったら、選んだ番線を捨てる）。</summary>
     private string _choicesTrain = "";
@@ -353,7 +356,18 @@ public sealed partial class MainForm : Form
             if (_updatingPlan || e.RowIndex < 0 || _planGrid.Columns[e.ColumnIndex].Name != "Track") return;
             var row = _planGrid.Rows[e.RowIndex];
             if (row.Tag is not string stationId || row.Cells["Track"].Value is not string text) return;
-            if (text.EndsWith("番線") && int.TryParse(text[..^2], out var t)) _trackChoices[stationId] = t;
+            if (text == "通過")
+            {
+                _trackChoices.Remove(stationId);
+                _endChoices.Remove(stationId);
+            }
+            else if (Regex.Match(text, @"^(\d+)番線") is { Success: true } m && int.TryParse(m.Groups[1].Value, out var t))
+            {
+                _trackChoices[stationId] = t;
+                // 「◯番線（打ち切り・入換）」: この駅で打ち切って、入りきったら入換（引上げ）を要求できるようにする
+                if (text.Contains(EndShuntSuffix)) _endChoices[stationId] = t;
+                else _endChoices.Remove(stationId);
+            }
         };
     }
 
@@ -376,6 +390,7 @@ public sealed partial class MainForm : Form
                 UpdateTrainBoxColor();
                 _routes.Reset();
                 _trackChoices.Clear();
+                _endChoices.Clear();
                 _server.Passenger = _role == CrewRole.Rider && _config.Passenger;
                 _server.Start(ServerAddress.Current, _config.Password, _mode, _crew.Token, _role);
                 _crewPanel?.Start(ServerAddress.Current, _config.Password, _crew.Token);
@@ -645,6 +660,7 @@ public sealed partial class MainForm : Form
             {
                 _choicesTrain = trainNumber;
                 _trackChoices.Clear();
+                _endChoices.Clear();
             }
 
             // 使う列番（確定した列番、空ならシナリオの列番）が変わったら、ダイヤにあるか確かめる
@@ -911,7 +927,7 @@ public sealed partial class MainForm : Form
         {
             // ダイヤ運転中は、列車から進路に触れない（番線はダイヤどおり。選んだ番線も送らない）
             _diaLock = state?.DiaMode == true;
-            if (_diaLock) _trackChoices.Clear();
+            if (_diaLock) { _trackChoices.Clear(); _endChoices.Clear(); }
             _routeMessage.Text = state?.RouteMessage ?? (_diaLock ? "ダイヤ運転中は、番線・進路はダイヤどおりに自動で扱います（列車からは変えられません）"
                 : state?.Plan.Count > 0 ? "番線は、手前の駅を通過するまで選べます" : "この先に、進路を扱う駅はありません");
             UpdatePlan(state?.Plan ?? new List<StationPlanView>());
@@ -1004,7 +1020,7 @@ public sealed partial class MainForm : Form
 
     private void UpdatePlanCore(List<StationPlanView> plan)
     {
-        var key = (_diaLock ? "dia|" : "") + string.Join("|", plan.Select(p => $"{p.StationId}:{string.Join(",", p.TrackOptions)}:{p.Locked}:{p.Track == null}"));
+        var key = (_diaLock ? "dia|" : "") + string.Join("|", plan.Select(p => $"{p.StationId}:{string.Join(",", p.TrackOptions)}:{string.Join(",", p.EndOptions)}:{string.Join(",", p.TurnbackTracks)}:{p.CanPass}:{p.Locked}:{p.Track == null}"));
         if (key != _planKey)
         {
             _planKey = key;
@@ -1014,9 +1030,11 @@ public sealed partial class MainForm : Form
                 var row = new DataGridViewRow { Tag = p.StationId };
                 row.CreateCells(_planGrid);
                 var cell = (DataGridViewComboBoxCell)row.Cells[_planGrid.Columns["Track"]!.Index];
-                if (p.Track == null) cell.Items.Add("通過");
-                foreach (var t in p.TrackOptions) cell.Items.Add($"{t}番線");
-                row.Cells[_planGrid.Columns["Track"]!.Index].ReadOnly = _diaLock || p.Locked || p.TrackOptions.Count == 0 || p.Track == null;
+                if (p.Track == null || p.CanPass) cell.Items.Add("通過");
+                foreach (var t in p.TrackOptions) cell.Items.Add(TrackText(p, t, end: false));
+                foreach (var t in p.EndOptions) cell.Items.Add(TrackText(p, t, end: true));
+                row.Cells[_planGrid.Columns["Track"]!.Index].ReadOnly = _diaLock || p.Locked || p.TrackOptions.Count == 0
+                    || p.Track == null && !p.CanPass; // 通過の駅は選べない（江ノ原信号場のように、通過と入庫を選べる駅だけ選べる）
                 _planGrid.Rows.Add(row);
             }
 
@@ -1033,7 +1051,7 @@ public sealed partial class MainForm : Form
             row.Cells["Stop"].Value = p.StopType;
             row.Cells["Source"].Value = p.TrackSource + (p.Locked ? "・確定" : "");
             row.Cells["Status"].Value = p.Status;
-            var trackText = p.Track == null ? "通過" : $"{p.Track}番線";
+            var trackText = p.Track is { } pt ? TrackText(p, pt, p.EndHere) : "通過";
             var trackCell = row.Cells["Track"];
             if (!(_planGrid.CurrentCell == trackCell && _planGrid.IsCurrentCellInEditMode) && !Equals(trackCell.Value, trackText))
                 trackCell.Value = trackText;
@@ -1041,6 +1059,12 @@ public sealed partial class MainForm : Form
                 : p.Status.Contains("開通") || p.Status == "進路確定" ? Color.FromArgb(232, 245, 233) : SystemColors.Window;
         }
     }
+
+    private const string EndShuntSuffix = "（打ち切り・入換）";
+
+    /// <summary>番線の欄の文字: 「◯番線」、行き止まりなら「◯番線（打ち切り）」、打ち切って入換するなら「◯番線（打ち切り・入換）」。</summary>
+    private static string TrackText(StationPlanView p, int track, bool end) =>
+        end ? $"{track}番線{EndShuntSuffix}" : p.TurnbackTracks.Contains(track) ? $"{track}番線（打ち切り）" : $"{track}番線";
 
     private void ShowMessage(string message)
     {
@@ -1071,6 +1095,7 @@ public sealed partial class MainForm : Form
             report.Speed = game.Speed;
             report.GameRoutes = (game.Routes ?? new()).Select(r => new RouteKey { Interlocking = r.Interlock, RouteName = r.Route }).ToList();
             report.TrackChoices = new Dictionary<string, int>(_trackChoices);
+            report.EndChoices = new Dictionary<string, int>(_endChoices);
         }
 
         return report;

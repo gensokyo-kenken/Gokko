@@ -459,6 +459,9 @@ public sealed partial class RouteEngine
         /// <summary>ダイヤ・ゲームどおりの停車種別と終着（臨時停車・臨時通過・打ち切りを外したときに戻す）。</summary>
         public string BaseStopType { get; set; } = "通過";
         public bool BaseTerminal { get; set; }
+
+        /// <summary>運転士の「打ち切り・入換」の選択で、この駅を終着にしているか。</summary>
+        public bool DriverEnd { get; set; }
         public bool IsStart { get; set; }
         public int? Track { get; set; }
         public string TrackSource { get; set; } = "";
@@ -1293,6 +1296,39 @@ public sealed partial class RouteEngine
     private void ApplyStopOverride(TrainRun run, StationRun st, DateTime now)
     {
         var ov = _central.StopOverride(run.Train, st.St.Id);
+        // 運転士の「打ち切り・入換」は、列車別設定の打ち切りと同じに扱う（列車別設定があれば、そちらが先）
+        var driverEnd = ov == null && DriverEndChosen(run, st);
+        if (driverEnd) ov = "打ち切り";
+        try
+        {
+            ApplyStopOverrideCore(run, st, ov, driverEnd, now);
+        }
+        finally
+        {
+            st.DriverEnd = driverEnd && st.Terminal && !st.BaseTerminal;
+        }
+    }
+
+    /// <summary>
+    /// 運転士が、この駅で打ち切って入換（引上げ）をする番線を選んだか（運転画面の「◯番線（打ち切り・入換）」）。
+    /// 終着でない駅でも、ダイヤにない列番でも、引上げのある番線なら入換できるように。ダイヤ運転中のダイヤの列車は使わない。
+    /// 番線を確定したあとは、その番線のときだけ（集中扱いなどで別の番線になったら打ち切らない）。
+    /// </summary>
+    private bool DriverEndChosen(TrainRun run, StationRun st) =>
+        !(DiaMode && run.Dia != null) && !st.BaseTerminal
+        && run.Player.EndChoices.TryGetValue(st.St.Id, out var t)
+        && run.Player.TrackChoices.TryGetValue(st.St.Id, out var c) && c == t
+        && st.St.Routes[run.Dir].ShuntOuts.Any(o => o.From == t)
+        && (st.Track == t || !st.Locked && !st.IsStart);
+
+    /// <summary>運転画面に「◯番線（打ち切り・入換）」として出す番線: 選べる番線のうち、そこから引上げの入換がある番線。</summary>
+    private List<int> EndOptions(TrainRun run, StationRun st) =>
+        DiaMode && run.Dia != null || st.BaseTerminal
+            ? new List<int>()
+            : st.Options.Where(t => st.St.Routes[run.Dir].ShuntOuts.Any(o => o.From == t) && (!st.IsStart || st.Track == t)).ToList();
+
+    private void ApplyStopOverrideCore(TrainRun run, StationRun st, string? ov, bool driverEnd, DateTime now)
+    {
         var stop = ov switch { "停車" or "打ち切り" => "停車", "通過" => "通過", _ => st.BaseStopType };
         if (st.IsStart && stop == "通過") stop = "停車";
         var terminal = ov == "打ち切り" || st.BaseTerminal;
@@ -1318,7 +1354,7 @@ public sealed partial class RouteEngine
             st.DepartPath.Clear();
         }
         else ResolvePaths(run, st);
-        _log.Note($"列車別設定: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
+        _log.Note($"{(driverEnd || st.DriverEnd ? "運転士の打ち切り・入換" : "列車別設定")}: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
     }
 
     private void UpdateStations(TrainRun run, DateTime now)
@@ -2787,6 +2823,10 @@ public sealed partial class RouteEngine
                 StopType = s.StopType,
                 Track = s.Track,
                 TrackOptions = s.Options,
+                EndOptions = EndOptions(run, s),
+                TurnbackTracks = s.BaseTerminal ? new List<int>() : s.Options.Where(t => s.St.Routes[run.Dir] is var r && r.Turnback.Contains(t) && !r.Depart.ContainsKey(t)).ToList(),
+                EndHere = s.DriverEnd,
+                CanPass = s.St.Routes[run.Dir].Through.Count > 0 && !s.Terminal && !s.IsStart,
                 TrackSource = s.TrackSource,
                 Locked = s.Locked,
                 Status = ClientStatus(run, s), // 運転士には3段階だけ

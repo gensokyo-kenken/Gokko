@@ -43,6 +43,7 @@ public sealed class PlayerInfo
     public float ReportedSpeed { get; set; }
     public HashSet<(string Interlock, string Route)> GameRoutes { get; set; } = new();
     public Dictionary<string, int> TrackChoices { get; set; } = new();
+    public Dictionary<string, int> EndChoices { get; set; } = new();
 
     // ---- 継続乗務 ----
 
@@ -70,6 +71,7 @@ public sealed class PlayerInfo
         copy.Stops = new List<StopInfo>(Stops);
         copy.GameRoutes = new HashSet<(string, string)>(GameRoutes);
         copy.TrackChoices = new Dictionary<string, int>(TrackChoices);
+        copy.EndChoices = new Dictionary<string, int>(EndChoices);
         return copy;
     }
 }
@@ -343,6 +345,8 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
                 p.GameRoutes = (report.GameRoutes ?? new List<RouteKey>()).Take(200)
                     .Select(r => (r.Interlocking, r.RouteName)).ToHashSet();
                 p.TrackChoices = (report.TrackChoices ?? new Dictionary<string, int>())
+                    .Take(50).ToDictionary(kv => kv.Key, kv => kv.Value);
+                p.EndChoices = (report.EndChoices ?? new Dictionary<string, int>())
                     .Take(50).ToDictionary(kv => kv.Key, kv => kv.Value);
             }
 
