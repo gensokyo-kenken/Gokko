@@ -59,6 +59,9 @@ public sealed class PlayerInfo
     /// <summary>位置（ゾーン）が分かっていた最後の時刻。データにない回路を踏んでいる間は、前の位置を保つ。</summary>
     public DateTime ZonesUpdatedUtc { get; set; }
 
+    /// <summary>この列車が引き継いだ在線の接続ID（継続乗務の在線を自動運転の列車が引き継いだとき）。進路・駅の状態をそこから移す。</summary>
+    public string? TakesOver { get; set; }
+
     public PlayerInfo Clone()
     {
         var copy = (PlayerInfo)MemberwiseClone();
@@ -172,6 +175,9 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         }
     }
 
+    /// <summary>継続乗務の在線が、管理画面・ダイヤグラムの設定画面から消されたとき（自動運転の列車が引き継ぐことがある）。</summary>
+    public event Action<Ghost>? GhostDeleted;
+
     /// <summary>継続乗務の在線を消す（管理画面・ダイヤグラムの設定画面から）。</summary>
     public bool RemoveGhost(string id)
     {
@@ -179,7 +185,21 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         lock (_ghosts)
             if (!_ghosts.Remove(id, out g)) return false;
         Changed?.Invoke($"継続乗務: {g.Info.TrainNumber} の在線を消しました");
+        GhostDeleted?.Invoke(g);
         return true;
+    }
+
+    /// <summary>継続乗務の在線を、引き継ぐために外す（消したことにはしない）。引き継げなければ <see cref="RestoreGhost"/> で戻す。</summary>
+    public Ghost? TakeGhost(string id)
+    {
+        lock (_ghosts)
+            return _ghosts.Remove(id, out var g) ? g : null;
+    }
+
+    /// <summary><see cref="TakeGhost"/> で外した在線を戻す。</summary>
+    public void RestoreGhost(Ghost g)
+    {
+        lock (_ghosts) _ghosts[g.Id] = g;
     }
 
     private void ExpireGhosts()
@@ -226,6 +246,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         info.Speed = 0;
         info.ContinueDuty = false;
         info.AppearReason = null;
+        info.TakesOver = null;
         lock (_ghosts)
         {
             foreach (var old in _ghosts.Values.Where(g => g.Owner == from.ConnectionId).ToList()) _ghosts.Remove(old.Id);
