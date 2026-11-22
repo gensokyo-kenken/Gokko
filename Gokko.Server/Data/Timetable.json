@@ -9548,33 +9548,6 @@
       ]
     },
     {
-      "number": "895C", "type": "準急", "label": "準急", "dest": "大道寺", "unyo": 94,
-      "next": { "number": "回1095", "st": "TH65", "name": "大道寺" },
-      "stops": [
-        { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "09:49:00", "track": 4 },
-        { "st": "TH47", "name": "桜坂", "stop": "停", "arr": null, "dep": "09:50:50", "track": null },
-        { "st": "TH48", "name": "東井", "stop": "停", "arr": "09:52:15", "dep": "09:52:45", "track": 5, "note": "(連)特館⑤13発" },
-        { "st": "TH49", "name": "白石町", "stop": "停", "arr": null, "dep": "09:54:35", "track": null },
-        { "st": "TH50", "name": "二木戸", "stop": "停", "arr": "09:56:05", "dep": "09:56:35", "track": null, "note": "×急公47着" },
-        { "st": "TH51", "name": "三石", "stop": "停", "arr": "09:58:05", "dep": "09:58:35", "track": 2, "note": "×普路①57着" },
-        { "st": "TH52", "name": "名田", "stop": "停", "arr": "10:00:10", "dep": "10:02:40", "track": 2, "note": "×特手①02着" },
-        { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": "10:04:25", "dep": "10:04:50", "track": 2 },
-        { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": "10:06:30", "dep": "10:06:55", "track": 2 },
-        { "st": "TH55", "name": "珠川温泉", "stop": "停", "arr": null, "dep": "10:08:45", "track": null, "note": "(連)特館21発" },
-        { "st": "TH55S", "name": "珠川信", "stop": "通", "arr": null, "dep": "10:09:20", "track": null },
-        { "st": "TH56", "name": "明神川", "stop": "停", "arr": null, "dep": "10:11:30", "track": null },
-        { "st": "TH57", "name": "三郷", "stop": "停", "arr": "10:13:10", "dep": "10:13:30", "track": null, "note": "×普東11着" },
-        { "st": "TH58", "name": "赤山町", "stop": "停", "arr": "10:16:05", "dep": "10:16:35", "track": 3 },
-        { "st": "TH59", "name": "西赤山", "stop": "停", "arr": "10:19:05", "dep": "10:19:25", "track": null },
-        { "st": "TH60", "name": "奥峯口", "stop": "停", "arr": null, "dep": "10:21:15", "track": null, "note": "×特手19通" },
-        { "st": "TH61", "name": "日野森", "stop": "停", "arr": "10:22:50", "dep": "10:23:20", "track": 3, "note": "×普日①14着" },
-        { "st": "TH62", "name": "高見沢", "stop": "停", "arr": "10:25:25", "dep": "10:25:55", "track": 1 },
-        { "st": "TH63", "name": "水越", "stop": "停", "arr": "10:28:10", "dep": "10:28:40", "track": 2, "note": "×普路①27着" },
-        { "st": "TH64", "name": "藤江", "stop": "停", "arr": "10:30:20", "dep": "10:30:50", "track": 2 },
-        { "st": "TH65", "name": "大道寺", "stop": "停", "arr": "10:33:25", "dep": "10:39:30", "track": 3, "note": "(接)特館④38発" }
-      ]
-    },
-    {
       "number": "回1095", "type": "回送", "label": "回送", "dest": "浜園", "unyo": 94,
       "turn": { "kind": "折返", "number": "回1094", "time": "10:57", "how": "発", "text": "回1094 10:57発 回送 江原検行" },
       "stops": [
