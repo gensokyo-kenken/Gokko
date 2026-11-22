@@ -194,7 +194,8 @@ public sealed class AiTrains : BackgroundService
             }
 
             // 最初の道筋: 出す番線の軌道回路。停止位置は、番線ごとの表（出発信号機の手前）から
-            var stopSpec = FindStop(st.Name, dir.Value, track);
+            // 表の駅名はダイヤの駅名（江原検など、駅の設定の名前と違う所がある）。なければ駅の設定の名前
+            var stopSpec = FindStop(start.Name, dir.Value, track) ?? FindStop(st.Name, dir.Value, track);
             var before = stopSpec?.Before ?? 20;
             var len = Math.Max(LengthOf(platform), train.Length + before + 10);
             train.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(platform, 0, len)]));
@@ -618,7 +619,7 @@ public sealed class AiTrains : BackgroundService
             t.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
         }
 
-        var before = FindStop(st.Name, dir, track)?.Before ?? 20;
+        var before = (FindStop(first.Name, dir, track) ?? FindStop(st.Name, dir, track))?.Before ?? 20;
         var len = Math.Max(LengthOf(platform), t.Length + before + 10);
         t.Path.Clear();
         t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(platform, 0, len)]));
