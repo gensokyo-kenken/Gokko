@@ -399,21 +399,30 @@
     return result;
   }
 
-  // 進路の線。進路の回路に、列車が通らない回路（鎖錠のためだけに入っている回路。水越の 12R の 21ロT）があって一筆で引けないときは、
-  // 実際の通り道（tid-paths.json）で、進路の回路がいちばん多く続けて並ぶ道（同じなら known の回路＝列車の位置・行き先の番線を多く通る道）の回路だけで引く。
-  // 引かないと、通らない回路へ向けて渡り線の回路を本線側に引いてしまい、列車も本線側に塗られる
+  // 進路の線。進路の回路が一筆で引けないときは、実際の通り道（tid-paths.json）で引く。
+  // ・列車が通らない回路が入っている（鎖錠のためだけの回路。水越の 12R の 21ロT）: その回路は引かない。
+  //   引かないと、通らない回路へ向けて渡り線の回路を本線側に引いてしまい、列車も本線側に塗られる
+  // ・列車が通る回路が抜けている（駒野の 1RD5・1RD6 は 43ロT がない）: 道の上で間の回路を足してつなぐ
+  // 進路の回路をいちばん多く通り、足す回路が少なく、known の回路（列車の位置・行き先の番線）を多く通る道を選び、その道の順に引く
   function routePath(circuits, known) {
     const cs = [...new Set(circuits)].filter((c) => graphs[c]);
     const full = smoothPath(cs, known);
     if (full.size >= cs.length || paths.length === 0) return full;
+    const kn = [...new Set(known)];
     let best = null;
     for (const p of paths) {
       const idx = cs.map((c) => p.indexOf(c)).filter((i) => i >= 0);
-      if (idx.length < 2 || Math.max(...idx) - Math.min(...idx) + 1 !== idx.length) continue;
-      const score = idx.length * 100 + [...new Set(known)].filter((k) => p.includes(k)).length;
-      if (!best || score > best.score) best = { score, keep: cs.filter((c) => p.includes(c)) };
+      if (idx.length < 2) continue;
+      const lo = Math.min(...idx), hi = Math.max(...idx), added = hi - lo + 1 - idx.length;
+      if (added > 2) continue;
+      const score = idx.length * 100 - added * 10 + kn.filter((k) => p.includes(k)).length;
+      if (!best || score > best.score) best = { score, span: p.slice(lo, hi + 1), wide: p.slice(Math.max(0, lo - 1), hi + 2) };
     }
-    return best ? smoothPath(best.keep, known) : full;
+    if (!best) return full;
+    // 前後1つの回路まで含めて道の順に引き、進路の回路の分だけ使う（端の回路を、隣の回路へつながる側まで引くため）
+    const wide = orderedPath(best.wide);
+    if (wide && best.span.every((c) => wide.has(c))) return new Map(best.span.map((c) => [c, wide.get(c)]));
+    return orderedPath(best.span) || smoothPath(best.span, known);
   }
 
   // 列車の名札を置く位置: 列車を描いた線の、中ほどの点
