@@ -57,6 +57,7 @@ public sealed partial class RouteEngine
         _players = players;
         _log = log;
         _approach = new ApproachTrigger(data);
+        central.Changed += _ => Interlocked.Increment(ref _centralVersion); // 運転順序を作り直す目安（RouteEngine.OrderPlan.cs）
         central.AutoRouteRequests = () =>
         {
             lock (_lock)
@@ -254,18 +255,23 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
-    /// ダイヤ運転中の駅の出発順序（手で決めていなければ、ダイヤの発車・通過時刻の順）。ダイヤにない列車は入れない（待たない・待たせない）。
+    /// ダイヤ運転中の駅の出発順序（手で決めていなければ、ダイヤグラムで調整したダイヤの発の順。RouteEngine.OrderPlan.cs）。
+    /// 手前の駅で順序を入れ替えた・◆をずらした列車は、この先の駅でも同じように後ろになる。ダイヤにない列車は入れない（待たない・待たせない）。
     /// </summary>
     private IReadOnlyList<string>? EffectiveOrder(string stationId, Dir dir)
     {
         if (_central.Order(stationId, dir) is { } manual) return manual;
         if (!DiaMode) return null;
+        if (_orderPlan is { } op) return op.Depart.TryGetValue((stationId, dir), out var planned) && planned.Count > 0 ? planned : null;
         var list = _runs.Values.Where(r => r.Dir == dir && r.Dia != null && r.Stations.Any(s => s.St.Id == stationId && !s.Done))
             .Select(r => (r.Train, T: DiaSec(r, stationId, depart: true))).Where(x => x.T != null).OrderBy(x => x.T).Select(x => x.Train).ToList();
         return list.Count > 0 ? list : null;
     }
 
-    /// <summary>ダイヤ運転中の単線区間の走行順（手で決めていなければ、区間に入る駅のダイヤの発車・通過時刻の順）。</summary>
+    /// <summary>
+    /// ダイヤ運転中の単線区間の走行順（手で決めていなければ、区間に入る駅の、ダイヤグラムで調整したダイヤの発の順。RouteEngine.OrderPlan.cs）。
+    /// 手前の駅で順序を入れ替えた・◆をずらした列車は、この先の単線区間でも同じように後ろになる。もう区間に入った列車は先頭
+    /// </summary>
     private IReadOnlyList<string>? EffectiveSectionOrder(string a, string b)
     {
         if (_central.SectionOrder(a, b) is { } manual) return manual;
@@ -275,7 +281,9 @@ public sealed partial class RouteEngine
         {
             var entry = r.Stations.FirstOrDefault(s => (s.St.Id == a || s.St.Id == b) && NextControlStation(r, s) is { } nx && (nx == a || nx == b) && nx != s.St.Id);
             if (entry == null || SectionCleared(r, a, b)) continue;
-            if (DiaSec(r, entry.St.Id, depart: true) is { } t) list.Add((r.Train, t));
+            if (entry.Done) { list.Add((r.Train, double.MinValue)); continue; } // 区間の中
+            var t = _orderPlan?.Times.GetValueOrDefault((r.Train, entry.St.Id))?.Dep ?? DiaDaySec(r, entry.St.Id, depart: true);
+            if (t != null) list.Add((r.Train, t.Value));
         }
 
         return list.Count > 0 ? list.OrderBy(x => x.T).Select(x => x.Train).ToList() : null;
@@ -784,6 +792,7 @@ public sealed partial class RouteEngine
             }
 
             SyncOrders();
+            RefreshOrderPlan(now);
 
             // 進路の要求（手前の駅を通過した順）
             var pending = _runs.Values
@@ -988,14 +997,14 @@ public sealed partial class RouteEngine
                 if (order == null || secStamp > stStamp)
                 {
                     var merged = Reorder(order ?? new List<string>(), deps);
-                    if (order == null || !merged.SequenceEqual(order)) _central.SyncOrder(x, dir, merged, secStamp);
+                    if (order == null || !merged.SequenceEqual(order)) { _central.SyncOrder(x, dir, merged, secStamp); _orderSyncVersion++; }
                 }
                 else if (stStamp > secStamp)
                 {
                     var inStation = order.Where(deps.Contains).ToList();
                     if (inStation.Count < 2) continue;
                     var merged = Reorder(sec.ToList(), inStation);
-                    if (!merged.SequenceEqual(sec)) _central.SyncSectionOrder(a, b, merged, stStamp);
+                    if (!merged.SequenceEqual(sec)) { _central.SyncSectionOrder(a, b, merged, stStamp); _orderSyncVersion++; }
                 }
             }
         }
@@ -3025,8 +3034,17 @@ public sealed partial class RouteEngine
             // 在線を共有している列車だけ（特発のみ共有の列車は _runs に入らないが、念のためここでも絞る）
             var runs = _runs.Values.Where(r => r.HasPosition && r.Player.Mode == ShareMode.Shared).OrderBy(r => r.Train).ToList();
 
-            // 1回目: スジずらし（発車時刻）だけを入れた見込み。2回目で、走行順・出発順序の先の列車を待つ時間を足す
+            // 1回目: スジずらし（発車時刻）だけを入れた見込み。2回目から、走行順・出発順序の先の列車を待つ時間と、
+            // 先の列車に詰まる分（駅間で追いつかない・同じ番線は先の列車が出てから）を足す。先の列車が詰まれば後ろの列車も詰まるので、変わらなくなるまで（4回まで）
             var basePlans = runs.ToDictionary(r => r, r => Plan(r, now, z => SlideDepart(r, z)));
+            var plans = basePlans;
+            for (var pass = 0; pass < 4; pass++)
+            {
+                var prev = plans;
+                basePlans = prev;
+                plans = runs.ToDictionary(r => r, r => Plan(r, now, z => MinDepart(r, z), DiaMode ? z => MinArrive(prev, r, z) : null));
+                if (runs.All(r => SameTimes(prev[r], plans[r]))) break;
+            }
             DateTime? MinDepart(TrainRun r, int z)
             {
                 DateTime? m = SlideDepart(r, z);
@@ -3052,7 +3070,7 @@ public sealed partial class RouteEngine
             {
                 var step = r.Dir.Step();
                 var type = RunType(r);
-                var plan = Plan(r, now, z => MinDepart(r, z));
+                var plan = plans[r];
                 var forecast = plan.Points;
                 var arrAt = plan.ArrAt;
 
@@ -3139,6 +3157,11 @@ public sealed partial class RouteEngine
 
     private sealed record PlanResult(List<object> Points, Dictionary<int, DateTime> ArrAt, Dictionary<int, DateTime> DepAt);
 
+    private static bool SameTimes(PlanResult a, PlanResult b) =>
+        a.ArrAt.Count == b.ArrAt.Count && a.DepAt.Count == b.DepAt.Count
+        && a.ArrAt.All(kv => b.ArrAt.TryGetValue(kv.Key, out var v) && v == kv.Value)
+        && a.DepAt.All(kv => b.DepAt.TryGetValue(kv.Key, out var v) && v == kv.Value);
+
     /// <summary>
     /// 見込みの線の終わり: 行き止まりの番線に入る駅・終着（列車別設定の打ち切りを含む）のゾーン。もう抜けた扱い（Done）の駅も含める。
     /// 大道寺の Y 線・新野崎の5番線などへの入換では、分岐の回路が駅間のゾーンにあるので、最後尾がそこに入ると駅を抜けた扱いになる。
@@ -3155,10 +3178,10 @@ public sealed partial class RouteEngine
     /// 待避線では最低の停車時分まで止め、minDepart（スジずらし・走行順・出発順序で決まる、その駅を出られる最も早い時刻）より前には出ない。
     /// 延びた分は、その先の駅にも足す。停車は水平の線で描く。
     /// </summary>
-    private PlanResult Plan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart)
+    private PlanResult Plan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive = null)
     {
         // ダイヤ運転中のダイヤの列車: この先はダイヤどおりの線（遅れていればその分ずらす）。過去は実績（history）のまま
-        if (DiaMode && r.Dia != null && DiaPlan(r, now, minDepart) is { } dp) return dp;
+        if (DiaMode && r.Dia != null && DiaPlan(r, now, minDepart, minArrive) is { } dp) return dp;
 
         var step = r.Dir.Step();
         var type = RunType(r);
@@ -3222,7 +3245,7 @@ public sealed partial class RouteEngine
     /// 時刻はロープレ時刻なので、ダイヤグラムの横軸（実時間）に直す（時計を早回ししていれば、その速さで割る）。
     /// minDepart（スジずらし・走行順・出発順序）でダイヤより遅く出る駅は、その時刻に出し、延びた分をこの先の駅にも足す
     /// </summary>
-    private PlanResult? DiaPlan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart)
+    private PlanResult? DiaPlan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive)
     {
         var step = r.Dir.Step();
         var nowSec = NowSec();
@@ -3264,8 +3287,14 @@ public sealed partial class RouteEngine
             if ((z - terminalZone) * step > 0) break; // 終着より先
             if (Arr(sid) is not { } a || Dep(sid) is not { } d) { if (z == terminalZone) break; continue; }
             var arr = z == r.Front && atStation ? now : Utc(a + shift);
-            var dep = Utc(d + shift);
             if (arr < now) arr = now;
+            // 先の列車に詰まる（駅間で追いつく・同じ番線がまだふさがっている）なら、その分だけ遅く着く（線の傾きが寝る）。延びた分は、この先の駅にも足す
+            if ((z != r.Front || !atStation) && minArrive?.Invoke(z) is { } ma && ma > arr)
+            {
+                shift += (ma - arr).TotalSeconds * speed;
+                arr = ma;
+            }
+            var dep = Utc(d + shift);
             if (dep < arr) dep = arr;
             arrAt[z] = arr;
             if (z != r.Front || !atStation) points.Add(new { t = arr, y = (double)z });
@@ -3303,6 +3332,12 @@ public sealed partial class RouteEngine
                     [Dir.Down] = _central.Order(station.Id, Dir.Down)?.ToList() ?? new List<string>(),
                     [Dir.Up] = _central.Order(station.Id, Dir.Up)?.ToList() ?? new List<string>()
                 };
+                // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの発の順）
+                var auto = new Dictionary<Dir, List<string>>
+                {
+                    [Dir.Down] = (DiaMode ? _orderPlan?.Depart.GetValueOrDefault((station.Id, Dir.Down)) : null) ?? new List<string>(),
+                    [Dir.Up] = (DiaMode ? _orderPlan?.Depart.GetValueOrDefault((station.Id, Dir.Up)) : null) ?? new List<string>()
+                };
                 var here = _runs.Values
                     .Where(r => r.HasPosition)
                     .Select(r => (Run: r, St: r.Stations.FirstOrDefault(s => s.St.Id == station.Id && !s.Done)))
@@ -3331,6 +3366,7 @@ public sealed partial class RouteEngine
                             stop = x.St.StopType,
                             eta = sec is { } s ? now.AddSeconds(s) : (DateTime?)null,
                             index = order.IndexOf(x.Run.Train),
+                            autoIndex = auto[x.Run.Dir].IndexOf(x.Run.Train),
                             track = x.St.Track,
                             trackSource = x.St.TrackSource,
                             options = x.St.Options.ToList(), // 写す（JSON にするのはロックの外）
@@ -3355,6 +3391,7 @@ public sealed partial class RouteEngine
                     })
                     .OrderBy(x => x.index < 0 ? int.MaxValue : x.index)
                     .ThenBy(x => x.held)
+                    .ThenBy(x => x.autoIndex < 0 ? int.MaxValue : x.autoIndex)
                     .ThenBy(x => x.eta ?? DateTime.MaxValue)
                     .ToList();
                 list.Add(new
@@ -3400,6 +3437,8 @@ public sealed partial class RouteEngine
             foreach (var (a, b) in _data.SingleTrackSections)
             {
                 var order = _central.SectionOrder(a, b)?.ToList() ?? new List<string>();
+                // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの、区間に入る発の順。在線位置の画面の走行順の表もこの順）
+                var auto = order.Count == 0 ? EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>() : new List<string>();
                 var trains = _runs.Values.Where(r => r.HasPosition && !SectionCleared(r, a, b))
                     .Select(r =>
                     {
@@ -3417,10 +3456,12 @@ public sealed partial class RouteEngine
                             from = _data.Line.StationName(entry),
                             eta = sec is { } s ? now.AddSeconds(s) : (DateTime?)null,
                             index = order.IndexOf(r.Train),
+                            autoIndex = auto.IndexOf(r.Train),
                             status = es is { Done: false } ? Status(r, es) : "区間内"
                         };
                     })
                     .OrderBy(x => x.index < 0 ? int.MaxValue : x.index)
+                    .ThenBy(x => x.autoIndex < 0 ? int.MaxValue : x.autoIndex)
                     .ThenBy(x => x.eta ?? DateTime.MaxValue)
                     .ToList();
                 list.Add(new

@@ -136,7 +136,9 @@ public sealed partial class RouteEngine
             foreach (var (r, st) in Here(station.Id, dir))
             {
                 var req = st.Depart == GroupState.Requested;
-                var t = DiaMode && DiaSec(r, station.Id, depart: true) is { } d ? d : Eta(r, st, true);
+                // ダイヤ運転中は、ダイヤグラムで調整したダイヤの発（RouteEngine.OrderPlan.cs）。なければダイヤの発
+                var t = DiaMode && _orderPlan?.Times.GetValueOrDefault((r.Train, station.Id)) is { } ot ? ot.Dep
+                    : DiaMode && DiaSec(r, station.Id, depart: true) is { } d ? d : Eta(r, st, true);
                 items.Add((r.Train, req ? 0 : 1, req ? Taken(r, st, true) : 0, Index(r.Train),
                     (_central.Hold(r.Train, station.Id) & HoldKind.Depart) != 0, t));
             }
@@ -161,7 +163,8 @@ public sealed partial class RouteEngine
             {
                 if (st.Arrive == GroupState.Requested) { requested.Add((r.Train, Taken(r, st, false))); continue; }
                 var t = Eta(r, st, false);
-                if (DiaMode && DiaSec(r, station.Id, depart: false) is { } da) t = t == double.MaxValue ? da : Math.Max(t, da);
+                if (DiaMode && (_orderPlan?.Times.GetValueOrDefault((r.Train, station.Id))?.Arr ?? DiaSec(r, station.Id, depart: false)) is { } da)
+                    t = t == double.MaxValue ? da : Math.Max(t, da);
                 var idx = r.Stations.IndexOf(st);
                 var prev = idx > 0 ? r.Stations[idx - 1] : null;
                 if (prev != null && !prev.Done && result.TryGetValue((prev.St.Id, dir), out var pr) && pr.Depart.TryGetValue(r.Train, out var pd))
