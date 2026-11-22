@@ -179,7 +179,8 @@ public sealed partial class RouteEngine
         {
             if (other.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is not { Done: false } os || IsCutOff(other, os)) continue;
             if ((os.Track ?? other.Dia!.Stops.FirstOrDefault(x => x.StationId == st.St.Id)?.Track) != to) continue;
-            if (DiaSec(other, st.St.Id, depart: true) is { } theirs && theirs < mine) first.Add(other.Train);
+            // 同じ時刻も先（入換時刻は分まで。大道寺の 1781C は 17:05 入換で、4番線を 1603A が 17:05:00 に出てから入る）
+            if (DiaSec(other, st.St.Id, depart: true) is { } theirs && theirs <= mine) first.Add(other.Train);
         }
 
         return first.Count > 0 ? $"番線を先に使う列車待ち（{string.Join("・", first)} が {to}番線を出てから入換）" : null;
