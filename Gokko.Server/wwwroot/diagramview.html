@@ -82,7 +82,8 @@
     catch (e) { $("error").textContent = e.message; }
   }
 
-  GokkoClock.ready.then(() => { refresh(); setInterval(refresh, 1000); });
+  let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
+  GokkoClock.ready.then(() => { poll(); setInterval(poll, 1000); });
 })();
 </script>
 </body>
