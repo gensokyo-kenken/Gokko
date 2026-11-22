@@ -636,7 +636,7 @@ public sealed partial class RouteEngine
     /// <summary>入換（引上げ）を要求できる駅: 列車が番線に入りきっていて、まだ入換を要求していない。なければ null。</summary>
     private static StationRun? ShuntOutStation(TrainRun run) =>
         run.Stations.FirstOrDefault(s => !s.Done && s.ShuntOutChoice == null && ShuntOutOptions(run, s).Count > 0
-                                         && (s.IsStart || FullyInTrack(run, s)));
+                                         && FullyInTrack(run, s));
 
     /// <summary>
     /// 取り消した進路の信号機。ゲームから進路が消えるまでのあいだ、すぐに停止を出させる
@@ -1356,7 +1356,8 @@ public sealed partial class RouteEngine
             {
                 if (st.IsStart && st.ShuntFrom != null && !st.ShuntRequested) st.ShuntRequested = true;
                 // 引上げは、スタフの折返が「入換」のときだけ（「発」なら、その番線から次の列番でそのまま出る）
-                if (st.ShuntOutChoice == null && ShuntOutOptions(run, st).Count > 0 && (st.IsStart || FullyInTrack(run, st))
+                // 始発でも、その番線の回路にいるときだけ（つなぎ直しなどで列車を作り直したとき、もう引上線にいるのに、引上げの進路を取り直さないように）
+                if (st.ShuntOutChoice == null && ShuntOutOptions(run, st).Count > 0 && FullyInTrack(run, st)
                     && _data.Turns.TurnOf(run.Dia) is not { Kind: "折返", How: not "入換" })
                     st.ShuntOutChoice = 0;
             }
@@ -1470,6 +1471,11 @@ public sealed partial class RouteEngine
     private void ChooseTrack(TrainRun run, StationRun st)
     {
         var routes = st.St.Routes[run.Dir];
+
+        // 始発の入換を要求したあとは、入換元と番線を選び直さない。列車が入換元の回路（新野崎の 23RT など）を出ると、
+        // 入換元にいるとはみなされなくなり、入換の途中でふつうの始発として出発の進路を取り始めてしまうため。
+        // 入換元の印は、ホームに入りきったとき（UpdateStations の「入換終わり」）に外す
+        if (st.IsStart && st.ShuntFrom != null && st.Shunt == GroupState.Requested) return;
 
         // 始発で、入換の元の番線（引上線など）にいるか。入換が終わってホームに入れば、ふつうの始発に戻る
         st.ShuntFrom = null;
@@ -2921,7 +2927,7 @@ public sealed partial class RouteEngine
         if (s.IsStart && s.ShuntFrom != null)
             return !s.ShuntRequested ? "入換要求待ち"
                 : s.Shunt == GroupState.Requested && run.Requests.Where(r => r.Station == s && !r.Departure && !r.Released).All(r => r.Seen || Acknowledged(run, r)) ? "進路確定" : "進路未確定";
-        if (ShuntOutOptions(run, s).Count > 0 && (s.IsStart || FullyInTrack(run, s)))
+        if (ShuntOutOptions(run, s).Count > 0 && FullyInTrack(run, s))
             return s.ShuntOutChoice == null ? "入換要求待ち" : s.ShuntOut == GroupState.Requested ? "進路確定" : "進路未確定";
         if (s.IsStart && !s.Locked) return s.Terminal ? "進路確定" : "出発要求待ち";
         if (!s.Locked) return "進路未確定";
