@@ -275,7 +275,7 @@ public sealed class CrewController
     private void ShowPanel()
     {
         if (_panel != null) return;
-        // 前の既定値（D で左の開など。WASD 移動とぶつかる）のままのキーは、1 度だけテンキーの既定値に移す（自分で変えたキーは残す）
+        // 前の既定値（D で左の開など。WASD 移動とぶつかる）のままのキーは、1 度だけ今の既定値（数字 2〜0）に移す（自分で変えたキーは残す）
         if (!_config.ConductorKeysMoved)
         {
             foreach (var (name, old) in ConductorPanelForm.OldDefaultKeys)

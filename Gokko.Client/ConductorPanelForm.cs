@@ -25,14 +25,14 @@ public sealed class ConductorPanelForm : Form
     private static readonly TimeSpan Cooldown = TimeSpan.FromMilliseconds(300);
 
     /// <summary>
-    /// キーの割り当ての既定値。ゲームの WASD 移動や運転のキーとぶつからないよう、テンキーにまとめる
-    /// （左の列が左側・右の列が右側。上から鍵・開・閉、0 と . が再開閉）。
+    /// キーの割り当ての既定値。ゲームの既定のキー（WASD 移動・テンキーなど）とぶつからないよう、上の段の数字 2〜0 だけを使う
+    /// （2 非常、3〜5 左の鍵・開・閉、6〜8 右の鍵・開・閉、9 ブザー、0 乗降促進）。再開閉は既定ではキーなし（操作盤のボタンで扱う）。
     /// </summary>
     public static readonly IReadOnlyDictionary<string, Keys> DefaultKeys = new Dictionary<string, Keys>
     {
-        ["LeftKey"] = Keys.NumPad7, ["LeftOpen"] = Keys.NumPad4, ["LeftClose"] = Keys.NumPad1, ["LeftReOpen"] = Keys.NumPad0,
-        ["RightKey"] = Keys.NumPad9, ["RightOpen"] = Keys.NumPad6, ["RightClose"] = Keys.NumPad3, ["RightReOpen"] = Keys.Decimal,
-        ["ToggleEB"] = Keys.NumPad8, ["Joukou"] = Keys.NumPad2, ["Buzzer"] = Keys.NumPad5
+        ["LeftKey"] = Keys.D3, ["LeftOpen"] = Keys.D4, ["LeftClose"] = Keys.D5, ["LeftReOpen"] = Keys.None,
+        ["RightKey"] = Keys.D6, ["RightOpen"] = Keys.D7, ["RightClose"] = Keys.D8, ["RightReOpen"] = Keys.None,
+        ["ToggleEB"] = Keys.D2, ["Joukou"] = Keys.D0, ["Buzzer"] = Keys.D9
     };
 
     /// <summary>前の既定値（D・E・F など）。保存してある割り当てがこれと同じなら、新しい既定値に置き換える。</summary>
@@ -491,6 +491,7 @@ public sealed class ConductorPanelForm : Form
         >= Keys.D0 and <= Keys.D9 => ((int)(k - Keys.D0)).ToString(),
         >= Keys.NumPad0 and <= Keys.NumPad9 => "テンキー" + (int)(k - Keys.NumPad0),
         Keys.Decimal => "テンキー.",
+        Keys.None => "なし",
         _ => k.ToString()
     };
 
@@ -505,10 +506,8 @@ public sealed class ConductorPanelForm : Form
         _leftCsw.Set(_leftOpen, _leftKey);
         _rightCsw.Set(_rightOpen, _rightKey);
 
-        // 全部テンキーなら「テンキー」を頭に1度だけ書き、数字だけ並べる（折り返さないように）
-        var pad = _keys.Values.All(k => k is >= Keys.NumPad0 and <= Keys.NumPad9 or Keys.Decimal);
-        string K(string name) => !pad ? KeyText(_keys[name]) : _keys[name] == Keys.Decimal ? "." : ((int)(_keys[name] - Keys.NumPad0)).ToString();
-        _keysLabel.Text = (pad ? "テンキー　" : "") + $"鍵 {K("LeftKey")}/{K("RightKey")}　開 {K("LeftOpen")}/{K("RightOpen")}　" +
+        string K(string name) => KeyText(_keys[name]);
+        _keysLabel.Text = $"鍵 {K("LeftKey")}/{K("RightKey")}　開 {K("LeftOpen")}/{K("RightOpen")}　" +
                           $"閉 {K("LeftClose")}/{K("RightClose")}　再開閉 {K("LeftReOpen")}/{K("RightReOpen")}\n" +
                           $"非常 {K("ToggleEB")}　乗降促進 {K("Joukou")}　ブザー {K("Buzzer")}　（左/右）";
     }
@@ -776,7 +775,7 @@ public sealed class ConductorPanelForm : Form
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
                 layout.Controls.Add(new Label { Text = label, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft });
                 var b = new Button { Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Card, ForeColor = Text1 };
-                b.Click += (_, _) => { _target = name; _hint.Text = $"「{label}」に割り当てるキーを押してください"; Refresh(); };
+                b.Click += (_, _) => { _target = name; _hint.Text = $"「{label}」に割り当てるキーを押してください（Esc でなし）"; Refresh(); };
                 _buttons[name] = b;
                 layout.Controls.Add(b);
             }
@@ -805,7 +804,8 @@ public sealed class ConductorPanelForm : Form
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (_target == null) return base.ProcessCmdKey(ref msg, keyData);
-            Result[_target] = keyData & Keys.KeyCode;
+            var code = keyData & Keys.KeyCode;
+            Result[_target] = code == Keys.Escape ? Keys.None : code; // Esc はキーなし
             _target = null;
             _hint.Text = "";
             ShowKeys();

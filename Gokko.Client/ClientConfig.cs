@@ -108,10 +108,10 @@ public sealed class ClientConfig
     /// <summary>車掌: 寄せ方（"time" タイミング優先: 運転士のノッチに1〜2段足し引きし、同じ時刻に止まる。"distance" 距離優先: 力行の一番強い段から B7 までを使って、ずれを詰める）。</summary>
     public string CrewCatchUpMode { get; set; } = "time";
 
-    /// <summary>車掌用操作盤のキーの割り当て（操作の名前 → Keys の名前）。空なら既定（テンキー）。</summary>
+    /// <summary>車掌用操作盤のキーの割り当て（操作の名前 → Keys の名前）。空なら既定（上の段の数字 2〜0）。</summary>
     public Dictionary<string, string> ConductorKeys { get; set; } = new();
 
-    /// <summary>車掌のキーを、前の既定値（D・E・F など）からテンキーの既定値へ移したか。</summary>
+    /// <summary>車掌のキーを、前の既定値（D・E・F など）から今の既定値へ移したか。</summary>
     public bool ConductorKeysMoved { get; set; }
 
     /// <summary>列車無線の音の設定。</summary>
