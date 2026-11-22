@@ -37,7 +37,11 @@ public static class LoadTimingExtensions
             await next(ctx);
 
             // 操作（GET 以外）のあとは、使い回している答えを捨てる（◆をずらしたのが、次に読んだときにすぐ見えるように）
-            if (!HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method)) cache.Clear();
+            if (!HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method))
+            {
+                cache.Clear();
+                ctx.RequestServices.GetRequiredService<RouteEngine>().ClearViews(); // 作り置き（RouteEngine.View）も捨てる
+            }
 
             if (ctx.WebSockets.IsWebSocketRequest) return;
             if (ctx.Response.ContentType?.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase) == true) return;

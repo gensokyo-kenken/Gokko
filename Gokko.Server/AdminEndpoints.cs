@@ -405,13 +405,14 @@ public static class AdminEndpoints
 
         // 在線位置の画面（tid.html）・信号制御盤・タブレットが、開いている画面ごとに1秒に1回読む（11/22 のデバッグ運転で1分に約650回、
         // 画面の API の時間の約6割）。出発順序の見込み（OrdersView）まで毎回計算し直していたので、答えを 0.5 秒使い回す
+        // 中身の進路の部分は、配信のループが Tick のあとに作り置いたもの（RouteEngine.View。ロックを待たない）
         view.MapGet("/state", (RouteEngine engine, GameClock clock, RelayPanels panels, ResponseCache cache) => cache.Get("tid-state", TimeSpan.FromMilliseconds(500), () => new
         {
             gameTime = clock.NowText,
-            tid = engine.TidView(),
+            tid = engine.View(RouteEngine.ViewTid),
             panels = panels.TidView(),   // 信号制御盤: 盤で扱っている駅と、盤で取っている進路
-            orders = engine.OrdersView(),
-            sections = engine.SectionsView()
+            orders = engine.View(RouteEngine.ViewOrders),
+            sections = engine.View(RouteEngine.ViewSections)
         }));
 
         // ---- 勤怠管理（kintai.html）: 乗務員（社員番号）と、行路への割り当て ----
@@ -1021,11 +1022,11 @@ public static class AdminEndpoints
                     : st.DiagramRows.Count > 0 ? st.DiagramRows.Select(r => r.Label).ToList()
                     : st.Routes.Values.SelectMany(r => r.Arrive.Keys.Concat(r.Depart.Keys)).Concat(st.TrackCircuit.Keys).Distinct().OrderBy(t => t).Select(t => t.ToString()).ToList()
             }),
-            trains = engine.DiagramView(),
-            orders = engine.OrdersView(),
-            sections = engine.SectionsView(),
+            trains = engine.View(RouteEngine.ViewDiagram),
+            orders = engine.View(RouteEngine.ViewOrders),
+            sections = engine.View(RouteEngine.ViewSections),
             // これから進路を取る順番（取れずに待っている場内・出発）
-            queue = engine.QueueView(),
+            queue = engine.View(RouteEngine.ViewQueue),
             // 継続乗務申請（残している在線）と、出現待ちの列車
             continues = players.Ghosts().Select(x => new
             {
@@ -1035,7 +1036,7 @@ public static class AdminEndpoints
                 since = x.SinceUtc,
                 until = x.UntilUtc
             }),
-            appear = engine.AppearView(),
+            appear = engine.View(RouteEngine.ViewAppear),
             diaMode = central.DiaMode,
             turnVersion = rail.Turns.Version, // 後運用を差し替えたら増える（計画の線を読み直す合図）
             // つながっている参加者（強制切断の一覧用）
@@ -1053,7 +1054,7 @@ public static class AdminEndpoints
             stationModes = rail.ControlStations.Select(s => new { id = s.Id, name = s.Name, central = central.IsCentral(s.Id), mode = central.ModeOf(s.Id), panel = central.IsPanelControlled(s.Id) }),
             passing = new { marginSeconds = rail.PassingMarginSeconds, toleranceSeconds = rail.PassingToleranceSeconds },
             // 接続待ち（ダイヤの「(接)」の組。遅れ見込みの警告つき）
-            connections = engine.ConnectionsView()
+            connections = engine.View(RouteEngine.ViewConnections)
         }));
 
         // ダイヤグラムに薄く引く、時刻表（Timetable.json）の計画の線。大きいので、画面を開いたときに1回だけ読む。

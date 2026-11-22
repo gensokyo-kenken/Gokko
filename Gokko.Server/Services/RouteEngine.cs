@@ -3074,7 +3074,7 @@ public sealed partial class RouteEngine
                         status = Status(r, s),
                         track = s.Track,
                         trackSource = s.TrackSource,
-                        options = s.Options,
+                        options = s.Options.ToList(), // 写す（JSON にするのはロックの外）
                         changeable = s.Options.Count > 1 && !entered
                     };
                 }).Where(m => m.t != null).ToList();
@@ -3293,7 +3293,7 @@ public sealed partial class RouteEngine
                             index = order.IndexOf(x.Run.Train),
                             track = x.St.Track,
                             trackSource = x.St.TrackSource,
-                            options = x.St.Options,
+                            options = x.St.Options.ToList(), // 写す（JSON にするのはロックの外）
                             changeable = x.St.Options.Count > 1 && !entered && !(x.St.IsStart && x.St.ShuntFrom != null && x.St.Shunt == GroupState.Requested),
                             warning = order.Count > 0 ? OrderWarning(x.Run, x.St, order) : "",
                             // 指定した発車時刻（ダイヤグラムのスジずらし・出発順序の手打ち）。この30秒前まで出発を開通させない
