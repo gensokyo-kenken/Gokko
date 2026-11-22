@@ -1472,14 +1472,14 @@
    "before": 33.0
   },
   {
-   "station": "江ノ原車庫",
+   "station": "江原検",
    "dir": "up",
    "track": 13,
    "signal": "江ノ原信号場上り出発2R",
    "before": 8.3
   },
   {
-   "station": "江ノ原車庫10番",
+   "station": "江原検",
    "dir": "up",
    "track": 10,
    "signal": "江ノ原信号場入換11R",
