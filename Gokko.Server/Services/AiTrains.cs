@@ -161,6 +161,7 @@ public sealed class AiTrains : BackgroundService
                 if (stationName is { Length: > 0 } && s.Name != stationName) continue;
                 if (stationName is not { Length: > 0 } && now is { } n && Time(s.Dep ?? s.Arr) is { } t && t < n) continue;
                 if (s == stops.LastOrDefault() && stationName is not { Length: > 0 }) continue; // 終着には出さない
+                if (stationName is not { Length: > 0 } && PassesWithoutTrack(s, dir.Value)) continue;
                 start = s;
                 break;
             }
@@ -1281,8 +1282,10 @@ public sealed class AiTrains : BackgroundService
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
-                // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着には出さない
-                var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30));
+                // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
+                var startDir = _routes.DirOfTrain(number);
+                var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30)
+                    && !(startDir is { } sd2 && PassesWithoutTrack(s, sd2)));
                 if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
                 if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
                 // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
@@ -1347,6 +1350,15 @@ public sealed class AiTrains : BackgroundService
             if (run.TryGetValue(a, out var x) && run.TryGetValue(b, out var y) && y >= x) return y - x;
         return null;
     }
+
+    /// <summary>
+    /// 番線を使わずに本線を通過する駅（江ノ原信号場の通過など。ダイヤに番線がなく、駅にそのまま通る進路がある）。
+    /// ここには列車を出さない。出すと、通過する列車を行き止まりや出区用の番線（江ノ原信号場の下りなら11番線）に置いて、そこから発車させてしまう
+    /// （手前の駅で番線がふさがって出せないまま時刻を過ぎると、次の駅として選ばれる）
+    /// </summary>
+    private bool PassesWithoutTrack(DiaStop s, Dir dir) =>
+        s.Stop == "通" && s.Track == null && s.StationId != null
+        && _rail.Stations.TryGetValue(s.StationId, out var st) && st.Routes[dir].Through.Count > 0;
 
     private StopSpec? FindStop(string station, Dir dir, int track) =>
         _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir && s.Track == track)
