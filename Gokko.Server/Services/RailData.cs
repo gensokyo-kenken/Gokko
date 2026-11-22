@@ -262,7 +262,7 @@ public sealed class RailData
     /// </summary>
     public HashSet<(string Station, Dir Dir)> ApproachFirstHomeWithSecond { get; } = new();
 
-    /// <summary>ダイヤ運転中、出発まで開けてから場内を開ける駅（浜園など）。RouteRules.json の departBeforeArrive。</summary>
+    /// <summary>ダイヤ運転中、出発も場内と一緒に（出発・場内の順に）要求する駅（浜園など）。RouteRules.json の departBeforeArrive。</summary>
     public HashSet<string> DepartBeforeArrive { get; } = new();
 
     /// <summary>進路を扱う駅（路線の並び順）。</summary>

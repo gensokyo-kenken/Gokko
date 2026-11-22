@@ -186,23 +186,53 @@ public sealed partial class RouteEngine
         return first.Count > 0 ? $"番線を先に使う列車待ち（{string.Join("・", first)} が {to}番線を出てから入換）" : null;
     }
 
-    /// <summary>出発まで開けてから場内を開ける駅（ダイヤ運転中。浜園）。</summary>
+    /// <summary>出発も場内と一緒に、出発・場内の順に要求する駅（ダイヤ運転中。浜園）。出発が開けなくても場内は開ける。</summary>
     private bool DepartBeforeArrive(StationRun st) => DiaMode && _data.DepartBeforeArrive.Contains(st.St.Id);
 
     /// <summary>
     /// ダイヤ運転中の発車時刻: 停車列車・始発は、ダイヤの発車時刻の30秒前（踏切防護のある駅は40秒前。DepartLead）まで出発を開けない（遅れていれば、前が空きしだい）。
-    /// 通過列車と、出発まで開けてから入る駅（浜園）は時刻で待たない。スジずらし・発車時刻の手打ちがあれば、そちら（DepartTimeHold）を使う
+    /// 通過列車と、出発も場内と一緒に開ける駅（浜園）と、着から発車まで2分以内の停車（ShortDwell）は時刻で待たない。スジずらし・発車時刻の手打ちがあれば、そちら（DepartTimeHold）を使う
     /// </summary>
     private string? DiaDepartHold(TrainRun run, StationRun st)
     {
         if (!DiaMode || run.Dia == null || _central.OpenAt(run.Train, st.St.Id) != null) return null;
         if (!st.IsStart && st.StopType == "通過" && !st.DepartStop) return null;
-        // 浜園に入ってくる列車は、出発まで開けてから入るので時刻で待たない。浜園から始発する列車（回1094 など）は時刻で待つ
+        // 浜園に入ってくる列車は、出発も場内と一緒に開けるので時刻で待たない。浜園から始発する列車（回1094 など）は時刻で待つ
         if (DepartBeforeArrive(st) && !st.IsStart) return null;
         if (DiaSec(run, st.St.Id, depart: true) is not { } dep) return null;
+        if (ShortDwell(run, st)) return null;
         var lead = DepartLead(st);
         return NowSec() < dep - lead ? $"発車時刻待ち（{FormatDiaTime(dep)} 発。{lead}秒前に開通）" : null;
     }
+
+    /// <summary>短い停車の上限（秒）。着から発車までがこれ以内なら、発車時刻を待たずに場内と一緒に出発も開ける。</summary>
+    private const int ShortDwellSeconds = 120;
+
+    /// <summary>
+    /// ダイヤ運転中、ダイヤの着時刻から発車時刻（司令が手で決めた発車時刻があれば、そちら）までが2分以内か。
+    /// そうなら、発車時刻の30秒前（DepartLead）を待たずに、場内と一緒に出発も開ける。出発停止の番線（種別が変わる列車を含む）と始発は除く。
+    /// </summary>
+    private bool ShortDwell(TrainRun run, StationRun st)
+    {
+        if (!DiaMode || run.Dia == null || st.IsStart || st.DepartStop) return false;
+        if (ParseDiaTime(run.Dia.Stops.FirstOrDefault(x => x.StationId == st.St.Id)?.Arr) is not { } arr) return false;
+        double? dep = _central.OpenAt(run.Train, st.St.Id) is { } t
+            ? NowSec() + (t - DateTime.UtcNow).TotalSeconds * _clock.Speed
+            : DiaSec(run, st.St.Id, depart: true);
+        if (dep is not { } d) return false;
+        var dwell = d - arr;
+        while (dwell > 43200) dwell -= 86400;
+        while (dwell < -43200) dwell += 86400;
+        return dwell <= ShortDwellSeconds;
+    }
+
+    /// <summary>
+    /// この駅で列番が変わり、種別も変わる（ダイヤの「次の列番」。581 → 581C など）。どの駅でも出発停止で入れ、
+    /// 止まって次の列番に読み替えてから、次の列番（その駅の始発）として出発を開ける。
+    /// </summary>
+    private bool TypeChangesAt(TrainRun run, StationRun st) =>
+        !st.IsStart && run.Dia?.Next is { } n && n.StationId == st.St.Id && TrainInfo(n.Number) is { } ni
+        && (_data.DiaOf(n.Number)?.Type ?? ni.Type) != run.Type;
 
     /// <summary>
     /// ダイヤ運転中: この駅から出る始発列車のダイヤの発車が、この列車の着（通過）より前で、その出発の進路と場内の進路が重なるなら、始発列車が先
@@ -1820,7 +1850,9 @@ public sealed partial class RouteEngine
 
         st.DepartStop = !st.IsStart && st.Track is { } dt && routes.DepartStop.Contains(dt)
                         // "停車" の番線は、通過列車（待避しないもの）なら出発停止にしない（場内・出発を一緒に開ける）
-                        && !(routes.DepartStopStoppingOnly.Contains(dt) && st.StopType == "通過" && !st.Passing && st.TrackSource != "待避" && !st.Terminal);
+                        && !(routes.DepartStopStoppingOnly.Contains(dt) && st.StopType == "通過" && !st.Passing && st.TrackSource != "待避" && !st.Terminal)
+                        // 種別が変わる列車は、どの駅・番線でも出発停止で入れる
+                        || !st.IsStart && !st.Terminal && st.DepartPath.Count > 0 && TypeChangesAt(run, st);
 
         return st.ArrivePath.Count > 0 || st.DepartPath.Count > 0;
     }
@@ -2079,6 +2111,7 @@ public sealed partial class RouteEngine
     {
         var lead = DepartLead(st);
         if (_central.OpenAt(run.Train, st.St.Id) is not { } t || now >= t.AddSeconds(-lead)) return null;
+        if (ShortDwell(run, st)) return null; // 司令が着から2分以内に繰り上げた: 場内と一緒に出発も開ける
         return $"発車時刻待ち（{_clock.TextAt(t)} 発。{lead}秒前に開通）";
     }
 
@@ -2263,7 +2296,6 @@ public sealed partial class RouteEngine
                     : arriveHeld ? "場内抑止（集中扱い）"
                     : central ? "集中扱い（開通指示待ち）"
                     : timeWait ?? SingleEntryHold(run, st) ?? PrevDepartHold(run, st) ?? (approachWait = ApproachHold(run, st)) ?? (st.Track == null ? DepartTimeHold(run, st, now) : null)
-                      ?? (DepartBeforeArrive(st) && st.DepartPath.Count > 0 && st.Depart != GroupState.Requested ? "出発の開通待ち（出発まで開けてから場内）" : null)
                       ?? DiaStartFirstHold(run, st)
                       ?? (conflict = Conflict(run, st, st.ArrivePath, occupied, departure: false));
             st.ArriveBlocked = arriveWait != null && ReferenceEquals(arriveWait, conflict);
@@ -2387,6 +2419,7 @@ public sealed partial class RouteEngine
     /// </summary>
     private string? DepartStopHold(TrainRun run, StationRun st, bool arrivalNotYetRequested)
     {
+        if (TypeChangesAt(run, st)) return "出発停止（種別が変わる。止まって列番が変わってから出発）";
         if (st.DepartStop && arrivalNotYetRequested) return "出発停止（場内の開通待ち）";
         if (!st.DepartStop && !st.IsStart) return null;
         var pending = run.Requests.Where(r => r.Station == st && !r.Departure && !r.Released && r.CancelledUtc == null).ToList();
