@@ -1003,7 +1003,8 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示だけ（読むだけの画面と共通）。</summary>
     private static void MapDiagramViews(RouteGroupBuilder g)
     {
-        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central) => Results.Ok(new
+        // 開いている画面の数だけ読まれるので、0.5秒は同じ答えを使い回す（操作した直後は ResponseCache.Clear で作り直す）
+        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache) => cache.Get("diagram", TimeSpan.FromMilliseconds(500), () => new
         {
             now = DateTimeOffset.UtcNow,
             stations = rail.Line.StationIds.Select(id => new
