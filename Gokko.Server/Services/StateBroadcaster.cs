@@ -104,11 +104,12 @@ public sealed class StateBroadcaster : BackgroundService
     private async Task BroadcastAsync()
     {
         var players = _players.Snapshot();
-        var playerCount = players.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)); // 接続している人だけ（にぎやかしの列車・継続乗務の在線は数えない）
         _occupancy.Record(players); // 在線の記録（変わった列車だけ logs/occupancy-*.log へ）
         var conductors = _crew.Conductors();
         var riders = _crew.Riders();
         var dispatchers = _trainRadio.Dispatchers();
+        // 接続している人の数: 運転士・車掌・司令員（にぎやかしの列車・継続乗務の在線は数えない）
+        var playerCount = players.Count(p => !PlayerRegistry.IsVirtual(p.ConnectionId)) + conductors.Count + dispatchers.Count;
         if (players.Count == 0 && conductors.Count == 0 && riders.Count == 0 && dispatchers.Count == 0) return;
         var radioViews = _trainRadio.Views(); // 列車無線（その人から見た状態）
         var onboardViews = _onboard.Views(); // 列車ごとの放送装置（その人から見た状態）
