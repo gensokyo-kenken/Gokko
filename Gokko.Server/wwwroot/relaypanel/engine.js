@@ -618,7 +618,7 @@
       const e = h.dir > 0
         ? img(`signal-head-${h.type}-off`, x - 7, y - 16.8, w, hh, L.heads)
         : img(`signal-head-${h.type}-off`, x - w + 7, y - 16.8, w, hh, L.heads, { transform: `rotate(180 ${x - w / 2 + 7} ${y})` });
-      const on = /^callon/.test(h.type) ? 'orange' : h.type === 'route' ? 'white' : 'green';   // 進路表示機は白
+      const on = /^callon/.test(h.type) ? 'orange' : /^route/.test(h.type) ? 'white' : 'green';   // 進路表示機（route・route3・route4l など）は白
       view.heads.push({ h, e, on, routes: h.routes || (h.route ? [h.route] : []) });
     }
 

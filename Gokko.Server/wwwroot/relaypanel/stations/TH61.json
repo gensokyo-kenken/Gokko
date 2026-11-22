@@ -1,0 +1,78 @@
+{
+  "_": "日野森（TH61）の信号制御盤のデータ（下書き。盤面の元データと連動データから自動で組んだもの）。発点てこと着点ボタンで進路を構成する。座標は盤の画素。回路・進路・接近区間は Data/Interlockings.json に合わせる",
+  "id": "TH61",
+  "name": "日野森",
+  "interlock": "日野森連動装置",
+  "face": "relaypanel/parts/TH61-face.svg",
+  "size": [1920, 1080],
+  "approachTime": 60,
+  "releaseKey": {"at": [1686, 900], "lamp": [1686, 814]},
+  "allStop": {"at": [1456, 170]},
+  "areas": [
+    {"id": "98", "lever": [1616, 170]}
+  ],
+  "directions": [
+    {"n": "1", "area": "98", "at": [178, 530], "circuits": ["TH2T", "TH1T"], "section": ["TH61", "TH62"], "L": "上り", "lampsL": [[252, 505, 45], [252, 555, -45]], "lampsR": [[104, 505, -45], [104, 555, 45]], "out": ["4L", "3L"], "in": ["2RB", "2RA"]}
+  ],
+  "statusLamps": [[90, 114], [200, 114], [300, 114]],
+  "points": [
+    {"n": "21", "at": [470, 170], "circuit": "TH61_21イT"},
+    {"n": "22", "at": [600, 170], "circuit": "TH61_22T"}
+  ],
+  "signalLevers": [
+    {"n": "2", "side": "R", "kind": "main", "at": [370, 530]},
+    {"n": "3", "side": "L", "kind": "main", "at": [1060, 390]},
+    {"n": "5", "side": "R", "kind": "main", "at": [1300, 530]},
+    {"n": "4", "side": "L", "kind": "main", "at": [1060, 670]},
+    {"n": "6", "side": "L", "kind": "main", "at": [1752, 670]}
+  ],
+  "destButtons": [
+    {"id": "T", "at": [550, 530]},
+    {"id": "A", "at": [1300, 390]},
+    {"id": "B", "at": [1060, 530]},
+    {"id": "C", "at": [1300, 670]},
+    {"id": "S", "at": [1520, 530]}
+  ],
+  "routes": [
+    {"name": "2RB", "lever": "2", "side": "R", "dest": "B", "points": {"21": "N", "22": "N"}, "circuits": ["TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RBT"], "approach": ["TH62_14RT", "TH62_15RT", "TH62_22T", "TH1T", "TH2T"], "approachTime": 60, "stops": ["4L", "3L"]},
+    {"name": "2RA", "lever": "2", "side": "R", "dest": "A", "points": {"21": "N", "22": "R"}, "circuits": ["TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RAT"], "approach": ["TH62_14RT", "TH62_15RT", "TH62_22T", "TH1T", "TH2T"], "approachTime": 60, "stops": ["4L", "3L"]},
+    {"name": "5R", "lever": "5", "side": "R", "dest": "S", "points": {}, "circuits": ["TH61_5RT"], "departure": true, "approach": ["TH1T", "TH2T", "TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RBT"], "approachTime": 60, "stops": []},
+    {"name": "4L", "lever": "4", "side": "L", "dest": "T", "points": {"21": "R"}, "circuits": ["TH61_21ロT", "TH61_21イT", "TH61_2RT", "TH61_22T"], "departure": true, "approach": ["下り249T", "下り245T", "下り241T", "下り237T", "TH61_6LT"], "approachTime": 60, "stops": ["2RB", "2RA", "3L"]},
+    {"name": "3L", "lever": "3", "side": "L", "dest": "T", "points": {"22": "R", "21": "N"}, "circuits": ["TH61_22T", "TH61_21イT", "TH61_2RT"], "departure": true, "approach": ["TH61_2RAT"], "approachTime": 60, "stops": ["2RB", "2RA", "4L"]},
+    {"name": "6L", "lever": "6", "side": "L", "dest": "B", "points": {}, "circuits": ["TH61_6LT"], "approach": ["下り249T", "下り245T", "下り241T", "下り237T"], "approachTime": 60, "stops": []}
+  ],
+  "signalHeads": [
+    {"routes": ["2RA"], "type": "2", "at": [430, 462], "dir": 1},
+    {"routes": ["2RB"], "type": "4yg", "at": [440, 496], "dir": 1},
+    {"routes": ["3L"], "type": "4yg", "at": [950, 356], "dir": -1},
+    {"routes": ["5R"], "type": "4yg", "at": [1400, 496], "dir": 1},
+    {"routes": ["4L"], "type": "4yg", "at": [950, 704], "dir": -1},
+    {"routes": ["6L"], "type": "4yg", "at": [1640, 704], "dir": -1}
+  ],
+  "approachBells": [
+    {"id": "up", "label": "館浜方", "at": [480, 1000], "circuits": ["TH2T", "TH1T"]},
+    {"id": "down", "label": "新大路方", "at": [1440, 1000], "circuits": ["下り237T", "下り241T"]}
+  ],
+  "trackLamps": [
+    {"c": "TH1T", "at": [178, 530]},
+    {"c": "TH2T", "at": [370, 530]},
+    {"c": "TH61_2RT", "at": [525, 530]},
+    {"c": "TH61_21イT", "at": [695, 530]},
+    {"c": "TH61_21イT", "at": [682, 565], "rot": 57.26},
+    {"c": "TH61_22T", "at": [865, 530]},
+    {"c": "TH61_22T", "at": [875, 460], "rot": -57.26},
+    {"c": "TH61_22T", "at": [935, 390]},
+    {"c": "TH61_2RAT", "at": [1054, 390]},
+    {"c": "TH61_2RAT", "at": [1296, 390]},
+    {"c": "TH61_2RBT", "at": [1054, 530]},
+    {"c": "TH61_2RBT", "at": [1296, 530]},
+    {"c": "TH61_5RT", "at": [1520, 530]},
+    {"c": "上り238T", "at": [1752, 530]},
+    {"c": "TH61_21ロT", "at": [795, 670]},
+    {"c": "TH61_21ロT", "at": [728, 635], "rot": 57.26},
+    {"c": "TH61_6LT", "at": [1054, 670]},
+    {"c": "TH61_6LT", "at": [1304, 670]},
+    {"c": "TH61_6LT", "at": [1528, 670]},
+    {"c": "下り237T", "at": [1752, 670]}
+  ]
+}

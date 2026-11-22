@@ -341,6 +341,9 @@ public sealed class RelayStation
             if (_set.ContainsKey(r.Name)) { if (Go(r)) yield return r.Name; continue; }
             if (_autoHeld.Contains(r.Name) || _allStop != "N" || r.Points.Keys.Any(_moving.ContainsKey) || r.Circuits.Any(_occ.Contains)) continue;
             if (_autoFrom.GetValueOrDefault(r.Name, -1) >= 0) continue;   // 列車が入ったあと
+            // 転てつ器が進路の向きにないものは点けない。ゲームの一覧には、まだ開通していない進路も載る
+            // （津崎で盤が 4R を取っている間、ゲームに 5R が載ると、23 が反位のままでも 5R の表示灯が点いた）
+            if (r.Points.Any(p => _point.GetValueOrDefault(p.Key) != p.Value)) continue;
             yield return r.Name;
         }
     }
