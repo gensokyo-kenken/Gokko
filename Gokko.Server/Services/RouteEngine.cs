@@ -268,7 +268,10 @@ public sealed partial class RouteEngine
         return list.Count > 0 ? list : null;
     }
 
-    /// <summary>ダイヤ運転中の単線区間の走行順（手で決めていなければ、区間に入る駅のダイヤの発車・通過時刻の順）。</summary>
+    /// <summary>
+    /// ダイヤ運転中の単線区間の走行順（手で決めていなければ、区間に入る駅の、ダイヤグラムで調整したダイヤの発の順。RouteEngine.OrderPlan.cs）。
+    /// 手前の駅で順序を入れ替えた・◆をずらした列車は、この先の単線区間でも同じように後ろになる。もう区間に入った列車は先頭
+    /// </summary>
     private IReadOnlyList<string>? EffectiveSectionOrder(string a, string b)
     {
         if (_central.SectionOrder(a, b) is { } manual) return manual;
@@ -278,7 +281,9 @@ public sealed partial class RouteEngine
         {
             var entry = r.Stations.FirstOrDefault(s => (s.St.Id == a || s.St.Id == b) && NextControlStation(r, s) is { } nx && (nx == a || nx == b) && nx != s.St.Id);
             if (entry == null || SectionCleared(r, a, b)) continue;
-            if (DiaSec(r, entry.St.Id, depart: true) is { } t) list.Add((r.Train, t));
+            if (entry.Done) { list.Add((r.Train, double.MinValue)); continue; } // 区間の中
+            var t = _orderPlan?.Times.GetValueOrDefault((r.Train, entry.St.Id))?.Dep ?? DiaDaySec(r, entry.St.Id, depart: true);
+            if (t != null) list.Add((r.Train, t.Value));
         }
 
         return list.Count > 0 ? list.OrderBy(x => x.T).Select(x => x.Train).ToList() : null;
@@ -3392,6 +3397,8 @@ public sealed partial class RouteEngine
             foreach (var (a, b) in _data.SingleTrackSections)
             {
                 var order = _central.SectionOrder(a, b)?.ToList() ?? new List<string>();
+                // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの、区間に入る発の順。在線位置の画面の走行順の表もこの順）
+                var auto = order.Count == 0 ? EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>() : new List<string>();
                 var trains = _runs.Values.Where(r => r.HasPosition && !SectionCleared(r, a, b))
                     .Select(r =>
                     {
@@ -3409,10 +3416,12 @@ public sealed partial class RouteEngine
                             from = _data.Line.StationName(entry),
                             eta = sec is { } s ? now.AddSeconds(s) : (DateTime?)null,
                             index = order.IndexOf(r.Train),
+                            autoIndex = auto.IndexOf(r.Train),
                             status = es is { Done: false } ? Status(r, es) : "区間内"
                         };
                     })
                     .OrderBy(x => x.index < 0 ? int.MaxValue : x.index)
+                    .ThenBy(x => x.autoIndex < 0 ? int.MaxValue : x.autoIndex)
                     .ThenBy(x => x.eta ?? DateTime.MaxValue)
                     .ToList();
                 list.Add(new
