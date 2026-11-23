@@ -180,6 +180,9 @@ public sealed class StateBroadcaster : BackgroundService
         var sends = new List<Task>(players.Count);
         foreach (var p in players)
         {
+            // にぎやかしの列車（自動運転）は、信号・自分の進路・取り消し・出発要求・メッセージ・この先の駅の状態だけを使う（AiTrains.Receive）。
+            // 使わないもの（位置の文字・近くの特発・ほかの列車の進路）は作らない（列車の数だけ毎回作っていた）
+            var ai = p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix);
             var state = new ClientState
             {
                 ServerTime = now,
@@ -189,9 +192,9 @@ public sealed class StateBroadcaster : BackgroundService
                 TrainRadio = radioViews.GetValueOrDefault(p.ConnectionId),
                 Onboard = onboardViews.GetValueOrDefault(p.ConnectionId),
                 GameTime = gameTime,
-                Position = _data.Line.DescribeZones(p.Zones),
+                Position = ai ? null : _data.Line.DescribeZones(p.Zones),
                 ActiveCrossings = activeNames,
-                VisibleIncidents = active
+                VisibleIncidents = ai ? new List<IncidentView>() : active
                     .Where(i => _data.IsNear(i.Crossing, p.TrackCircuits, p.Zones))
                     .Select(i => new IncidentView { Crossing = i.Crossing, Reason = i.Reason, StartedGameTime = i.StartedGameTime })
                     .ToList(),
@@ -224,7 +227,7 @@ public sealed class StateBroadcaster : BackgroundService
                 {
                     state.Routes = output.Routes;
                     state.DeleteRoutes = output.Deletes;
-                    state.OtherRoutes = _routes.OtherRoutes(p.ConnectionId);
+                    if (!ai) state.OtherRoutes = _routes.OtherRoutes(p.ConnectionId);
                     state.Plan = output.Plan;
                     state.CanRequestDeparture = output.CanRequestDeparture;
                     state.DepartureLabel = output.DepartureLabel;
@@ -237,7 +240,7 @@ public sealed class StateBroadcaster : BackgroundService
             }
 
             // にぎやかしの列車: 配信をクライアントの代わりに受け取る（信号・進路）
-            if (p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix))
+            if (ai)
             {
                 _ai.Receive(p.ConnectionId, state);
                 continue;

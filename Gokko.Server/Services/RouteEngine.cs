@@ -556,6 +556,9 @@ public sealed partial class RouteEngine
         public int Rear { get; set; }
         public double Fraction { get; set; } = 0.5;
         public bool Initialized { get; set; }
+
+        /// <summary>駅の一覧を作った・決め直したときのゲームの停車駅の目安（ダイヤにない列車で、変わったら決め直す）。</summary>
+        public string StopsKey { get; set; } = "";
         public List<StationRun> Stations { get; } = new();
         public List<RouteReq> Requests { get; } = new();
         public Dictionary<string, string> Results { get; } = new();
@@ -808,6 +811,7 @@ public sealed partial class RouteEngine
             foreach (var run in _runs.Values.Where(r => r.HasPosition))
             {
                 if (!run.Initialized) Initialize(run);
+                else RefreshStops(run, now);
                 UpdateStations(run, now);
 
                 // 途中駅で列番が変わる列車（ダイヤの「次の列番」）: その駅の番線に入りきって止まったら、次の列番に読み替える。
@@ -1259,11 +1263,16 @@ public sealed partial class RouteEngine
         return PlotY(run);
     }
 
-    /// <summary>ダイヤグラムの段: 駅で、入換線など（Stations.json の diagramRows で軌道回路を書いた段）にいれば、その段の名前。</summary>
+    /// <summary>
+    /// ダイヤグラムの段: 駅で、入換線など（Stations.json の diagramRows で軌道回路を書いた段）にいれば、その段の名前。
+    /// 大道寺の XT のように段の回路が本線上（駅間のゾーン）にあるときは、入換でそこへ入った列車だけをその段に描く。
+    /// 発着・通過で踏んだだけの列車まで段に入れると、線が X線へ跳ねてから番線へ戻ってしまう
+    /// </summary>
     private string? SidingRow(TrainRun run)
     {
         if (DiagramY(run) is var y && y % 2 != 0 || _data.Line.StationAtZone((int)y) is not { } sid || !_data.Stations.TryGetValue(sid, out var st)) return null;
-        return st.DiagramRows.FirstOrDefault(r => r.Circuit != null && run.Player.TrackCircuits.Contains(r.Circuit)).Label;
+        return st.DiagramRows.FirstOrDefault(r => r.Circuit != null && run.Player.TrackCircuits.Contains(r.Circuit)
+            && (_data.Line.ZoneOfCircuit(r.Circuit) is not { } z || z % 2 == 0 || run.ShuntCircuits.ContainsKey(r.Circuit))).Label;
     }
 
     private static double PlotY(TrainRun run)
@@ -1291,14 +1300,9 @@ public sealed partial class RouteEngine
     private void Initialize(TrainRun run)
     {
         run.Initialized = true;
+        run.StopsKey = StopsKeyOf(run.Player);
         var step = run.Dir.Step();
-        var stops = run.Player.Stops;
-        // 終着: ダイヤにあればダイヤ（江原検 → 江ノ原信号場 など、ゲームの停車駅にない入庫も分かる）、なければゲームの停車駅の最後
-        var terminalId = run.Dia != null ? run.Dia.TerminalId
-            : stops.Count > 0 ? _data.Line.StationIdByName(stops[^1].Name) : null;
-        var terminalZone = terminalId != null ? _data.Line.ZoneOfStation(terminalId) : -1;
-        // ダイヤの終着駅が、もう後ろ（今いる位置より手前）なら使わない
-        if (terminalZone >= 0 && (terminalZone - run.Front) * step < 0 && !run.Player.Zones.Contains(terminalZone)) (terminalId, terminalZone) = (null, -1);
+        var (terminalId, terminalZone) = TerminalOf(run);
 
         var stations = _data.ControlStations.ToList();
         if (run.Dir == Dir.Up) stations.Reverse();
@@ -1308,33 +1312,115 @@ public sealed partial class RouteEngine
             if (zone < 0) continue;
             // 終着駅より先は扱わない
             if (terminalZone >= 0 && (zone - terminalZone) * step > 0) continue;
-
-            var sr = new StationRun
-            {
-                St = st,
-                Zone = zone,
-                // 停車・通過: ダイヤにあればダイヤ（手入力の列番がシナリオと違っても、その列番のとおりに）、なければゲーム
-                StopType = run.Dia != null
-                    ? run.Dia.Stations.TryGetValue(st.Id, out var ds) ? ds.StopType : "通過"
-                    : StopTypeLabel(stops.FirstOrDefault(s => s.Name == st.Name)?.StopType),
-                Terminal = st.Id == terminalId
-            };
-
-            if ((zone - run.Rear) * step < 0 && (zone - run.Front) * step < 0)
-            {
-                sr.Done = true; // もう過ぎた駅
-                sr.DoneUtc = DateTime.UtcNow;
-            }
-            else if (run.Player.Zones.Contains(zone) || (zone - run.Front) * step <= 0)
-            {
-                sr.IsStart = true; // 今いる駅（出発は要求ボタンで）
-                sr.StopType = sr.StopType == "通過" ? "停車" : sr.StopType;
-            }
-
-            sr.BaseStopType = sr.StopType;
-            sr.BaseTerminal = sr.Terminal;
-            run.Stations.Add(sr);
+            run.Stations.Add(NewStationRun(run, st, zone, terminalId));
         }
+    }
+
+    /// <summary>
+    /// 終着駅: ダイヤにあればダイヤ（江原検 → 江ノ原信号場 など、ゲームの停車駅にない入庫も分かる）、なければゲームの停車駅の最後。
+    /// もう後ろ（今いる位置より手前）なら使わない。分からなければ (null, -1)（線区の端まで）。
+    /// </summary>
+    private (string? Id, int Zone) TerminalOf(TrainRun run)
+    {
+        var stops = run.Player.Stops;
+        var terminalId = run.Dia != null ? run.Dia.TerminalId
+            : stops.Count > 0 ? _data.Line.StationIdByName(stops[^1].Name) : null;
+        var terminalZone = terminalId != null ? _data.Line.ZoneOfStation(terminalId) : -1;
+        if (terminalZone < 0) return (null, -1);
+        if ((terminalZone - run.Front) * run.Dir.Step() < 0 && !run.Player.Zones.Contains(terminalZone)) return (null, -1);
+        return (terminalId, terminalZone);
+    }
+
+    /// <summary>ゲームの停車駅が変わったかを見る目安（駅の数と最後の駅）。</summary>
+    private static string StopsKeyOf(PlayerInfo p) => p.Stops.Count == 0 ? "" : $"{p.Stops.Count}:{p.Stops[^1].Name}";
+
+    private StationRun NewStationRun(TrainRun run, StationDef st, int zone, string? terminalId)
+    {
+        var step = run.Dir.Step();
+        var sr = new StationRun
+        {
+            St = st,
+            Zone = zone,
+            // 停車・通過: ダイヤにあればダイヤ（手入力の列番がシナリオと違っても、その列番のとおりに）、なければゲーム
+            StopType = run.Dia != null
+                ? run.Dia.Stations.TryGetValue(st.Id, out var ds) ? ds.StopType : "通過"
+                : StopTypeLabel(run.Player.Stops.FirstOrDefault(s => s.Name == st.Name)?.StopType),
+            Terminal = st.Id == terminalId
+        };
+
+        if ((zone - run.Rear) * step < 0 && (zone - run.Front) * step < 0)
+        {
+            sr.Done = true; // もう過ぎた駅
+            sr.DoneUtc = DateTime.UtcNow;
+        }
+        else if (run.Player.Zones.Contains(zone) || (zone - run.Front) * step <= 0)
+        {
+            sr.IsStart = true; // 今いる駅（出発は要求ボタンで）
+            sr.StopType = sr.StopType == "通過" ? "停車" : sr.StopType;
+        }
+
+        sr.BaseStopType = sr.StopType;
+        sr.BaseTerminal = sr.Terminal;
+        return sr;
+    }
+
+    /// <summary>
+    /// ダイヤにない列車は、終着と停車・通過をゲームの停車駅から決めるが、最初の周期にまだ停車駅が届いていないことがある
+    /// （届く前に位置が分かった、継続乗務・自動運転からの引き継ぎで後から変わる など）。変わったら決め直す。毎周期は目安を比べるだけ。
+    /// 空になったときは決め直さない（一時的に空で届いても、線区の端までに戻さない）。
+    /// 終着より先の駅は一覧から外し（扱わない）、終着までで一覧にない駅は足す。停車・通過と終着は Base だけ変え、
+    /// 実際の切り替え（進路の取り消し・作り直し）は ApplyStopOverride に任せる。
+    /// </summary>
+    private void RefreshStops(TrainRun run, DateTime now)
+    {
+        if (run.Dia != null) return;
+        var key = StopsKeyOf(run.Player);
+        if (key == run.StopsKey || key == "") return;
+        run.StopsKey = key;
+
+        var step = run.Dir.Step();
+        var (terminalId, terminalZone) = TerminalOf(run);
+        bool Beyond(int zone) => terminalZone >= 0 && (zone - terminalZone) * step > 0;
+
+        // 終着より先の駅を外す（列車がもう入っている駅は外さない）
+        var removed = new List<string>();
+        for (var i = run.Stations.Count - 1; i >= 0; i--)
+        {
+            var st = run.Stations[i];
+            if (st.Done || st.IsStart || !Beyond(st.Zone)) continue;
+            if (run.Requests.Any(r => r.Station == st && r.Entered && !r.Released)) continue;
+            foreach (var req in run.Requests.Where(r => r.Station == st && !r.Released && r.CancelledUtc == null)) req.CancelledUtc = now;
+            _central.RemoveFromOrder(st.St.Id, run.Train);
+            if (i > 0) _central.RemoveFromSectionOrder(run.Stations[i - 1].St.Id, st.St.Id, run.Train);
+            run.Stations.RemoveAt(i);
+            removed.Add(st.St.Name);
+        }
+
+        // 終着までで、一覧にない駅を足す（前に終着をもっと手前で決めていたとき）
+        var added = new List<string>();
+        foreach (var sd in _data.ControlStations)
+        {
+            var zone = _data.Line.ZoneOfStation(sd.Id);
+            if (zone < 0 || Beyond(zone) || (zone - run.Front) * step < 0 || run.Stations.Any(s => s.St.Id == sd.Id)) continue;
+            var sr = NewStationRun(run, sd, zone, terminalId);
+            if (sr.Done) continue;
+            var at = run.Stations.FindIndex(s => (s.Zone - zone) * step > 0);
+            run.Stations.Insert(at < 0 ? run.Stations.Count : at, sr);
+            added.Add(sd.Name);
+        }
+
+        // 残った駅の停車・通過と終着（Base）を、ゲームの停車駅に合わせる
+        foreach (var st in run.Stations.Where(s => !s.Done))
+        {
+            var stop = StopTypeLabel(run.Player.Stops.FirstOrDefault(s => s.Name == st.St.Name)?.StopType);
+            if (st.IsStart && stop == "通過") stop = "停車";
+            st.BaseStopType = stop;
+            st.BaseTerminal = st.St.Id == terminalId;
+        }
+
+        _log.Note($"停車駅の更新: {run.Train} 終着 {(terminalId != null ? _data.Line.StationName(terminalId) : "なし")}"
+                  + (removed.Count > 0 ? $"（外した駅: {string.Join("・", removed)}）" : "")
+                  + (added.Count > 0 ? $"（足した駅: {string.Join("・", added)}）" : ""));
     }
 
     /// <summary>
@@ -3494,6 +3580,7 @@ public sealed partial class RouteEngine
             if (dep > arr) points.Add(new { t = dep, y = (double)z });
         }
 
+        AddSidingWait(r, points, now, depAt.TryGetValue(r.Front, out var sidingLeave) ? sidingLeave : null);
         return new PlanResult(points, arrAt, depAt);
     }
 
@@ -3567,7 +3654,32 @@ public sealed partial class RouteEngine
             if (dep > arr) points.Add(new { t = dep, y = (double)z });
         }
 
+        AddSidingWait(r, points, now, depAt.TryGetValue(r.Front, out var sidingLeave) ? sidingLeave : null);
         return points.Count > 1 ? new PlanResult(points, arrAt, depAt) : null;
+    }
+
+    /// <summary>
+    /// 引上線・入換線（新野崎の5番線、大道寺のY線など）にいる始発の列車の見込み: スタフの入換時刻まではその段にいて、
+    /// 入換にかかる秒数（shuntSeconds、なければ 75 秒）で出る番線へ移る。入れないと、引上線にいる間ずっと出る番線にいることになり、
+    /// その番線を使う列車と番線の競合に見えてしまう。入換時刻が書かれていなければ、発車の入換の秒数前まで引上線にいるものとする
+    /// </summary>
+    private void AddSidingWait(TrainRun r, List<object> points, DateTime now, DateTime? leave)
+    {
+        if (r.Front % 2 != 0 || SidingRow(r) is not { } row || _data.Line.StationAtZone(r.Front) is not { } sid
+            || !_data.Stations.TryGetValue(sid, out var st)) return;
+        // ここから出る列車だけ（終着で引上線に入った列車は、そのまま引上線にいる）
+        if (r.Dia?.Stops.FirstOrDefault(s => s.StationId == sid) is not { Dep: not null } diaStop) return;
+        var track = r.Stations.FirstOrDefault(s => s.Zone == r.Front)?.Track ?? diaStop.Track;
+        var speed = _clock.Now != null && _clock.Speed > 0 ? _clock.Speed : 1;
+        var move = (track != null && st.ShuntSeconds.TryGetValue($"{row}>{track}", out var sec) ? sec : 75) / speed;
+        DateTime? start = DiaShuntTimes.TryGetValue(r.Dia.Number, out var t) ? now.AddSeconds((t - NowSec()) / speed)
+            : leave?.AddSeconds(-move);
+        if (start == null) return;
+        var s0 = start.Value < now ? now : start.Value;
+        if (leave is { } l && s0.AddSeconds(move) > l) s0 = l.AddSeconds(-move) < now ? now : l.AddSeconds(-move);
+        var y = (double)r.Front;
+        points.Insert(1, new { t = s0, y, row = (string?)row });
+        points.Insert(2, new { t = s0.AddSeconds(move), y, row = (string?)null });
     }
 
     /// <summary>

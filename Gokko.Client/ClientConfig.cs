@@ -93,6 +93,12 @@ public sealed class ClientConfig
     /// <summary>放送装置のキー（"Inside"・"Outside"・"Intercom" → キーかコントローラーのボタン。"N|Joy0:5" のように両方も可）。押すたびに入・切。</summary>
     public Dictionary<string, string> OnboardKeys { get; set; } = new();
 
+    /// <summary>乗務タブレットの窓の位置と大きさ（"x,y,幅,高さ"）。空なら画面の右に出す。</summary>
+    public string TabletBounds { get; set; } = "";
+
+    /// <summary>乗務タブレットの窓を、いつも最前面に出すか。</summary>
+    public bool TabletTopMost { get; set; } = true;
+
     /// <summary>車掌用操作盤の位置と大きさ（"x,y,幅,高さ"）。空なら画面の右上に出す。</summary>
     public string ConductorPanelBounds { get; set; } = "";
 

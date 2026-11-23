@@ -47,6 +47,7 @@ public sealed partial class MainForm : Form
     private readonly Button _connectButton = new() { Text = "接続" };
     private readonly Button _gameButton = new() { Text = "ゲーム切断" };
     private readonly Button _tabletButton = new() { Text = "乗務タブレット" };
+    private readonly Button _menuButton = new() { Text = "ブラウザメニュー" }; // 乗務メニューを、ふつうのブラウザで開く
     private readonly Button _backButton = new() { Text = "モード選択へ" };
 
     /// <summary>通信状況（自分と、同じ列番の相手）。悪くなったら記録し、途切れたらお知らせする。</summary>
@@ -112,8 +113,8 @@ public sealed partial class MainForm : Form
         }
 
         Text = (_role == CrewRole.Conductor ? "特発共有クライアント（車掌）" : _role == CrewRole.Rider ? "特発共有クライアント（添乗）" : mode == ShareMode.Shared ? "特発共有クライアント（在線共有）" : "特発共有クライアント（特発のみ）") + $"  ID:{crew.Id}";
-        ClientSize = new Size(560, 600);
-        MinimumSize = new Size(480, 520);
+        ClientSize = new Size(560, 640);
+        MinimumSize = new Size(480, 560);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Yu Gothic UI", 10f);
 
@@ -124,6 +125,7 @@ public sealed partial class MainForm : Form
         _connectButton.Click += async (_, _) => await ToggleConnectionAsync();
         _gameButton.Click += async (_, _) => await ToggleGameAsync();
         _tabletButton.Click += (_, _) => OpenTablet();
+        _menuButton.Click += (_, _) => OpenMenuInBrowser();
         _link = new LinkMonitor(_role, _crewPanel != null);
         _link.Notice += ShowMessage;
         _linkButton.Click += (_, _) => OpenLinkStatus();
@@ -215,9 +217,7 @@ public sealed partial class MainForm : Form
         _connectButton.Size = new Size(100, 30);
         _gameButton.Size = new Size(100, 30);
         _gameButton.Margin = new Padding(8, 3, 0, 3);
-        _tabletButton.Size = new Size(110, 30);
-        _tabletButton.Margin = new Padding(8, 3, 0, 3);
-        buttons.Controls.AddRange([_connectButton, _gameButton, _tabletButton]);
+        buttons.Controls.AddRange([_connectButton, _gameButton]);
         // 運転士（在線共有）: ゲームで使っているキー（ブザー・勾配起動など）。押すと、乗っている車掌のゲームでも同じボタンを押す
         if (_crewPanel != null && _role == CrewRole.Driver)
         {
@@ -233,6 +233,15 @@ public sealed partial class MainForm : Form
         }
 
         AddWide(buttons, SizeType.Absolute, 40);
+
+        // 画面を開くボタンは、接続のボタンとは別の段に（乗務タブレットはクライアントの中の窓、ブラウザメニューはふつうのブラウザ）
+        var screens = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        _tabletButton.Size = new Size(130, 30);
+        _tabletButton.Margin = new Padding(0, 3, 0, 3);
+        _menuButton.Size = new Size(130, 30);
+        _menuButton.Margin = new Padding(8, 3, 0, 3);
+        screens.Controls.AddRange([_tabletButton, _menuButton]);
+        AddWide(screens, SizeType.Absolute, 40);
 
         // 今のモードと、モードを選ぶ画面に戻るボタン（クライアントを起動し直さずに、運転士・車掌・司令などを選び直す）
         var modeRow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
@@ -266,6 +275,9 @@ public sealed partial class MainForm : Form
         incidentLayout.Controls.Add(incidentBox);
         incidentLayout.Controls.Add(_restoreButton);
         incidentPage.Controls.Add(incidentLayout);
+        // 窓が低くて入りきらないときは、タブをスクロールする（特発の表示と［復帰］がつぶれない高さを残す）
+        incidentPage.AutoScroll = true;
+        incidentPage.AutoScrollMinSize = new Size(0, 230);
 
         // 進路タブ
         _routeTab.Padding = new Padding(6);
@@ -313,6 +325,9 @@ public sealed partial class MainForm : Form
         bottom.Controls.Add(_continueButton, showAllow ? 2 : 1, 0);
         routeLayout.Controls.Add(bottom);
         _routeTab.Controls.Add(routeLayout);
+        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）
+        _routeTab.AutoScroll = true;
+        _routeTab.AutoScrollMinSize = new Size(0, 250);
 
         _tabs.TabPages.Add(incidentPage);
         _tabs.TabPages.Add(_routeTab);
@@ -603,13 +618,73 @@ public sealed partial class MainForm : Form
             : "TRAIN CREW との接続が切れていたため、つなぎ直します");
     }
 
-    /// <summary>乗務タブレット（サーバーの tablet.html）を、自分の列番を付けてブラウザで開く。列番がなければ、列車を選ぶ画面を開く。</summary>
+    /// <summary>［ブラウザメニュー］: 乗務メニュー（menu.html）を、ふつうのブラウザで開く（クライアントのログインのまま）。</summary>
+    private void OpenMenuInBrowser()
+    {
+        try
+        {
+            CrewApi.OpenBrowser(CrewApi.MenuUrl(WebCrew));
+            if (WebCrew == null) ShowMessage("サーバーに接続してから押すと、ログインしたまま開きます（今はログインせずに開きました）");
+        }
+        catch
+        {
+            ShowMessage("ブラウザを開けませんでした");
+        }
+    }
+
+    private TabletForm? _tabletForm;
+
+    // クライアントのログインの合い札は、合言葉を入れてサーバーに接続できるまでは「仮」で、タブレット・メニューでは使えない。
+    // 接続できたら本物になるので、それまでに開いた乗務タブレットの窓は、接続できた時にログインした状態で開き直す
+    private bool _tokenConfirmed;
+    private bool _tabletNeedsLogin;
+
+    /// <summary>タブレット・メニューに渡すログイン（まだ接続していなければ null）。</summary>
+    private CrewSession? WebCrew => _tokenConfirmed || _server.IsJoined ? _crew : null;
+
+    /// <summary>接続できたら（合い札が本物になったら）、ログインせずに開いていた乗務タブレットの窓を、ログインした状態で開き直す。</summary>
+    private void CheckTabletLogin()
+    {
+        if (_tokenConfirmed || !_server.IsJoined) return;
+        _tokenConfirmed = true;
+        if (_tabletNeedsLogin && _tabletForm is { IsDisposed: false })
+            _tabletForm.Navigate(CrewApi.TabletUrl(EffectiveTrainNumber(_game.Latest), _crew, remember: true));
+        _tabletNeedsLogin = false;
+    }
+
+    /// <summary>
+    /// 乗務タブレット（サーバーの tablet.html）を、自分の列番を付けて開く。列番がなければ、列車を選ぶ画面を開く。
+    /// クライアントの中の窓（WebView2。最前面にできる）で開く。WebView2 が使えなければ、ふつうのブラウザで開く。
+    /// </summary>
     private void OpenTablet()
     {
         var train = EffectiveTrainNumber(_game.Latest);
+        var url = CrewApi.TabletUrl(train, WebCrew, remember: true); // ログインしたまま開く（窓の中でメニューに行っても入り直さなくてよい）
+        if (WebCrew == null)
+        {
+            _tabletNeedsLogin = true;
+            ShowMessage("まだサーバーに接続していないので、ログインせずに開きました（接続できたら、ログインした状態に切り替わります）");
+        }
         try
         {
-            CrewApi.OpenBrowser(CrewApi.TabletUrl(train, _crew)); // ログインしたまま開く
+            if (TabletForm.Available)
+            {
+                if (_tabletForm is { IsDisposed: false })
+                {
+                    _tabletForm.Open(url);
+                }
+                else
+                {
+                    _tabletForm = new TabletForm(_config, url);
+                    _tabletForm.FormClosed += (_, _) => _tabletForm = null;
+                    _tabletForm.Show();
+                }
+
+                return;
+            }
+
+            CrewApi.OpenBrowser(url);
+            ShowMessage("WebView2 が見つからないので、ふつうのブラウザで開きました（最前面にはできません）");
         }
         catch
         {
@@ -855,6 +930,7 @@ public sealed partial class MainForm : Form
 
     private void UpdateView(ClientState? state)
     {
+        CheckTabletLogin();
         var running = _server.Status is ServerStatus.Connecting or ServerStatus.Connected;
         _connectButton.Text = running ? "切断" : "接続";
         _passwordBox.Enabled = !running;
@@ -1245,9 +1321,10 @@ public sealed partial class MainForm : Form
 
         VolumeBar(0, "話しているとき", () => _config.Radio.Volume, v => _config.Radio.Volume = v);
         VolumeBar(1, "聞いているだけのとき", () => _config.Radio.ListenVolume, v => _config.Radio.ListenVolume = v);
+        // 説明もいちばん下に積む。窓が狭くて入りきらないときは、タブ全体をスクロールする
         var help = new Label
         {
-            Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 0),
+            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 12, 0, 0),
             Text = "F6：司令を呼び出す（送話キーではありません）。無線機も開きます。\n\n" +
                    "司令員が応答すると、通話を終えるまでマイクが開きます。受話器を戻すか［終了］で終えます。\n\n" +
                    "共通通話は全員に、個別通話は当事者だけに聞こえます。司令からの一斉通告は全員に届きます。\n\n" +
@@ -1255,6 +1332,8 @@ public sealed partial class MainForm : Form
                    "音量: 「話しているとき」は自分が通話に入っているときの相手の声、「聞いているだけのとき」はほかの人の通話や、応答していない一斉通告の声です。\n\n" +
                    "マイクの感度・エコー除去・無線風の音・人ごとの音量は、無線機の［音の設定］で変えられます。"
         };
+        page.AutoScroll = true;
+        page.ClientSizeChanged += (_, _) => help.MaximumSize = new Size(Math.Max(100, page.ClientSize.Width - page.Padding.Horizontal - 4), 0);
         page.Controls.Add(help);
         page.Controls.Add(phone);
         page.Controls.Add(volumeRow);
@@ -1289,6 +1368,7 @@ public sealed partial class MainForm : Form
         {
             _backButton.Enabled = _connectButton.Enabled = false;
             _radioAudioTimer.Stop();
+            _tabletForm?.Close(); // 乗務タブレットの窓も閉じる（位置と大きさを覚える）
             _radioAudio?.Update(false);
             _voiceConsole?.Shutdown();
             _extPhone?.Shutdown();

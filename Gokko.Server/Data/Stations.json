@@ -12,6 +12,7 @@
   { "id": "TH71",  "name": "津崎",         "interlock": "津崎連動装置",         "track": "複線", "routeControl": true },
   { "id": "TH70",  "name": "浜園",         "interlock": "浜園連動装置",         "track": "複線", "routeControl": true },
   { "id": "TH67",  "name": "新野崎",       "interlock": "新野崎連動装置",       "track": "複線", "routeControl": true,
+    "diagramRows": ["1", "2", "3", "4", "5:TH67_23RT"],
     "shuntSeconds": { "1>5": 75, "5>4": 75 } },
   { "id": "TH66S", "name": "江ノ原信号場", "interlock": "江ノ原信号場連動装置", "track": "複線", "routeControl": true },
   { "id": "TH65",  "name": "大道寺",       "interlock": "大道寺連動装置",       "track": "単線", "routeControl": true,

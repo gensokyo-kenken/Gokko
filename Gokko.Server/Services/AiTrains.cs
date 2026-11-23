@@ -1002,16 +1002,21 @@ public sealed class AiTrains : BackgroundService
         var spec = st != null && st.RouteControl
             ? _stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == (track ?? -1))
             : FindStop(p.Name, t.Dir, 0);
+        const double Margin = 5;
         if (spec != null && BoundaryOf(t, spec.Signal) is { } b)
         {
             // 連結: 番線に増結車がいれば、停B（4両停目の4m手前）、そのあと連結位置（増結車の後ろ）
             if (spec.CoupleBefore is { } cb && CouplePartnerAt(t, p) != null)
                 return t.CoupleStage >= 2 ? b - cb : b - (spec.StopBBefore ?? cb);
-            return spec.After is { } after ? b + after : b - spec.Before;
+            var x = spec.After is { } after ? b + after : b - spec.Before;
+            // 表の位置だと最後尾が番線の回路の手前（分岐の回路）に残るなら、番線の回路に収まるところまで前へ出す（番線の回路の終わりは越えない）。
+            // 残したままだと、分岐を通るほかの進路（日野森で 2番線に着いた上りの最後尾が 22T に残り、3番線の下りの 4L が出られなかった）をふさぐ
+            if (platform != null && x < platform.End && x - t.Length < platform.Start + Margin)
+                x = Math.Min(platform.Start + t.Length + Margin, platform.End - 1);
+            return x;
         }
 
         // 表にない: 軌道回路の中に収める
-        const double Margin = 5;
         if (platform != null) return Math.Max(platform.Start + 1, platform.End - Margin);
         if (st == null || !st.RouteControl)
         {
