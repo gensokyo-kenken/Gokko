@@ -3675,6 +3675,19 @@ public sealed partial class RouteEngine
     private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds);
     private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
 
+    private static readonly string[] PassengerKindOrder = ["特急", "快急", "急行", "区急", "準急", "普通"];
+    private ILookup<string, string>? _passengerKinds; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+
+    /// <summary>
+    /// 駅に「普段」止まる種別（駅 → 種別）: その駅を走るその種別の列車のうち、1割以上が止まるもの。
+    /// 浜園の特急のように、臨時停車のときだけ止まるものは入らない（発車案内では「臨時停車」と出す）。
+    /// </summary>
+    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.Dia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
+        .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
+        .GroupBy(x => (x.Id, x.Kind))
+        .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
+        .ToLookup(g => g.Key.Id, g => g.Key.Kind);
+
     /// <summary>時刻表の、駅ごとのお客様が乗れる発車（回送を除く。終着の駅は含めない）。時刻の順。</summary>
     private ILookup<string, PassengerDeparture> BuildPassengerDepartures()
     {
@@ -3686,7 +3699,8 @@ public sealed partial class RouteEngine
             if (dest == null) continue;
             foreach (var stop in dia.Stops)
             {
-                if (stop == dest) break;
+                // 最後の停車駅は終着なので出さない。ただし発時刻があり、行き先がその先（路線の外）なら、そこからも発車する
+                if (stop == dest && (stop.Dep == null || dia.Dest.Length == 0 || stop.Name == dia.Dest)) break;
                 if (stop.Stop != "停" || stop.StationId == null || stop.Dep == null || ParseDiaTime(stop.Dep) is not { } sec) continue;
                 entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dia.Dest.Length > 0 ? dia.Dest : dest.Name, stop.Dep, stop.Track, info.Dir, sec)));
             }
@@ -3751,7 +3765,10 @@ public sealed partial class RouteEngine
                     direction = dir.Label(),
                     trains = Next(dir).Select(d => new
                     {
-                        train = d.Train, kind = d.Kind, dest = d.Dest, time = d.Time, track = d.Track, advisory = advisories.Contains(d.Train)
+                        train = d.Train, kind = d.Kind, dest = d.Dest, time = d.Time, track = d.Track,
+                        // その種別がこの駅に普段は止まらない（浜園の特急など）: 臨時停車
+                        specialStop = PassengerKindOrder.Contains(d.Kind) && !PassengerKinds()[id].Contains(d.Kind),
+                        advisory = advisories.Contains(d.Train)
                     }).ToArray()
                 }).ToArray()
             };
@@ -3766,18 +3783,12 @@ public sealed partial class RouteEngine
         lock (_lock)
         {
             var line = _data.Line;
-            string[] order = ["特急", "快急", "急行", "区急", "準急", "普通"];
-            // 駅に「普段」止まる種別: その駅を走るその種別の列車のうち、1割以上が止まるもの（浜園の特急のように、たまにしか止まらないものは出さない）
-            var stops = _data.Dia.Values.Where(t => order.Contains(t.Type))
-                .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
-                .GroupBy(x => (x.Id, x.Kind))
-                .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
-                .ToLookup(g => g.Key.Id, g => g.Key.Kind);
+            var kinds = PassengerKinds();
             var stations = line.StationIds.Where(id => !line.StationName(id).Contains("信号場"))
                 .Select(id => new
                 {
                     id, name = line.StationName(id), zone = line.ZoneOfStation(id),
-                    kinds = order.Where(kind => stops[id].Contains(kind)).ToArray()
+                    kinds = PassengerKindOrder.Where(kind => kinds[id].Contains(kind)).ToArray()
                 }).ToArray();
             var advisories = _central.PassengerAdvisoryTrains();
             var trains = _runs.Values.Where(r => r.HasPosition && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない

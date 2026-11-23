@@ -79,7 +79,9 @@ async function readBoard(station) {
         row.insertCell().append(node("b","",minuteTime(t.time)));
         const service = row.insertCell();
         if (t.advisory) service.append(advisoryIcon(), " ");
-        service.append(kindBadge(t.kind,t.kind), " " + destination(t.dest, board.direction), node("small","departure-number",trainLabel(t.train)));
+        service.append(kindBadge(t.kind,t.kind), " " + destination(t.dest, board.direction));
+        if (t.specialStop) service.append("（臨時停車）");
+        service.append(node("small","departure-number",trainLabel(t.train)));
         row.insertCell().textContent = t.track ? t.track + "番" : "―";
       }
       area.append(table);
