@@ -47,6 +47,7 @@ public sealed partial class MainForm : Form
     private readonly Button _connectButton = new() { Text = "接続" };
     private readonly Button _gameButton = new() { Text = "ゲーム切断" };
     private readonly Button _tabletButton = new() { Text = "乗務タブレット" };
+    private readonly Button _menuButton = new() { Text = "ブラウザメニュー" }; // 乗務メニューを、ふつうのブラウザで開く
     private readonly Button _backButton = new() { Text = "モード選択へ" };
 
     /// <summary>通信状況（自分と、同じ列番の相手）。悪くなったら記録し、途切れたらお知らせする。</summary>
@@ -124,6 +125,7 @@ public sealed partial class MainForm : Form
         _connectButton.Click += async (_, _) => await ToggleConnectionAsync();
         _gameButton.Click += async (_, _) => await ToggleGameAsync();
         _tabletButton.Click += (_, _) => OpenTablet();
+        _menuButton.Click += (_, _) => OpenMenuInBrowser();
         _link = new LinkMonitor(_role, _crewPanel != null);
         _link.Notice += ShowMessage;
         _linkButton.Click += (_, _) => OpenLinkStatus();
@@ -217,7 +219,9 @@ public sealed partial class MainForm : Form
         _gameButton.Margin = new Padding(8, 3, 0, 3);
         _tabletButton.Size = new Size(110, 30);
         _tabletButton.Margin = new Padding(8, 3, 0, 3);
-        buttons.Controls.AddRange([_connectButton, _gameButton, _tabletButton]);
+        _menuButton.Size = new Size(120, 30);
+        _menuButton.Margin = new Padding(8, 3, 0, 3);
+        buttons.Controls.AddRange([_connectButton, _gameButton, _tabletButton, _menuButton]);
         // 運転士（在線共有）: ゲームで使っているキー（ブザー・勾配起動など）。押すと、乗っている車掌のゲームでも同じボタンを押す
         if (_crewPanel != null && _role == CrewRole.Driver)
         {
@@ -603,6 +607,19 @@ public sealed partial class MainForm : Form
             : "TRAIN CREW との接続が切れていたため、つなぎ直します");
     }
 
+    /// <summary>［ブラウザメニュー］: 乗務メニュー（menu.html）を、ふつうのブラウザで開く（クライアントのログインのまま）。</summary>
+    private void OpenMenuInBrowser()
+    {
+        try
+        {
+            CrewApi.OpenBrowser(CrewApi.MenuUrl(_crew));
+        }
+        catch
+        {
+            ShowMessage("ブラウザを開けませんでした");
+        }
+    }
+
     private TabletForm? _tabletForm;
 
     /// <summary>
@@ -612,7 +629,7 @@ public sealed partial class MainForm : Form
     private void OpenTablet()
     {
         var train = EffectiveTrainNumber(_game.Latest);
-        var url = CrewApi.TabletUrl(train, _crew); // ログインしたまま開く
+        var url = CrewApi.TabletUrl(train, _crew, remember: true); // ログインしたまま開く（窓の中でメニューに行っても入り直さなくてよい）
         try
         {
             if (TabletForm.Available)

@@ -53,12 +53,16 @@ internal static class CrewApi
     }
 
     /// <summary>乗務タブレットの URL（ログインの合い札を # の後ろに付ける。# の後ろはサーバーに送られず、開いた画面がすぐ消す）。</summary>
-    public static string TabletUrl(string? train, CrewSession? crew)
-    {
-        var url = ServerAddress.Current.TrimEnd('/') + "/tablet.html" + (string.IsNullOrEmpty(train) ? "" : "?train=" + Uri.EscapeDataString(train));
-        if (crew != null) url += $"#crew={Uri.EscapeDataString(crew.Id)}&token={Uri.EscapeDataString(crew.Token)}";
-        return url;
-    }
+    /// <param name="remember">開いた先で、メニューのログインとしても覚える（クライアントの中の窓など）。</param>
+    public static string TabletUrl(string? train, CrewSession? crew, bool remember = false) =>
+        ServerAddress.Current.TrimEnd('/') + "/tablet.html" + (string.IsNullOrEmpty(train) ? "" : "?train=" + Uri.EscapeDataString(train)) + Handoff(crew, remember);
+
+    /// <summary>乗務メニュー（menu.html）の URL。クライアントのログインを、そのブラウザのメニューのログインとして覚えさせる。</summary>
+    public static string MenuUrl(CrewSession? crew) => ServerAddress.Current.TrimEnd('/') + "/menu.html" + Handoff(crew, true);
+
+    // ログインの合い札を # の後ろに付ける（# の後ろはサーバーに送られず、開いた画面がすぐアドレスから消す）
+    private static string Handoff(CrewSession? crew, bool remember) =>
+        crew == null ? "" : $"#crew={Uri.EscapeDataString(crew.Id)}&token={Uri.EscapeDataString(crew.Token)}" + (remember ? "&remember=1" : "");
 
     public static void OpenBrowser(string url)
     {
