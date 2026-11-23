@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>列車位置案内</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#edf2f1;color:#193638;font-family:system-ui,sans-serif}main,header,footer{max-width:650px;margin:auto;background:white}header{position:sticky;top:0;z-index:2;background:#103d42;color:white;padding:16px 20px 12px}h1{margin:0;font-size:21px}#range{color:#b1dcd3;font-size:13px;margin:5px 0 12px}.row,.legend{display:grid;grid-template-columns:44% 28% 28%;align-items:center}.legend{margin-inline:-20px;font-size:12px;color:#dcf2ec;text-align:center}.row{padding:0;position:relative;min-height:42px;background:linear-gradient(to right,transparent calc(72% - 2px),#21a593 calc(72% - 2px),#21a593 calc(72% + 2px),transparent calc(72% + 2px))}.station{background-color:#eef6f4;min-height:54px}.station:after{content:'';position:absolute;left:72%;top:50%;transform:translate(-50%,-50%);border:3px solid #14877e;border-radius:50%;background:white;width:9px;height:9px;pointer-events:none}button{font:inherit;color:inherit;cursor:pointer}.name{border:0;background:transparent;text-align:left;font-weight:700;padding:10px 15px}.lane{min-width:0;display:flex;flex-wrap:wrap;justify-content:center;gap:3px;padding:4px 9px}.train{max-width:100%;overflow-wrap:anywhere;border:1px solid #92c4bb;border-radius:8px;background:white;padding:5px;font-size:12px}.train b{color:#117166}.delay{color:#a74910}footer{position:sticky;bottom:0;padding:10px 16px;border-top:1px solid #ccdcd8;font-size:12px}dialog{width:min(390px,92%);border:0;border-radius:16px;padding:20px;color:#193638}dialog::backdrop{background:#102a306b}dialog h2{font-size:19px;margin:0}dialog p{white-space:pre-line;line-height:1.8}dialog button{padding:6px 18px;border:1px solid #98b6af;border-radius:8px;background:white}
+
+.row{min-height:68px}.station{min-height:76px}.lane{align-items:center}
+.train{display:inline-grid;justify-items:center;gap:1px;line-height:1.1;border:0;background:transparent;padding:3px;min-width:42px}
+.kind{padding:2px 5px;font-size:10px;font-weight:bold;color:white;border-radius:4px}
+.face{width:34px;height:35px;object-fit:contain}.number{font-size:10px;font-weight:700;color:#244f57}
+.delay{font-size:10px}.name{text-align:start}
+#schedule table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px;font-variant-numeric:tabular-nums}
+#schedule th,#schedule td{text-align:left;padding:7px 4px;border-bottom:1px solid #dae6e4}
+#schedule th{color:#17685f}#schedule small{display:block;line-height:1.6;margin-bottom:10px}
+dialog{max-height:85vh;overflow:auto}
+.station .name{display:grid;grid-template-columns:29px 1fr;align-items:center;gap:4px 6px;padding:8px 5px}
+.station-id{display:grid;text-align:center;line-height:1.05;border:1px solid #18776d;border-radius:5px;overflow:hidden;color:#145950}
+.station-id small{background:#18776d;color:white;font-size:9px}.station-id b{font-size:14px}
+.stop-kinds{grid-column:2;display:flex;flex-wrap:wrap;gap:3px}.stop-kinds .kind{padding:2px 3px;white-space:nowrap}
+.train-service{display:flex;align-items:center;justify-content:center;gap:3px}.train-service .delay{white-space:nowrap}
+.lane{padding-inline:4px}
+</style>
+<header><h1>列車位置案内</h1><p id="range"></p><div class="legend"><span>駅名</span><span>↑ 上り</span><span>↓ 下り</span></div></header>
+<main id="map"></main><footer id="status">在線情報を読み込み中…</footer>
+<dialog id="detail"><h2></h2><p></p><section id="schedule"></section><form method="dialog"><button>閉じる</button></form></dialog>
+<script src="passenger.js"></script></html>

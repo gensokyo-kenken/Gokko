@@ -3620,6 +3620,85 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
+    /// 列車位置案内（passenger.html）で列車を押したとき: 行き先・編成（車両ごとの形式）と、お客様が乗り降りする駅の定刻着・到着見込み。
+    /// 信号場は出さない。打ち切りの駅で終える。在線していない列車は null。
+    /// </summary>
+    public object? PassengerTrain(string train)
+    {
+        lock (_lock)
+        {
+            var run = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Train == train);
+            if (run == null) return null;
+            var rows = new List<object>();
+            var dest = "";
+            if (run.Dia is { } dia)
+            {
+                // 通り過ぎた最後の駅（発車の実績があるか、最後尾がその駅より先）
+                var lastPassed = dia.Stops.FindLastIndex(stop =>
+                {
+                    if (stop.StationId is not { } id) return false;
+                    var zone = _data.Line.ZoneOfStation(id);
+                    return run.ActualDep.ContainsKey(id) || zone >= 0 && (run.Rear - zone) * run.Dir.Step() > 0;
+                });
+                for (var i = 0; i < dia.Stops.Count; i++)
+                {
+                    var s = dia.Stops[i];
+                    var change = s.StationId is { } sid ? _central.StopOverride(train, sid) : null;
+                    var end = change == "打ち切り";
+                    var passengerStop = change == "停車" || (change != "通過" && s.Stop is not ("通" or "運停"));
+                    if ((end || passengerStop) && !(s.StationId?.EndsWith("S") == true || s.Name.Contains("信号場") || s.Name is "江原信" or "珠川信"))
+                    {
+                        dest = s.Name;
+                        var scheduled = s.Arr ?? (change == "停車" || end ? s.Dep : null);
+                        var arrived = s.StationId != null && run.ActualArr.ContainsKey(s.StationId);
+                        var passed = i <= lastPassed;
+                        // 到着見込み: 遅れがあれば定刻に足す。なければ、次の駅だけ走行時間から見込む
+                        var expected = !passed && !arrived && run.Delay is { } delay && ParseDiaTime(scheduled) is { } sec
+                            ? FormatDiaTime(sec + Math.Max(0, delay)) : null;
+                        if (expected == null && !passed && !arrived && scheduled != null
+                            && _clock.Now is { } now && s.StationId is { } nextId
+                            && (_data.Line.ZoneOfStation(nextId) - run.Front) * run.Dir.Step() > 0
+                            && _data.Line.ZoneOfStation(nextId) >= 0
+                            && _model.SecondsTo(RunType(run), run.Dir, run.Front, run.Fraction, nextId) is { } remaining)
+                            expected = FormatDiaTime(now.TotalSeconds + remaining);
+                        rows.Add(new { name = s.Name, scheduled, expected });
+                    }
+                    if (end) break;
+                }
+            }
+            return new { train, dest, cars = run.Player.CarModels, stops = rows };
+        }
+    }
+
+    /// <summary>
+    /// 列車位置案内（passenger.html）用。駅（信号場を除く。路線の順）と、その駅に止まる種別、在線している列車の位置（ゾーン）・種別・行き先・遅れ。
+    /// </summary>
+    public object PassengerPositions()
+    {
+        lock (_lock)
+        {
+            var line = _data.Line;
+            string[] order = ["特急", "快急", "急行", "区急", "準急", "普通"];
+            var stops = _data.Dia.Values.Where(t => order.Contains(t.Type))
+                .SelectMany(t => t.Stops.Where(s => s.Stop == "停" && s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type)))
+                .ToLookup(x => x.Id, x => x.Kind);
+            var stations = line.StationIds.Where(id => !line.StationName(id).Contains("信号場"))
+                .Select(id => new
+                {
+                    id, name = line.StationName(id), zone = line.ZoneOfStation(id),
+                    kinds = order.Where(kind => stops[id].Contains(kind)).ToArray()
+                }).ToArray();
+            var trains = _runs.Values.Where(r => r.HasPosition).Select(r => new
+            {
+                train = r.Train, kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
+                destination = r.Dia?.Stops.LastOrDefault()?.Name,
+                delay = r.Delay is { } seconds && seconds >= 60 ? (int)(seconds / 60) : 0
+            }).ToArray();
+            return new { stations, trains, updated = DateTimeOffset.UtcNow };
+        }
+    }
+
+    /// <summary>
     /// 在線位置の画面（tid.html）用。列車が踏んでいる軌道回路と、開通させている進路のうち、まだ使う軌道回路を返す。
     /// </summary>
     public object TidView()
