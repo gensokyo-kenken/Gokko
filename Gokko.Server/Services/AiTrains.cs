@@ -355,7 +355,7 @@ public sealed class AiTrains : BackgroundService
                 if (now - _lastSpawnUtc > TimeSpan.FromSeconds(2))
                 {
                     _lastSpawnUtc = now;
-                    AutoSpawn(users);
+                    AutoSpawn(users, snapshot);
                     TakeOverStaleGhosts();
                 }
             }
@@ -1260,10 +1260,19 @@ public sealed class AiTrains : BackgroundService
     /// 出さないもの: ユーザーの列車、もう出した・走っている列番、走っている列車がこのあと続けて・折り返して走る列番。
     /// 番線にほかの列車がいるなどで出せなければ、時刻の範囲の間は2秒ごとに試し直す。
     /// </summary>
-    private void AutoSpawn(HashSet<string> users)
+    private void AutoSpawn(HashSet<string> users, List<PlayerInfo> snapshot)
     {
         var now = _clock.Now;
         List<(string Number, string Station, int? Track)> todo = new();
+
+        // ユーザーが運転している列車（継続乗務で残した在線も）の運行番号と、その列車の最初の時刻。
+        // 同じ運行番号で、それより後に走る列車は出さない（ユーザーの列車が遅れていても、その後の列番はユーザーが続けて走る。回1750 が遅れているのに 1751 が出た）
+        var userUnyo = new Dictionary<int, TimeSpan>();
+        foreach (var p in snapshot.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix) && p.TrainNumber.Length > 0))
+        {
+            if (_rail.DiaOf(p.TrainNumber) is not { Unyo: { } u } ud || ud.Stops.Select(s => Time(s.Arr ?? s.Dep)).FirstOrDefault(t => t != null) is not { } first) continue;
+            userUnyo[u] = userUnyo.TryGetValue(u, out var old) && old < first ? old : first;
+        }
         lock (_lock)
         {
             if (!_enabled || now is not { } n || !_clock.IsRunning) return;
@@ -1297,6 +1306,7 @@ public sealed class AiTrains : BackgroundService
                     && !(startDir is { } sd2 && PassesWithoutTrack(s, sd2)));
                 if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
                 if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
+                if (dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車
                 // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
                 if (start.StationId == EntryStation && start.Stop != "停" && start.Track == 2 && _routes.DirOfTrain(number) == Dir.Down)
                 {
@@ -1428,6 +1438,15 @@ public sealed class AiTrains : BackgroundService
         }
 
         return adj;
+    }
+
+    /// <summary>a が b と同じか後の時刻か（日をまたぐ所は、12時間以内の差で見る）。</summary>
+    private static bool IsLater(TimeSpan a, TimeSpan b)
+    {
+        var d = (a - b).TotalHours;
+        if (d > 12) d -= 24;
+        if (d < -12) d += 24;
+        return d >= 0;
     }
 
     private static TimeSpan? Time(string? hms) =>

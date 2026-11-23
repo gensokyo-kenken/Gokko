@@ -2863,13 +2863,12 @@ public sealed partial class RouteEngine
         foreach (var other in _runs.Values.Where(o => o != run && o.HasPosition && o.Dir == run.Dir && (o.Front - run.Front) * step > 0))
         {
             if (other.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is not { Done: false } os || IsCutOff(other, os)) continue;
-            // この駅で終わる列車は抜けないので、場内を取ったあとは待たない（番線のふさがりは在線・進路の重なりで判断）。
-            // まだ場内を取っていないうちは、自分の進路がその場内と重なれば前の列車が先。後ろの列車が先に取ると、前の列車は場内に入れず、
-            // 後ろの列車も前の列車がいて進めない（江ノ原信号場で、検車区へ入る列車の場内より先に、後ろの通過列車が本線を取るなど）
+            // この駅で終わる列車は抜けないので、番線に入りきったあとは待たない（番線のふさがりは在線・進路の重なりで判断）。
+            // それまでは、別の番線に入るのでも前の列車が先。後ろの列車が先に取ると、前の列車は場内に入れず、後ろの列車も前の列車がいて進めない
+            // （駒野から出た回送が、前を走る列車より先に館浜の場内を取る。江ノ原信号場で、検車区へ入る列車より先に後ろの通過列車が本線を取る）
             if (os.Terminal || IsTurnbackTrack(other, os))
             {
-                if (os.IsStart || os.Arrive == GroupState.Requested
-                    || !Circuits(PendingPaths(other, os)).Any(Circuits(st.ArrivePath.Concat(st.DepartPath)).ToHashSet().Contains)) continue;
+                if (os.IsStart || os.InTrackUtc != null) continue;
                 return $"先行列車（{other.Train}）が先";
             }
             if (WaitingForRequest(other, os)) continue; // 出発要求をしないまま止まっている列車（始発・待避線）は追い越してよい
