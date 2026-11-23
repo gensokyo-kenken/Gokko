@@ -603,13 +603,36 @@ public sealed partial class MainForm : Form
             : "TRAIN CREW との接続が切れていたため、つなぎ直します");
     }
 
-    /// <summary>乗務タブレット（サーバーの tablet.html）を、自分の列番を付けてブラウザで開く。列番がなければ、列車を選ぶ画面を開く。</summary>
+    private TabletForm? _tabletForm;
+
+    /// <summary>
+    /// 乗務タブレット（サーバーの tablet.html）を、自分の列番を付けて開く。列番がなければ、列車を選ぶ画面を開く。
+    /// クライアントの中の窓（WebView2。最前面にできる）で開く。WebView2 が使えなければ、ふつうのブラウザで開く。
+    /// </summary>
     private void OpenTablet()
     {
         var train = EffectiveTrainNumber(_game.Latest);
+        var url = CrewApi.TabletUrl(train, _crew); // ログインしたまま開く
         try
         {
-            CrewApi.OpenBrowser(CrewApi.TabletUrl(train, _crew)); // ログインしたまま開く
+            if (TabletForm.Available)
+            {
+                if (_tabletForm is { IsDisposed: false })
+                {
+                    _tabletForm.Open(url);
+                }
+                else
+                {
+                    _tabletForm = new TabletForm(_config, url);
+                    _tabletForm.FormClosed += (_, _) => _tabletForm = null;
+                    _tabletForm.Show();
+                }
+
+                return;
+            }
+
+            CrewApi.OpenBrowser(url);
+            ShowMessage("WebView2 が見つからないので、ふつうのブラウザで開きました（最前面にはできません）");
         }
         catch
         {
@@ -1289,6 +1312,7 @@ public sealed partial class MainForm : Form
         {
             _backButton.Enabled = _connectButton.Enabled = false;
             _radioAudioTimer.Stop();
+            _tabletForm?.Close(); // 乗務タブレットの窓も閉じる（位置と大きさを覚える）
             _radioAudio?.Update(false);
             _voiceConsole?.Shutdown();
             _extPhone?.Shutdown();

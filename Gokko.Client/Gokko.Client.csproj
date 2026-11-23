@@ -13,6 +13,10 @@
 
     <!-- 配布用: dotnet publish -c Release で、exe 1つだけを出力する -->
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- 乗務タブレットの窓（WebView2）の WebView2Loader.dll も exe の中に入れる -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- 部品の説明書（.xml）は配らない -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
     <PublishDir>publish\</PublishDir>
   </PropertyGroup>
 
@@ -33,6 +37,8 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <!-- ログインのパスワードを記憶するときの暗号化（Windows の DPAPI） -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- 乗務タブレットを最前面の窓で開く（WebView2。Windows 10/11 の Edge の部品を使う。BSD 系のライセンス） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
   <ItemGroup>
