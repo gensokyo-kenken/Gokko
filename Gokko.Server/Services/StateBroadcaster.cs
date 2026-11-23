@@ -123,6 +123,7 @@ public sealed class StateBroadcaster : BackgroundService
     /// <summary>全員へ配信する。戻り値は、送り終わるのを待った時間（ミリ秒。遅い回線の人がいると長くなる）。</summary>
     private async Task<double> BroadcastAsync()
     {
+        var prepStarted = System.Diagnostics.Stopwatch.GetTimestamp(); // 内訳の記録（どこが重いかを見るため。RecordParts）
         var players = _players.Snapshot();
         _occupancy.Record(players); // 在線の記録（変わった列車だけ logs/occupancy-*.log へ）
         var conductors = _crew.Conductors();
@@ -177,7 +178,17 @@ public sealed class StateBroadcaster : BackgroundService
         var (radioReceivers, radioSenders) = _radio.Evaluate(players); // 防護無線（受信している・発報している参加者）
         radioReceivers.UnionWith(_dispatcherProtection.Receivers(players)); // 司令員からの区間防護も、同じ警報で知らせる
 
+        var loopStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var prepMs = Ms(prepStarted, loopStarted);
         var sends = new List<Task>(players.Count);
+        double signalMs = 0, aiMs = 0, sendCallMs = 0;
+        // 送信の呼び出し: SignalR はふつう、呼び出しの中で JSON にして書き込む（ほかの送信で混んでいるときは、あとで別のスレッドで書くので数えられない）
+        void Send(string connectionId, ClientState state)
+        {
+            var sendStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            sends.Add(SendAsync(connectionId, state));
+            sendCallMs += Ms(sendStarted);
+        }
         foreach (var p in players)
         {
             // にぎやかしの列車（自動運転）は、信号・自分の進路・取り消し・出発要求・メッセージ・この先の駅の状態だけを使う（AiTrains.Receive）。
@@ -203,6 +214,7 @@ public sealed class StateBroadcaster : BackgroundService
 
             if (p.Mode == ShareMode.Shared)
             {
+                var signalStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 // 信号: 自分以外の在線共有の列車がいる軌道回路から。
                 // 同じ列番を入力している参加者（同じ列車に乗っている運転士と車掌など）の在線は、互いに見ない。
                 // 2台のゲームは同じ列車を別々に動かしているので位置がずれ（実測で最大 180m）、相手の在線で前の信号が R になって、
@@ -220,6 +232,7 @@ public sealed class StateBroadcaster : BackgroundService
 
                 // 強制進行と定期解除（停止にする判断を全部入れたあとの結果から、停止にしていない閉塞信号機だけに None を入れる）
                 _blocks.Apply(state.Signals, forced, sweep);
+                signalMs += Ms(signalStarted);
 
                 if (_routes.GetOutput(p.ConnectionId) is { } output)
                 {
@@ -240,7 +253,9 @@ public sealed class StateBroadcaster : BackgroundService
             // にぎやかしの列車: 配信をクライアントの代わりに受け取る（信号・進路）
             if (ai)
             {
+                var aiStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 _ai.Receive(p.ConnectionId, state);
+                aiMs += Ms(aiStarted);
                 continue;
             }
 
@@ -253,7 +268,7 @@ public sealed class StateBroadcaster : BackgroundService
                     conductorDeletes[p.TrainNumber] = _routes.GetOutput(p.ConnectionId)?.ConductorDeletes ?? new List<RouteKey>();
             }
 
-            sends.Add(SendAsync(p.ConnectionId, state));
+            Send(p.ConnectionId, state);
         }
 
         // 車掌・添乗: 同じ列番の運転士と同じ進路・信号・特発を送る（運転士がいなければ、時刻と特発だけ）
@@ -284,7 +299,7 @@ public sealed class StateBroadcaster : BackgroundService
             state.Onboard = onboardViews.GetValueOrDefault(c.ConnectionId);
             state.CrewPeers = PeersOf(c.ConnectionId, c.TrainNumber); // 運転士の配信の複製なので、自分から見たものに置き換える
             if (rider && c.Passenger) state.ProtectionRadioReceiving = false; // 乗客には、運転台の防護無線の警報は聞かせない
-            sends.Add(SendAsync(c.ConnectionId, state));
+            Send(c.ConnectionId, state);
         }
 
         // 司令員: 時刻・特発・列車無線・区間防護だけ
@@ -293,13 +308,14 @@ public sealed class StateBroadcaster : BackgroundService
             var protection = _dispatcherProtection.View();
             var sources = _radio.Sources(); // 運転士の F5 の発報（司令機の防護監視）
             foreach (var id in dispatchers.Keys)
-                sends.Add(SendAsync(id, new ClientState
+                Send(id, new ClientState
                 {
                     ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     TrainRadio = radioViews.GetValueOrDefault(id), DispatcherProtection = protection, ProtectionSources = sources
-                }));
+                });
         }
 
+        RecordParts(prepMs, Ms(loopStarted), signalMs, aiMs, sendCallMs);
         var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         await Task.WhenAll(sends);
         return System.Diagnostics.Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds;
@@ -311,6 +327,26 @@ public sealed class StateBroadcaster : BackgroundService
     /// </summary>
     private static bool SameTrain(PlayerInfo a, PlayerInfo b) =>
         a.TrainNumber.Length > 0 && string.Equals(a.TrainNumber, b.TrainNumber, StringComparison.Ordinal);
+
+    private static double Ms(long started, long? ended = null) =>
+        System.Diagnostics.Stopwatch.GetElapsedTime(started, ended ?? System.Diagnostics.Stopwatch.GetTimestamp()).TotalMilliseconds;
+
+    /// <summary>
+    /// 配信1回の内訳を、"(配信) …" の名前で ServerLoad へ記録する（どこが重いかを見るため。回数は配信の回数になる）。
+    /// 下ごしらえ: 1人ごとの組み立ての前（参加者の一覧・無線・通信状況など）。
+    /// 信号: ほかの列車の在線を集めて、停止にする信号機を決めるまで（1人ごとの合計）。
+    /// 自動運転: にぎやかしの列車が配信を受け取って進路などを決める分（合計）。
+    /// 送信: SendAsync を呼んだ時間（JSON にして書き込む分。合計）。
+    /// そのほか: 1人ごとの組み立ての残り（位置の文字・近くの特発・進路・車掌・司令員など）。
+    /// </summary>
+    private void RecordParts(double prepMs, double loopMs, double signalMs, double aiMs, double sendCallMs)
+    {
+        _load.RecordWork("(配信) 下ごしらえ", prepMs);
+        _load.RecordWork("(配信) 信号", signalMs);
+        _load.RecordWork("(配信) 自動運転", aiMs);
+        _load.RecordWork("(配信) 送信", sendCallMs);
+        _load.RecordWork("(配信) そのほか", Math.Max(0, loopMs - signalMs - aiMs - sendCallMs));
+    }
 
     private async Task SendAsync(string connectionId, ClientState state)
     {

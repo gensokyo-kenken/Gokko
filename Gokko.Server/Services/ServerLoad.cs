@@ -10,7 +10,7 @@ namespace Gokko.Server.Services;
 /// 5秒ごとに、このプロセスの CPU（全コアで 100%）・メモリ、マシン全体のメモリとロードアベレージ（Linux だけ）、
 /// 配信1回（進路の処理と全員への状態の配信）にかかった時間、参加者とにぎやかしの列車の数を測る。
 /// 配信は、そのうち進路の処理（Tick）と送り終わるのを待った時間も分けて測る。画面の API（HTTP）とハブの呼び出し（SignalR）は、
-/// 種類ごとの回数と時間を数える（どこが重いかを見るため。直近1分の多い順を画面に、1分ごとに上位8つをファイルに）。
+/// 種類ごとの回数と時間を数える（どこが重いかを見るため。直近1分の多い順を画面に、1分ごとに上位12（配信の内訳の5つが入っても、画面の API が押し出されないように）をファイルに）。
 /// 直近1時間ぶんを画面用に持ち、1分ごとにまとめた1行（平均と最大）をファイルに書く。1行 300 バイトほどで、1日で 400KB くらい。
 /// </summary>
 public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
@@ -231,7 +231,7 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
             var bcCount = m.Sum(x => x.Broadcasts);
             var bcAvg = bcCount > 0 ? m.Sum(x => x.BroadcastAvgMs * x.Broadcasts) / bcCount : 0;
             double PerBroadcast(Func<Sample, double> f) => bcCount > 0 ? m.Sum(x => f(x) * x.Broadcasts) / bcCount : 0;
-            var top = string.Join(";", Top(work, 8).Select(w => string.Create(CultureInfo.InvariantCulture, $"{w.Name.Replace(' ', '_')}={w.Count}/{w.TotalMs:0}")));
+            var top = string.Join(";", Top(work, 12).Select(w => string.Create(CultureInfo.InvariantCulture, $"{w.Name.Replace(' ', '_')}={w.Count}/{w.TotalMs:0}")));
             var line = string.Create(CultureInfo.InvariantCulture,
                 $"{at:yyyy-MM-dd HH:mm} cpu {m.Average(x => x.CpuPercent):0.0}/{m.Max(x => x.CpuPercent):0.0} " +
                 $"mem {m.Average(x => x.ProcessMb):0}/{m.Max(x => x.ProcessMb):0} gc {last.GcHeapMb:0} " +
