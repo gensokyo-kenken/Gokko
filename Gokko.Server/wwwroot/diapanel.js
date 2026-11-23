@@ -682,7 +682,7 @@
     function layout(d) {
       const stations = [...d.stations].sort((a, b) => a.y - b.y);
       const c = cur();
-      const left = view.split ? 118 : 92;
+      const left = view.split ? 132 : 92;
       const rowsOf = (s) => (view.split && s.control && s.tracks && s.tracks.length > 0 ? s.tracks : []);
       const band = {};
       // 単線区間（藤江〜水越など）の駅と駅の間は、駅間のスペースを空ける（番線の段が続いて見にくくならないように。列番もここに書く）
@@ -697,15 +697,17 @@
         prev = s;
         const tracks = rowsOf(s);
         const rows = {};
-        tracks.forEach((t, i) => { rows[t] = y + 10 + (i + 0.5) * c.trackPx; });
-        const bottom = tracks.length ? y + 10 + (tracks.length - 0.5) * c.trackPx : y;
-        band[s.y] = { s, y, rows, top: tracks.length ? rows[tracks[0]] : y, bottom };
-        y = (tracks.length ? y + 10 + tracks.length * c.trackPx : y) + c.stationPx;
+        // 番線の段がある駅（詳細表示）: 段だけを並べ、駅名は段の真ん中の横に書く（駅の線は引かない）
+        tracks.forEach((t, i) => { rows[t] = y + i * c.trackPx; });
+        const bottom = tracks.length ? y + (tracks.length - 1) * c.trackPx : y;
+        band[s.y] = { s, y: tracks.length ? (y + bottom) / 2 : y, rows, top: y, bottom };
+        y = bottom + c.stationPx;
       }
       const height = y - c.stationPx + BOTTOM;
       // 駅と駅の間（駅の線・番線の段にかからない所）。上の駅のいちばん下の段から、下の駅の線まで
       const ordered = stations.map((s) => band[s.y]);
-      const gaps = ordered.slice(1).map((b, i) => [ordered[i].bottom, b.y]);
+      const pad = (b) => (Object.keys(b.rows).length ? c.trackPx / 2 : 0); // 番線の段のある駅は、段を囲む帯の外から
+      const gaps = ordered.slice(1).map((b, i) => [ordered[i].bottom + pad(ordered[i]), b.top - pad(b)]);
       const zones = stations.map((s) => s.y);
       const now = new Date(d.now).getTime();
       const day = dayOn(), sp = GokkoClock.speed(), minPx = c.minPx; // あとで設定が変わっても、この配置の幅のまま
@@ -898,11 +900,19 @@
       for (const s of L.stations) {
         const b = L.band[s.y];
         const rowTracks = Object.keys(b.rows);
-        parts.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.y}" y2="${b.y}" stroke="var(--line)" stroke-width="${s.control ? 1.6 : 0.6}"/>`);
-        labels.push(`<text x="${L.left - 6}" y="${b.y + 4}" text-anchor="end" font-size="11" fill="${s.control ? "var(--text)" : "var(--muted)"}" font-weight="${s.control ? 600 : 400}">${esc(s.name)}</text>`);
+        if (rowTracks.length) {
+          // 駅の構内: 番線の段を囲む薄い帯（駅間と見分けられるように）と、段ごとの線。駅名は段の真ん中の横
+          const pad = cur().trackPx / 2;
+          parts.push(`<rect x="${L.left}" y="${b.top - pad}" width="${L.w - RIGHT - L.left}" height="${b.bottom - b.top + 2 * pad}" fill="var(--line)" opacity="0.18" pointer-events="none"/>`);
+          labels.push(`<text x="${L.left - 46}" y="${b.y + 4}" text-anchor="end" font-size="11" fill="var(--text)" font-weight="600">${esc(s.name)}</text>`);
+          labels.push(`<line x1="${L.left - 42}" x2="${L.left - 42}" y1="${b.top - pad + 2}" y2="${b.bottom + pad - 2}" stroke="var(--muted)" stroke-width="1"/>`);
+        } else {
+          parts.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.y}" y2="${b.y}" stroke="var(--line)" stroke-width="${s.control ? 1.6 : 0.6}"/>`);
+          labels.push(`<text x="${L.left - 6}" y="${b.y + 4}" text-anchor="end" font-size="11" fill="${s.control ? "var(--text)" : "var(--muted)"}" font-weight="${s.control ? 600 : 400}">${esc(s.name)}</text>`);
+        }
         for (const t of rowTracks) {
           const ry = b.rows[t];
-          parts.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${ry}" y2="${ry}" stroke="var(--line)" stroke-width="0.5" stroke-dasharray="2 3"/>`);
+          parts.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${ry}" y2="${ry}" stroke="var(--line)" stroke-width="0.8"/>`);
           labels.push(`<text x="${L.left - 6}" y="${ry + 3.5}" text-anchor="end" font-size="10" fill="var(--muted)">${esc(rowName(t))}</text>`);
         }
       }
