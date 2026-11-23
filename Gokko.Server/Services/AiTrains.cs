@@ -1342,6 +1342,17 @@ public sealed class AiTrains : BackgroundService
         p.Speed = (float)(t.Speed * 3.6);
         p.ReportedSpeed = p.Speed;
         p.TraveledDistance = (float)(t.Head - t.StartHead);
+        // 停車駅までの距離（走った距離で数える）。ゲームの列車と同じく、駅間のどこにいるかをダイヤグラムの線に出すため（RouteEngine の Fraction）。
+        // これから行く駅（3つまで）だけ、走ったときの記録から見込み直す。過ぎた駅は、最後に見込んだ値のまま
+        var ahead = 0;
+        foreach (var ps in t.Plan)
+        {
+            if (ahead >= 3) break;
+            if (Passed(t, ps)) continue;
+            ahead++;
+            if (EstimateDistance(t, ps) is not { } est) continue;
+            if (p.Stops.FirstOrDefault(x => x.Name == ps.Name) is { } si) si.Distance = (float)(t.Head - t.StartHead + est);
+        }
         p.LastReportUtc = DateTime.UtcNow;
     }
 
