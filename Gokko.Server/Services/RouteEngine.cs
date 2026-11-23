@@ -3767,9 +3767,12 @@ public sealed partial class RouteEngine
         {
             var line = _data.Line;
             string[] order = ["特急", "快急", "急行", "区急", "準急", "普通"];
+            // 駅に「普段」止まる種別: その駅を走るその種別の列車のうち、1割以上が止まるもの（浜園の特急のように、たまにしか止まらないものは出さない）
             var stops = _data.Dia.Values.Where(t => order.Contains(t.Type))
-                .SelectMany(t => t.Stops.Where(s => s.Stop == "停" && s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type)))
-                .ToLookup(x => x.Id, x => x.Kind);
+                .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
+                .GroupBy(x => (x.Id, x.Kind))
+                .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
+                .ToLookup(g => g.Key.Id, g => g.Key.Kind);
             var stations = line.StationIds.Where(id => !line.StationName(id).Contains("信号場"))
                 .Select(id => new
                 {
