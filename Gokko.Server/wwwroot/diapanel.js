@@ -951,13 +951,14 @@
         const color = TYPE_COLORS[tr.type] || "var(--text)";
         const tracks = trackMap(tr);
         const pts = (arr) => arr.map((p) => `${L.x(p.t).toFixed(1)},${L.y(p.y, p.row ?? tracks[p.y]).toFixed(1)}`).join(" ");
-        if (tr.history.length > 1) parts.push(`<polyline points="${pts(tr.history)}" fill="none" stroke="${color}" stroke-width="2"/>`);
-        if (tr.forecast.length > 1) parts.push(`<polyline points="${pts(tr.forecast)}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4"/>`);
-        const cur = tr.forecast[0];
+        const { hist, fc } = smoothBetween(tr);
+        if (hist.length > 1) parts.push(`<polyline points="${pts(hist)}" fill="none" stroke="${color}" stroke-width="2"/>`);
+        if (fc.length > 1) parts.push(`<polyline points="${pts(fc)}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4"/>`);
+        const cur = fc[0];
         labelQueue.push({
           train: tr.train, color,
           at: { x: L.x(cur.t), y: L.y(cur.y, cur.row ?? tracks[cur.y]) },
-          pts: [...tr.history, ...tr.forecast].map((p) => ({ x: L.x(p.t), y: L.y(p.y, p.row ?? tracks[p.y]) }))
+          pts: [...hist, ...fc].map((p) => ({ x: L.x(p.t), y: L.y(p.y, p.row ?? tracks[p.y]) }))
         });
         tr.markers.forEach((m, mi) => {
           const x = L.x(m.t), y = L.y(m.y, m.track);
@@ -994,6 +995,29 @@
       if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
       lastL = L;
       if (jumpNow) { jumpNow = false; if (L.day) scrollToNow(); }
+    }
+
+    // 駅間のどこにいるか分からない列車（自動運転の列車など）は、駅間のまん中（奇数のゾーンちょうど）で記録される。
+    // そのままだと、駅 → 駅間のまん中 → 次の駅と段々に描かれるので、駅を出た時刻から次の駅に着く時刻まで、まっすぐにつなぐ
+    function smoothBetween(tr) {
+      const all = [...tr.history.map((p) => ({ ...p, h: true })), ...tr.forecast.map((p) => ({ ...p, h: false }))];
+      const odd = (y) => Number.isInteger(y) && Math.abs(y % 2) === 1;
+      for (let i = 0; i < all.length;) {
+        if (!odd(all[i].y)) { i++; continue; }
+        let j = i;
+        while (j + 1 < all.length && odd(all[j + 1].y)) j++;
+        const p = all[i - 1], n = all[j + 1];
+        if (p && n) {
+          const t0 = new Date(all[i].t).getTime(), t1 = new Date(n.t).getTime();
+          for (let k = i; k <= j; k++) {
+            const f = t1 > t0 ? (new Date(all[k].t).getTime() - t0) / (t1 - t0) : 0;
+            all[k].y = p.y + (n.y - p.y) * f;
+            if (k === i) all[k].row = p.row; // 駅を出たところは、出た番線の段から
+          }
+        }
+        i = j + 1;
+      }
+      return { hist: all.filter((p) => p.h), fc: all.filter((p) => !p.h) };
     }
 
     // 列番の置き場所: 線に沿って斜めに、駅と駅の間（駅の線・番線の段にかからない所）。今の時刻に近い所から探し、
