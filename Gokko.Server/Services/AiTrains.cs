@@ -69,6 +69,7 @@ public sealed class AiTrains : BackgroundService
     private readonly Dictionary<int, int> _carsByUnyo = new(); // 運行番号ごとの両数（ない運行は6両）
     private Dictionary<string, Dictionary<string, string>> _couplePartners = new(); // 連結: 列車ID → 駅ID → 番線で待つ増結車（RouteEngine から周期ごとに写す）
     private static readonly TimeSpan CoupleStopB = TimeSpan.FromSeconds(5); // 連結: 停B で止まっている時間
+    private readonly List<(string Child, int Cars, string Station, int Track, string Parent)> _pendingSplits = new(); // 解放: これから出す車両
 
     private readonly object _lock = new();
     private readonly Dictionary<string, Train> _trains = new();
@@ -173,7 +174,8 @@ public sealed class AiTrains : BackgroundService
             var st = _rail.Stations[start.StationId!];
             // 番線: ダイヤの番線。ほかの列車がいる・ほかの列車の進路がかかっていれば、同じ向きに出られるほかの番線
             // （ほかの列車の進路の上に出すと、その列車も自分も動けなくなる。RouteEngine も「出現待ち」にする）
-            var others = _players.Snapshot();
+            // 切り離した車両（解2076C）は、元の列車（2076C）がいる番線に出す
+            var others = _players.Snapshot().Where(p => !(number.StartsWith("解") && RailData.NormalizeTrain(p.TrainNumber) == number[1..])).ToList();
             var occupied = others.SelectMany(p => p.TrackCircuits).ToHashSet();
             foreach (var p in others)
             foreach (var key in p.GameRoutes)
@@ -310,6 +312,8 @@ public sealed class AiTrains : BackgroundService
                 List<string> departures = new();
                 var couplePartners = _routes.CouplePartners();
                 var coupled = _routes.TakeCoupled();
+                var splits = _routes.TakeSplits();
+                List<(string Child, int Cars, string Station, int Track, string Parent)> splitSpawns = new();
                 lock (_lock)
                 {
                     _userTrains = users;
@@ -322,6 +326,18 @@ public sealed class AiTrains : BackgroundService
                             _trains.Remove(p.Id);
                             _log.Note($"にぎやかし: {partner} は {train} に連結したので消しました");
                         }
+                    // 解放: 元の列車（自動運転）の両数を減らし、切り離した車両を同じ番線に出す（ユーザーが運転するなら出さない）
+                    foreach (var (child, parent, station, track) in splits)
+                    {
+                        var childCars = CarsOf(child);
+                        foreach (var p in _trains.Values.Where(x => x.Number == parent))
+                        {
+                            p.Cars = Math.Max(CarsOf(parent), p.Cars - childCars);
+                            p.Length = p.Cars * CarLength;
+                        }
+                        if (users.Contains(RailData.NormalizeTrain(child)) || _trains.Values.Any(x => x.Number == child)) continue;
+                        splitSpawns.Add((child, childCars, station, track, parent));
+                    }
                     foreach (var t in _trains.Values.ToList())
                     {
                         if (!_trains.ContainsKey(t.Id)) continue; // この周期の中で消えた（連結した増結車）
@@ -360,6 +376,18 @@ public sealed class AiTrains : BackgroundService
                             _log.Note($"にぎやかし: {t.Number} は {t.Status}。在線を消しました");
                         }
                     }
+                }
+
+                // 切り離した車両を出す（Add はほかの参加者の在線を見るので、自分のロックの外で）
+                lock (_lock)
+                {
+                    splitSpawns.AddRange(_pendingSplits);
+                    _pendingSplits.Clear();
+                }
+                foreach (var (child, cars, station, track, parent) in splitSpawns)
+                {
+                    var (ok, msg) = Add(child, cars, station, true, track);
+                    _log.Note(ok ? $"にぎやかし: {parent} から {child}（{cars}両）を切り離しました（{station} {track}番線）" : $"にぎやかし: {child} を出せませんでした（{msg}）");
                 }
 
                 // 出発要求（RouteEngine のロックの中から呼ばないように、外で）
@@ -456,8 +484,8 @@ public sealed class AiTrains : BackgroundService
                     return;
                 }
 
-                // 増結車（折返が「併結」）: 番線で連結を待つ。連結する列車が来なければ、その列車の発車から10分で消す
-                if (_rail.Turns.TurnOf(t.Dia) is { Kind: "併結", Number: { Length: > 0 } cn })
+                // 増結車（列番が「連」＋連結する列車の列番。連777）: 番線で連結を待つ。連結する列車が来なければ、その列車の発車から10分で消す
+                if (t.Number.StartsWith("連") && t.Number[1..] is { Length: > 0 } cn)
                 {
                     if (nowGame is { } ng2 && _rail.DiaOf(cn)?.Stops.FirstOrDefault(s => s.StationId == stopNow.StationId) is { } cs
                         && Time(cs.Dep ?? cs.Arr) is { } cdep && ng2 > cdep + TimeSpan.FromMinutes(10))
@@ -506,7 +534,7 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 最初の駅: 発車時刻まで待つ
-        if (t.PlanIndex == 0 && t.Speed == 0 && t.Plan.Count > 0 && Math.Abs(t.Head - t.StartHead) < 0.5 && !t.FromShunt && !t.MidLine)
+        if (t.PlanIndex == 0 && t.Speed == 0 && t.Plan.Count > 0 && Math.Abs(t.Head - t.StartHead) < 0.5 && !t.FromShunt && !t.MidLine && !t.Shunting) // 入換（引上げ）を始めた列車は除く（出したばかりの番線から、すぐ引き上げる 解2076C など）
         {
             t.Dwelling = true;
             t.DwellIndex = 0;
@@ -570,6 +598,7 @@ public sealed class AiTrains : BackgroundService
                 return;
             }
             if (t.CoupleStage == 2) CoupleWith(t, next);
+            SplitAt(t, next);
             t.Dwelling = true;
             t.DwellIndex = t.Plan.IndexOf(next);
             t.DepartureAsked = false;
@@ -1033,6 +1062,20 @@ public sealed class AiTrains : BackgroundService
         _log.Note($"にぎやかし: {t.Number} に {partner}（{cars}両）を連結しました（{p.Name}。{t.Cars}両）");
     }
 
+    /// <summary>
+    /// 解放: ダイヤに「解」＋この列番の列車があり、その最初の駅に着いたら、両数を減らし、切り離した車両を出す
+    /// （出すのは周期の終わりに、自分のロックの外で）。
+    /// </summary>
+    private void SplitAt(Train t, PlanStop p)
+    {
+        if (_rail.DiaOf("解" + t.Number) is not { } child || child.Stops.FirstOrDefault(s => s.StationId != null) is not { } cs
+            || cs.StationId != p.StationId || _trains.Values.Any(x => x.Number == child.Number) || _userTrains.Contains(child.Number)) return;
+        var cars = CarsOf(child.Number);
+        t.Cars = Math.Max(CarsOf(t.Number), t.Cars - cars);
+        t.Length = t.Cars * CarLength;
+        _pendingSplits.Add((child.Number, cars, p.Name, cs.Track ?? p.Track ?? -1, t.Number));
+    }
+
     private double? BoundaryOf(Train t, string signal)
     {
         foreach (var s in t.Path)
@@ -1339,18 +1382,23 @@ public sealed class AiTrains : BackgroundService
             _lastGame = n;
 
             // 走っている列車が、このあと続けて・折り返して走る列番
+            // 切り離す列車（解874 など）と、その先の列番（回933）も、元の列車（874）が走っていれば出さない（切り離したときに出る）
             var covered = new HashSet<string>();
-            foreach (var t in _trains.Values)
+            void Cover(DiaTrain? d)
             {
-                var d = t.Dia;
                 for (var k = 0; k < 10 && d != null; k++)
                 {
+                    if (_rail.DiaOf("解" + d.Number) is { } split && covered.Add(split.Number)) Cover(split);
                     var nextNo = d.Next?.Number ?? (_rail.Turns.TurnOf(d) is { Kind: "折返", Number: { Length: > 0 } tn } ? tn : null);
                     if (nextNo == null) break;
                     covered.Add(RailData.NormalizeTrain(nextNo));
                     d = _rail.DiaOf(nextNo);
                 }
             }
+            foreach (var t in _trains.Values) Cover(t.Dia);
+            // ユーザーの列車が切り離す車両も（ユーザーの列車の折り返しは、今までどおり自動で出す）
+            foreach (var u in users)
+                if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
 
             foreach (var dia in _rail.Dia.Values)
             {

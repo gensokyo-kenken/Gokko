@@ -155,7 +155,7 @@
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LE", "29LD"], "requireFree": ["TH65_ET"], "via": "E線" },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 3, "routes": ["32LC"] },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] },
-          // 増結車（入換777・入換875C）: 3番線から E線へ入換をして折り返し、E線から連結する番線へ
+          // 増結車（連777・連875C）と切り離した車両（回2131）: E線で折り返し、E線から番線へ
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 3, "routes": ["29LC"] },
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] }
         ],

@@ -10771,6 +10771,13 @@
       ]
     },
     {
+      "number": "解2076C", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 30,
+      "turn": { "kind": "折返", "number": "回2131", "time": "21:21", "how": "入換", "text": "回2131 21:21入換 E線から3番線 回送 江原検行" },
+      "stops": [
+        { "st": "TH65", "name": "大道寺", "stop": "停", "arr": null, "dep": "21:07:00", "track": 2, "note": "灰色;入換" }
+      ]
+    },
+    {
       "number": "回2131", "type": "回送", "label": "回送", "dest": "館浜", "unyo": 30,
       "turn": { "kind": "引継", "number": "構内運転士へ", "time": null, "how": null, "text": "構内運転士へ" },
       "stops": [
@@ -11117,14 +11124,14 @@
     },
     {
       "number": "回730", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 30,
-      "turn": { "kind": "折返", "number": "入換777", "time": "07:52", "how": "入換", "text": "入換777 07:52入換 E線から4番線 777に増結" },
+      "turn": { "kind": "折返", "number": "連777", "time": "07:52", "how": "入換", "text": "連777 07:52入換 E線から4番線 777に増結" },
       "stops": [
         { "st": "TH66S", "name": "江原検", "stop": "停", "arr": null, "dep": "07:32:00", "track": 13, "note": "灰色" },
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": "07:33:50", "dep": null, "track": 3, "note": "灰色;入換" }
       ]
     },
     {
-      "number": "入換777", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 30,
+      "number": "連777", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 30,
       "turn": { "kind": "併結", "number": "777", "time": "07:56", "how": null, "text": "777 に増結（大道寺4番線）" },
       "stops": [
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": null, "dep": "07:52:00", "track": 4, "note": "灰色;入換" }
@@ -11203,14 +11210,14 @@
     },
     {
       "number": "回832", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 32,
-      "turn": { "kind": "折返", "number": "入換875C", "time": "08:29", "how": "入換", "text": "入換875C 08:29入換 E線から3番線 875Cに増結" },
+      "turn": { "kind": "折返", "number": "連875C", "time": "08:29", "how": "入換", "text": "連875C 08:29入換 E線から3番線 875Cに増結" },
       "stops": [
         { "st": "TH66S", "name": "江原検", "stop": "停", "arr": null, "dep": "08:25:00", "track": 13, "note": "灰色" },
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": "08:26:50", "dep": null, "track": 3, "note": "灰色;入換" }
       ]
     },
     {
-      "number": "入換875C", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 32,
+      "number": "連875C", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 32,
       "turn": { "kind": "併結", "number": "875C", "time": "08:30", "how": null, "text": "875C に増結（大道寺3番線）" },
       "stops": [
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": null, "dep": "08:29:00", "track": 3, "note": "灰色;入換" }
@@ -11235,6 +11242,13 @@
         { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "09:28:30", "track": 1, "note": "灰色;×特館②21通;(待)特手②25通;×普道②28着" },
         { "st": "TH53", "name": "下吉沢", "stop": "運停", "arr": "09:30:10", "dep": "09:30:35", "track": 1, "note": "灰色" },
         { "st": "TH52", "name": "名田", "stop": "停", "arr": "09:32:25", "dep": "09:33:00", "track": 1, "note": "灰色" }
+      ]
+    },
+    {
+      "number": "解874", "type": "回送", "label": "回送", "dest": "大道寺", "unyo": 32,
+      "turn": { "kind": "折返", "number": "回933", "time": "09:26", "how": "発", "text": "回933 09:26発 回送 江原検行" },
+      "stops": [
+        { "st": "TH65", "name": "大道寺", "stop": "停", "arr": null, "dep": "09:21:00", "track": 3, "note": "灰色" }
       ]
     },
     {
