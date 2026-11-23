@@ -3665,6 +3665,8 @@ public sealed partial class RouteEngine
                     }
                     if (end) break;
                 }
+                // 行き先は時刻表の行き先。司令が途中で打ち切りにしたときだけ、打ち切りの駅
+                if (!dia.Stops.Any(s => s.StationId is { } sid && _central.StopOverride(train, sid) == "打ち切り") && dia.Dest.Length > 0) dest = dia.Dest;
             }
             return new { train, dest, cars = run.Player.CarModels, stops = rows };
         }
@@ -3686,7 +3688,7 @@ public sealed partial class RouteEngine
             {
                 if (stop == dest) break;
                 if (stop.Stop != "停" || stop.StationId == null || stop.Dep == null || ParseDiaTime(stop.Dep) is not { } sec) continue;
-                entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dest.Name, stop.Dep, stop.Track, info.Dir, sec)));
+                entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dia.Dest.Length > 0 ? dia.Dest : dest.Name, stop.Dep, stop.Track, info.Dir, sec)));
             }
         }
         return entries.OrderBy(e => e.Train.Seconds).ToLookup(e => e.Station, e => e.Train);
@@ -3778,7 +3780,7 @@ public sealed partial class RouteEngine
             var trains = _runs.Values.Where(r => r.HasPosition && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
             {
                 train = r.Train, advisory = advisories.Contains(r.Train), kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
-                destination = r.Dia?.Stops.LastOrDefault()?.Name,
+                destination = r.Dia is { } d ? (d.Dest.Length > 0 ? d.Dest : d.Stops.LastOrDefault()?.Name) : null, // 時刻表の行き先
                 delay = r.Delay is { } seconds && seconds >= 60 ? (int)(seconds / 60) : 0
             }).ToArray();
             return new { stations, trains, updated = DateTimeOffset.UtcNow, gameTime = _clock.NowText }; // 最終更新はゲームの時刻（時計がなければ updated）
