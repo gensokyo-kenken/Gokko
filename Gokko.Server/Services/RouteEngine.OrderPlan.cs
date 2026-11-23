@@ -109,11 +109,26 @@ public sealed partial class RouteEngine
                     .OrderBy(x => departed.ContainsKey(x.R) ? 1 : 0)
                     .ThenBy(x => departed.TryGetValue(x.R, out var k) ? k : -(x.R.Front * step + x.R.Fraction))
                     .ToList();
+                // 入換で番線に入る始発列車（検車区・引上線から。まだ入換を始めていない）は、入換の時刻から番線を使う。
+                // それより前に着く列車は、その番線に入れる（入換の列車がもう番線をふさいでいるとは考えない）
+                var shuntIn = present.Where(x => x.S.IsStart && x.S.ShuntFrom != null && x.S.Shunt != GroupState.Requested).ToList();
+                present = present.Except(shuntIn).ToList();
+                double ShuntAt((TrainRun R, StationRun S, double A, double D, int? Track, bool Ends) x) =>
+                    x.R.Dia != null && DiaShuntTimes.TryGetValue(x.R.Dia.Number, out var st) ? Math.Min(st, x.D) : x.D - 120;
+                // 番線に入る順: もう着いている列車 → 手前から着く列車（着く順）と、入換で入る列車（入換の時刻）を時刻で合わせる
+                var sequence = present.Select(x => (X: x, Kind: 0)).ToList();
+                var pendingShunt = new Queue<(TrainRun R, StationRun S, double A, double D, int? Track, bool Ends)>(shuntIn.OrderBy(ShuntAt));
+                foreach (var c in coming)
+                {
+                    while (pendingShunt.Count > 0 && ShuntAt(pendingShunt.Peek()) <= c.A + shift[c.R]) sequence.Add((pendingShunt.Dequeue(), 2));
+                    sequence.Add((c, 1));
+                }
+                while (pendingShunt.Count > 0) sequence.Add((pendingShunt.Dequeue(), 2));
                 var manual = _central.Order(station.Id, dir);
                 var floor = new Dictionary<TrainRun, double>(); // 手で決めた出発順序で、先の列車を待つ発
                 var times = new Dictionary<TrainRun, OrderTimes>();
                 List<string> order = new();
-                var arrival = present.Concat(coming).Select((x, i) => (x.R, i)).ToDictionary(p => p.R, p => p.i); // 着く順
+                var arrival = sequence.Select((x, i) => (x.X.R, i)).ToDictionary(p => p.R, p => p.i); // 番線に入る順
 
                 // 手で決めた出発順序で先の列車を待つと、同じ番線の後ろの列車も遅れるので、もう一度まわす
                 for (var pass = 0; pass < 3; pass++)
@@ -122,11 +137,16 @@ public sealed partial class RouteEngine
                     var lastOnTrack = new Dictionary<int, (string Train, double Dep)>();
                     string? leader = null;
                     double? leaderArr = null;
-                    foreach (var x in present.Concat(coming))
+                    foreach (var (x, kind) in sequence)
                     {
-                        var isComing = !present.Contains(x);
-                        var arr = x.A + shift[x.R];
+                        var isComing = kind == 1;
+                        var arr = kind == 2 ? ShuntAt(x) : x.A + shift[x.R];
                         string? trackLeader = null;
+                        if (kind == 2 && x.Track is { } ts && lastOnTrack.TryGetValue(ts, out var lts))
+                        {
+                            arr = Math.Max(arr, lts.Dep + OrderHeadwaySeconds); // 入換は、その番線の先の列車が出てから
+                            trackLeader = lts.Train;
+                        }
                         if (isComing)
                         {
                             if (leaderArr is { } la) arr = Math.Max(arr, la + OrderHeadwaySeconds);
