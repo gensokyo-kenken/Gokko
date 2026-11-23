@@ -873,7 +873,8 @@ public static class AdminEndpoints
             players.RemoveGhost(req.Id) ? Results.Ok(new { ok = true }) : Results.NotFound(new { message = "その継続乗務申請はもうありません" }));
 
         // 閉塞信号機: 停止にしているもの（だれの在線か・方向てこ）と、強制進行にしているもの
-        g.MapGet("/signals/block", (BlockSignals blocks, PlayerRegistry players, RouteEngine engine) =>
+        // 司令用管理画面が1秒ごとに読む（開いている画面の数だけ）ので、0.5 秒は同じ答えを使い回す（操作のあとは捨てる）
+        g.MapGet("/signals/block", (BlockSignals blocks, PlayerRegistry players, RouteEngine engine, ResponseCache cache) => cache.Get("signals-block", TimeSpan.FromMilliseconds(500), () =>
         {
             var occupants = new Dictionary<string, List<string>>(); // 回路 → 在線している列車
             foreach (var p in players.Snapshot().Where(p => p.Mode == Gokko.Common.ShareMode.Shared && p.InGame))
@@ -886,20 +887,20 @@ public static class AdminEndpoints
 
             var lever = engine.LeverStopSignals().ToHashSet();
             var forced = blocks.Forced();
-            return Results.Ok(new
+            return new
             {
                 signals = blocks.All.Select(s => new
                 {
                     name = s.Name,
                     protects = s.StopProtects,
-                    trains = s.StopProtects.SelectMany(c => occupants.GetValueOrDefault(c) ?? new List<string>()).Distinct(),
+                    trains = s.StopProtects.SelectMany(c => occupants.GetValueOrDefault(c) ?? new List<string>()).Distinct().ToList(),
                     lever = lever.Contains(s.Name),
                     forced = forced.TryGetValue(s.Name, out var since) ? since : (DateTime?)null
-                }),
+                }).ToList(),
                 sweepSeconds = (int)BlockSignals.SweepInterval.TotalSeconds,
                 sweepEnabled = blocks.SweepEnabled
-            });
-        });
+            };
+        }));
 
         // 閉塞信号機を強制進行にする・やめる（サーバーからの停止を出さず、None を送り続ける）
         g.MapPost("/signals/force", (ForceSignalRequest req, BlockSignals blocks, StateBroadcaster broadcaster) =>
@@ -941,7 +942,8 @@ public static class AdminEndpoints
         g.MapGet("/route/log", (RouteEngine engine) => Results.Ok(new { lines = engine.RouteLogView() }));
 
         // 列車別設定)（列車ごとの、この先の駅の番線・状態・駅扱いの選択肢）
-        g.MapGet("/trains", (RouteEngine engine) => Results.Ok(new { trains = engine.AdminView() }));
+        // 司令用管理画面が1秒ごとに読む（1回 約6ms）ので、0.5 秒は同じ答えを使い回す（操作のあとは捨てる）
+        g.MapGet("/trains", (RouteEngine engine, ResponseCache cache) => cache.Get("admin-trains", TimeSpan.FromMilliseconds(500), () => new { trains = engine.AdminView() }));
 
         // 臨時停車・臨時通過・打ち切り（kind: "停車" / "通過" / "打ち切り"、null で元に戻す）
         g.MapPost("/route/stop", (TrainStationRequest req, CentralControl central) =>
