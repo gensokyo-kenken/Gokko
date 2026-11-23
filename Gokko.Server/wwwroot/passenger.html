@@ -19,8 +19,11 @@ dialog{max-height:85vh;overflow:auto}
 .stop-kinds{grid-column:2;display:flex;flex-wrap:wrap;gap:3px}.stop-kinds .kind{padding:2px 3px;white-space:nowrap}
 .train-service{display:flex;align-items:center;justify-content:center;gap:3px}.train-service .delay{white-space:nowrap}
 .lane{padding-inline:4px}
+.menu-link{position:absolute;top:14px;right:16px;padding:5px 12px;border:1px solid #5f9a93;border-radius:8px;color:white;font-size:13px;text-decoration:none}
+.menu-link:hover{background:#1d5a60}
 </style>
-<header><h1>列車位置案内</h1><p id="range"></p><div class="legend"><span>駅名</span><span>↑ 上り</span><span>↓ 下り</span></div></header>
+<script src="menulink.js"></script>
+<header><a href="menu.html" data-menu-link class="menu-link">‹ メニュー</a><h1>列車位置案内</h1><p id="range"></p><div class="legend"><span>駅名</span><span>↑ 上り</span><span>↓ 下り</span></div></header>
 <main id="map"></main><footer id="status">在線情報を読み込み中…</footer>
 <dialog id="detail"><h2></h2><p></p><section id="schedule"></section><form method="dialog"><button>閉じる</button></form></dialog>
 <script src="passenger.js"></script></html>
