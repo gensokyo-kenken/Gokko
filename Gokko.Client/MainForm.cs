@@ -48,6 +48,7 @@ public sealed partial class MainForm : Form
     private readonly Button _gameButton = new() { Text = "ゲーム切断" };
     private readonly Button _tabletButton = new() { Text = "乗務タブレット" };
     private readonly Button _menuButton = new() { Text = "ブラウザメニュー" }; // 乗務メニューを、ふつうのブラウザで開く
+    private readonly Button _clockButton = new() { Text = "ロープレ時計" }; // ロープレ時刻の時計を、別の小さな窓で開く・閉じる
     private readonly Button _backButton = new() { Text = "モード選択へ" };
 
     /// <summary>通信状況（自分と、同じ列番の相手）。悪くなったら記録し、途切れたらお知らせする。</summary>
@@ -126,6 +127,7 @@ public sealed partial class MainForm : Form
         _gameButton.Click += async (_, _) => await ToggleGameAsync();
         _tabletButton.Click += (_, _) => OpenTablet();
         _menuButton.Click += (_, _) => OpenMenuInBrowser();
+        _clockButton.Click += (_, _) => ToggleClock();
         _link = new LinkMonitor(_role, _crewPanel != null);
         _link.Notice += ShowMessage;
         _linkButton.Click += (_, _) => OpenLinkStatus();
@@ -171,6 +173,7 @@ public sealed partial class MainForm : Form
         StartOnboard();
         _game.Start();
         UpdateView(null);
+        if (_config.ClockOpen) Shown += (_, _) => ShowClock(); // 前に開いていたら、ロープレ時計も開く
 
         // 開発用: 環境変数 GOKKO_AUTOCONNECT=1 なら、起動時にそのまま接続する（GOKKO_PASSWORD。モードは GOKKO_MODE）
         if (Environment.GetEnvironmentVariable("GOKKO_AUTOCONNECT") == "1")
@@ -240,7 +243,9 @@ public sealed partial class MainForm : Form
         _tabletButton.Margin = new Padding(0, 3, 0, 3);
         _menuButton.Size = new Size(130, 30);
         _menuButton.Margin = new Padding(8, 3, 0, 3);
-        screens.Controls.AddRange([_tabletButton, _menuButton]);
+        _clockButton.Size = new Size(130, 30);
+        _clockButton.Margin = new Padding(8, 3, 0, 3);
+        screens.Controls.AddRange([_tabletButton, _menuButton, _clockButton]);
         AddWide(screens, SizeType.Absolute, 40);
 
         // 今のモードと、モードを選ぶ画面に戻るボタン（クライアントを起動し直さずに、運転士・車掌・司令などを選び直す）
@@ -633,6 +638,37 @@ public sealed partial class MainForm : Form
     }
 
     private TabletForm? _tabletForm;
+    private RoleplayClockForm? _clockForm;
+    private bool _closingClock; // メイン画面を閉じるので時計も閉じる（開いていたことは覚えたまま）
+
+    /// <summary>［ロープレ時計］: 開いていなければ開き、開いていれば閉じる。</summary>
+    private void ToggleClock()
+    {
+        if (_clockForm is { IsDisposed: false })
+        {
+            _clockForm.Close();
+            return;
+        }
+
+        ShowClock();
+        ShowMessage("ロープレ時計を開きました（つかんで移動・右下の角で大きさ・右クリックで最前面の入・切）");
+    }
+
+    private void ShowClock()
+    {
+        if (_clockForm is { IsDisposed: false }) { _clockForm.BringUp(); return; }
+        _clockForm = new RoleplayClockForm(_config, () => _server.HasFreshState, () => _server.State?.GameTime);
+        _clockForm.FormClosed += (_, _) =>
+        {
+            _clockForm = null;
+            if (_closingClock) return;
+            _config.ClockOpen = false;
+            _config.Save();
+        };
+        _clockForm.Show();
+        _config.ClockOpen = true;
+        _config.Save();
+    }
 
     // クライアントのログインの合い札は、合言葉を入れてサーバーに接続できるまでは「仮」で、タブレット・メニューでは使えない。
     // 接続できたら本物になるので、それまでに開いた乗務タブレットの窓は、接続できた時にログインした状態で開き直す
@@ -1369,6 +1405,8 @@ public sealed partial class MainForm : Form
             _backButton.Enabled = _connectButton.Enabled = false;
             _radioAudioTimer.Stop();
             _tabletForm?.Close(); // 乗務タブレットの窓も閉じる（位置と大きさを覚える）
+            _closingClock = true;
+            _clockForm?.Close(); // ロープレ時計も閉じる（位置と大きさを覚え、開いていたことも覚えたまま）
             _radioAudio?.Update(false);
             _voiceConsole?.Shutdown();
             _extPhone?.Shutdown();
