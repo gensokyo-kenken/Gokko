@@ -425,6 +425,18 @@
     return orderedPath(best.span) || smoothPath(best.span, known);
   }
 
+  // 列車が入って、まだ鎖錠している回路（circuits）だけになった進路の線。進路の回路全部（all）で引いた線から、その回路の分だけ使う。
+  // 残りの回路だけで引くと、どちら側が通り道か分からず、通らない側を引いてしまう（水越の 14R で、22ロT の渡り線より手前の側が塗られた）
+  function liveRoutePath(r, known) {
+    const all = (r.all || []).filter((c) => graphs[c]);
+    const live = r.circuits.filter((c) => graphs[c]);
+    if (all.length > live.length && live.every((c) => all.includes(c))) {
+      const whole = routePath(all, known);
+      if (live.every((c) => whole.has(c))) return new Map(live.map((c) => [c, whole.get(c)]));
+    }
+    return routePath(r.circuits, known);
+  }
+
   // 列車の名札を置く位置: 列車を描いた線の、中ほどの点
   function trainAnchor(lines) {
     const all = [];
@@ -616,12 +628,12 @@
       // 行き先の番線の回路（dest）も入れる。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
       const known = [...(s.tid.trains.find((t) => t.train === r.train)?.circuits || []), ...(r.approach || []), ...(r.dest ? [r.dest] : []),
         ...s.tid.routes.filter((x) => x.train === r.train && x !== r).flatMap((x) => x.circuits)];
-      return { r, map: routePath(r.circuits, known) };
+      return { r, map: liveRoutePath(r, known) };
     });
     // 信号制御盤で取った進路（駅扱い）も同じ色で出す。列車の名前はないので、接近区間と、進路の回路全部（all。行き先の番線も）で枝を選ぶ。
     // 列車が入ると circuits は鎖錠中の区分（6LT・24T など）だけになり、行き先が分からないと長いほうの渡り線を選んでしまう
     for (const pn of s.panels || []) for (const r of pn.routes)
-      routeMaps.push({ r: { ...r, train: null }, map: routePath(r.circuits, [...(r.approach || []), ...(r.all || [])]) });
+      routeMaps.push({ r: { ...r, train: null }, map: liveRoutePath(r, [...(r.approach || []), ...(r.all || [])]) });
     for (const { r, map } of routeMaps) for (const lines of map.values()) p.push(poly(r.open ? "route" : "wait", lines));
 
     // 在線: その列車の進路が通る回路は、進路の枝で塗る。そうでない回路は、列車がいる回路どうしをつなぐ枝で塗る。

@@ -3542,6 +3542,8 @@ public sealed partial class RouteEngine
                         open = q.Seen,
                         reply = r.Results.GetValueOrDefault($"{q.Def.Interlock}/{q.Def.Name}") ?? "",
                         circuits = LiveCircuits(r, q).ToList(),
+                        // 進路の回路全部。列車が入って circuits が鎖錠中の回路だけになっても、在線位置の画面が通る側を引けるように
+                        all = q.Def.Circuits,
                         // 接近鎖錠の区間（出発なら出る番線の回路）。在線位置の画面が、進路の線をどちらの枝へ引くかの手がかりにする
                         approach = q.Def.Approach,
                         // 行き先の番線の回路（「3番線」へ入る進路なら、その番線の回路）。新野崎の 10LC・10LD のように
