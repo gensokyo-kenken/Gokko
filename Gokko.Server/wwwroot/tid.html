@@ -403,22 +403,30 @@
   // ・列車が通らない回路が入っている（鎖錠のためだけの回路。水越の 12R の 21ロT）: その回路は引かない。
   //   引かないと、通らない回路へ向けて渡り線の回路を本線側に引いてしまい、列車も本線側に塗られる
   // ・列車が通る回路が抜けている（駒野の 1RD5・1RD6 は 43ロT がない）: 道の上で間の回路を足してつなぐ
-  // 進路の回路をいちばん多く通り、足す回路が少なく、known の回路（列車の位置・行き先の番線）を多く通る道を選び、その道の順に引く
+  // 道の上で進路のすぐ外側の回路が known（出る番線・接近区間など）につながる道をいちばんに選ぶ。
+  // そのうえで、進路の回路をいちばん多く通り、足す回路が少なく、known の回路（列車の位置・行き先の番線）を多く通る道を選び、その道の順に引く
+  // （水越の 12L は 1番から 21イT・21ロT。21ロT は鎖錠のためだけ。回路を多く通る 2番の道を選ぶと、1番から出るのに 2番側を引いてしまう）
   function routePath(circuits, known) {
     const cs = [...new Set(circuits)].filter((c) => graphs[c]);
     const full = smoothPath(cs, known);
     if (full.size >= cs.length || paths.length === 0) return full;
-    const kn = [...new Set(known)];
+    const kn = [...new Set(known)], outside = kn.filter((k) => !cs.includes(k));
     let best = null;
     for (const p of paths) {
       const idx = cs.map((c) => p.indexOf(c)).filter((i) => i >= 0);
-      if (idx.length < 2) continue;
+      if (idx.length === 0) continue;
       const lo = Math.min(...idx), hi = Math.max(...idx), added = hi - lo + 1 - idx.length;
       if (added > 2) continue;
-      const score = idx.length * 100 - added * 10 + kn.filter((k) => p.includes(k)).length;
-      if (!best || score > best.score) best = { score, span: p.slice(lo, hi + 1), wide: p.slice(Math.max(0, lo - 1), hi + 2) };
+      const adj = outside.includes(p[lo - 1]) || outside.includes(p[hi + 1]);
+      if (idx.length < 2 && !adj) continue;
+      const score = (adj ? 1000 : 0) + idx.length * 100 - added * 10 + kn.filter((k) => p.includes(k)).length;
+      if (!best || score > best.score) best = { score, n: idx.length, span: p.slice(lo, hi + 1), wide: p.slice(Math.max(0, lo - 1), hi + 2) };
     }
     if (!best) return full;
+    // 一筆で引いた線が進路の外の known（出る番線など）につながり、道で引くのと同じ数以上の回路を通るなら、そのほうが確か
+    // （江ノ原検車区の 16L13 は 1RBT から 57T・54T・13T。通り道の記録に同じ並びの道がない）
+    const touchesOut = [...full.values()].flat().some((l) => [l[0], l[l.length - 1]].some((pt) => outside.some((k) => graphs[k] && graphs[k].nodes.has(K(pt)))));
+    if (touchesOut && full.size >= best.n) return full;
     // 前後1つの回路まで含めて道の順に引き、進路の回路の分だけ使う（端の回路を、隣の回路へつながる側まで引くため）
     const wide = orderedPath(best.wide);
     if (wide && best.span.every((c) => wide.has(c))) return new Map(best.span.map((c) => [c, wide.get(c)]));
