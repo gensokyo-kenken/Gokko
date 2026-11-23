@@ -275,6 +275,9 @@ public sealed partial class MainForm : Form
         incidentLayout.Controls.Add(incidentBox);
         incidentLayout.Controls.Add(_restoreButton);
         incidentPage.Controls.Add(incidentLayout);
+        // 窓が低くて入りきらないときは、タブをスクロールする（特発の表示と［復帰］がつぶれない高さを残す）
+        incidentPage.AutoScroll = true;
+        incidentPage.AutoScrollMinSize = new Size(0, 230);
 
         // 進路タブ
         _routeTab.Padding = new Padding(6);
@@ -322,6 +325,9 @@ public sealed partial class MainForm : Form
         bottom.Controls.Add(_continueButton, showAllow ? 2 : 1, 0);
         routeLayout.Controls.Add(bottom);
         _routeTab.Controls.Add(routeLayout);
+        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）
+        _routeTab.AutoScroll = true;
+        _routeTab.AutoScrollMinSize = new Size(0, 250);
 
         _tabs.TabPages.Add(incidentPage);
         _tabs.TabPages.Add(_routeTab);
@@ -1315,9 +1321,10 @@ public sealed partial class MainForm : Form
 
         VolumeBar(0, "話しているとき", () => _config.Radio.Volume, v => _config.Radio.Volume = v);
         VolumeBar(1, "聞いているだけのとき", () => _config.Radio.ListenVolume, v => _config.Radio.ListenVolume = v);
+        // 説明もいちばん下に積む。窓が狭くて入りきらないときは、タブ全体をスクロールする
         var help = new Label
         {
-            Dock = DockStyle.Fill, Padding = new Padding(0, 12, 0, 0),
+            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 12, 0, 0),
             Text = "F6：司令を呼び出す（送話キーではありません）。無線機も開きます。\n\n" +
                    "司令員が応答すると、通話を終えるまでマイクが開きます。受話器を戻すか［終了］で終えます。\n\n" +
                    "共通通話は全員に、個別通話は当事者だけに聞こえます。司令からの一斉通告は全員に届きます。\n\n" +
@@ -1325,6 +1332,8 @@ public sealed partial class MainForm : Form
                    "音量: 「話しているとき」は自分が通話に入っているときの相手の声、「聞いているだけのとき」はほかの人の通話や、応答していない一斉通告の声です。\n\n" +
                    "マイクの感度・エコー除去・無線風の音・人ごとの音量は、無線機の［音の設定］で変えられます。"
         };
+        page.AutoScroll = true;
+        page.ClientSizeChanged += (_, _) => help.MaximumSize = new Size(Math.Max(100, page.ClientSize.Width - page.Padding.Horizontal - 4), 0);
         page.Controls.Add(help);
         page.Controls.Add(phone);
         page.Controls.Add(volumeRow);
