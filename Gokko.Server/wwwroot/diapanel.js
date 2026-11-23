@@ -685,8 +685,16 @@
       const left = view.split ? 118 : 92;
       const rowsOf = (s) => (view.split && s.control && s.tracks && s.tracks.length > 0 ? s.tracks : []);
       const band = {};
-      let y = TOP;
+      // 単線区間（藤江〜水越など）の駅と駅の間は、駅間のスペースを空ける（番線の段が続いて見にくくならないように。列番もここに書く）
+      const zoneOf = new Map(stations.map((s) => [s.id, s.y]));
+      const singles = (d.sections || []).map((x) => [zoneOf.get(x.a), zoneOf.get(x.b)])
+        .filter(([a, b]) => a != null && b != null).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
+      const singleGap = (z1, z2) => singles.some(([a, b]) => a <= z1 && z2 <= b);
+      const extra = view.split ? 3 * c.trackPx : c.stationPx;
+      let y = TOP, prev = null;
       for (const s of stations) {
+        if (prev && singleGap(prev.y, s.y)) y += extra;
+        prev = s;
         const tracks = rowsOf(s);
         const rows = {};
         tracks.forEach((t, i) => { rows[t] = y + 10 + (i + 0.5) * c.trackPx; });
@@ -695,6 +703,9 @@
         y = (tracks.length ? y + 10 + tracks.length * c.trackPx : y) + c.stationPx;
       }
       const height = y - c.stationPx + BOTTOM;
+      // 駅と駅の間（駅の線・番線の段にかからない所）。上の駅のいちばん下の段から、下の駅の線まで
+      const ordered = stations.map((s) => band[s.y]);
+      const gaps = ordered.slice(1).map((b, i) => [ordered[i].bottom, b.y]);
       const zones = stations.map((s) => s.y);
       const now = new Date(d.now).getTime();
       const day = dayOn(), sp = GokkoClock.speed(), minPx = c.minPx; // あとで設定が変わっても、この配置の幅のまま
@@ -719,7 +730,7 @@
         return a.bottom + (z - zones[i - 1]) / (zones[i] - zones[i - 1]) * (c.top - a.bottom);
       }
       return {
-        stations, band, left, w, height, now, t0, t1, y: yOf, minPx: c.minPx, day, gameMs,
+        stations, band, gaps, left, w, height, now, t0, t1, y: yOf, minPx: c.minPx, day, gameMs,
         fit: !day && !view.split && isDefault(view.n, DEFAULTS.n), // 通常表示を元のままにしているときは、画面の幅に合わせる
         x: (t) => left + (new Date(t).getTime() - t0) / 60000 * minPx,
         t: (x) => t0 + (x - left) / minPx * 60000
@@ -925,6 +936,7 @@
         marks.push(`<rect x="${x1}" y="${cy - h / 2}" width="${Math.max(4, x2 - x1)}" height="${h}" rx="3" fill="rgba(229,57,53,.25)" stroke="#e53935" stroke-width="1.5" pointer-events="none"/>`);
       }
 
+      const obstacles = [], labelQueue = []; // 列番を置くときに避けるもの（◆・番線の数字）と、置く列番
       d.trains.forEach((tr, ti) => {
         if (simple || !visible(tr)) return;
         const color = TYPE_COLORS[tr.type] || "var(--text)";
@@ -933,7 +945,11 @@
         if (tr.history.length > 1) parts.push(`<polyline points="${pts(tr.history)}" fill="none" stroke="${color}" stroke-width="2"/>`);
         if (tr.forecast.length > 1) parts.push(`<polyline points="${pts(tr.forecast)}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4"/>`);
         const cur = tr.forecast[0];
-        parts.push(`<text x="${L.x(cur.t) + 6}" y="${L.y(cur.y, cur.row ?? tracks[cur.y]) - 5}" font-size="11" font-weight="600" fill="${color}">${esc(tr.train)}</text>`);
+        labelQueue.push({
+          train: tr.train, color,
+          at: { x: L.x(cur.t), y: L.y(cur.y, cur.row ?? tracks[cur.y]) },
+          pts: [...tr.history, ...tr.forecast].map((p) => ({ x: L.x(p.t), y: L.y(p.y, p.row ?? tracks[p.y]) }))
+        });
         tr.markers.forEach((m, mi) => {
           const x = L.x(m.t), y = L.y(m.y, m.track);
           const fill = m.held ? "#c62828" : !m.editable ? "#999" : m.departAt ? "#e0a800" : "#3aa0d8";
@@ -942,7 +958,11 @@
           const dep = m.departAt ? `・発車時刻 ${hhmm(new Date(m.departAt).getTime(), true)}` : "";
           const tipText = `${tr.train} ${m.name}: ${m.track == null ? "通過" : m.track + "番線"}（${m.trackSource}）・${m.source} ${hhmm(new Date(m.t).getTime(), true)}${dep}（${m.status}）`
             + "　押すと別ウィンドウで番線・停車／通過・駅扱い・抑止・順序" + (m.draggable ? "　横にずらすと発車時刻（ダブルクリックで解除）" : "") + (view.split && m.changeable ? "　縦にずらすと番線" : "");
-          if (!view.split) parts.push(`<text x="${x + 8}" y="${y + 4}" font-size="11" font-weight="700" fill="${trackColor}" pointer-events="none">${esc(trackText)}</text>`);
+          obstacles.push({ x1: x, y1: y, x2: x, y2: y, r: 7 });
+          if (!view.split) {
+            parts.push(`<text x="${x + 8}" y="${y + 4}" font-size="11" font-weight="700" fill="${trackColor}" pointer-events="none">${esc(trackText)}</text>`);
+            obstacles.push({ x1: x + 9, y1: y, x2: x + 15, y2: y, r: 6 });
+          }
           if (readOnly) return; // 読むだけの図は◆を出さない（番線の数字だけ）
           // ◆の窓（別ウィンドウ）で選んでいる◆は、丸で囲む
           if (popupOpen() && popup.train === tr.train && popup.stationId === m.stationId)
@@ -952,6 +972,7 @@
             data-x="${x}" data-y="${y}" data-tip="${esc(tipText)}" style="cursor:${view.split && m.changeable ? "move" : m.draggable ? "ew-resize" : "pointer"}"/>`);
         });
       });
+      for (const q of labelQueue) parts.push(placeLabel(q, L, obstacles));
       parts.push(...marks);
       parts.push(L.day ? `</svg></div>` : `</svg>`);
       if (!simple && !d.trains.some(visible)) parts.push(`<div class="muted">表示する列車はいません</div>`);
@@ -964,6 +985,60 @@
       if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
       lastL = L;
       if (jumpNow) { jumpNow = false; if (L.day) scrollToNow(); }
+    }
+
+    // 列番の置き場所: 線に沿って斜めに、駅と駅の間（駅の線・番線の段にかからない所）。今の時刻に近い所から探し、
+    // ほかの列番・◆・番線の数字と重ならない所に置く。どこにも置けなければ、今いる所のそばに置く
+    const textW = (t) => [...t].reduce((w, ch) => w + (ch.charCodeAt(0) > 255 ? 11 : 6.8), 0);
+    function segDist(a, b) {
+      const d = (px, py, s) => {
+        const vx = s.x2 - s.x1, vy = s.y2 - s.y1, l2 = vx * vx + vy * vy;
+        const k = l2 ? Math.max(0, Math.min(1, ((px - s.x1) * vx + (py - s.y1) * vy) / l2)) : 0;
+        return Math.hypot(px - (s.x1 + k * vx), py - (s.y1 + k * vy));
+      };
+      const cross = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+      const A = { x: a.x1, y: a.y1 }, B = { x: a.x2, y: a.y2 }, C = { x: b.x1, y: b.y1 }, D = { x: b.x2, y: b.y2 };
+      if (cross(A, B, C) * cross(A, B, D) < 0 && cross(C, D, A) * cross(C, D, B) < 0) return 0;
+      return Math.min(d(a.x1, a.y1, b), d(a.x2, a.y2, b), d(b.x1, b.y1, a), d(b.x2, b.y2, a));
+    }
+    function placeLabel(q, L, obstacles) {
+      const half = textW(q.train) / 2 + 1, r = 6, nowX = L.x(L.now);
+      const text = (x, y, ang) => `<text transform="translate(${x.toFixed(1)},${y.toFixed(1)})${ang ? ` rotate(${ang.toFixed(1)})` : ""}" text-anchor="middle" dominant-baseline="central"`
+        + ` font-size="11" font-weight="600" fill="${q.color}" paint-order="stroke" stroke="var(--panel, #fff)" stroke-width="3" pointer-events="none">${esc(q.train)}</text>`;
+      const cands = [];
+      const P = q.pts;
+      for (let i = 1; i < P.length; i++) {
+        const a = P[i - 1], b = P[i];
+        if (Math.max(a.x, b.x) < L.left || Math.min(a.x, b.x) > L.w - RIGHT) continue;
+        const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+        if (len < 2 * half + 4) continue; // 1本のまっすぐな所に収まるときだけ
+        const ux = dx / len, uy = dy / len, nx = uy, ny = -ux; // 線の向きと、線の上側
+        for (let k = half + 2; k <= len - half - 2; k += 8) {
+          const cx = a.x + ux * k + nx * 7, cy = a.y + uy * k + ny * 7;
+          const c = { cx, cy, x1: cx - ux * half, y1: cy - uy * half, x2: cx + ux * half, y2: cy + uy * half, ang: Math.atan2(dy, dx) * 180 / Math.PI };
+          if (Math.min(c.x1, c.x2) < L.left + 2 || Math.max(c.x1, c.x2) > L.w - RIGHT - 2) continue;
+          const top = Math.min(c.y1, c.y2) - r, bottom = Math.max(c.y1, c.y2) + r;
+          const inGap = L.gaps.some(([g1, g2]) => top >= g1 + 1 && bottom <= g2 - 1);
+          if (!inGap) continue;
+          c.score = Math.abs(cx - nowX) + (cx < nowX ? 40 : 0); // 今より先（見込みの線）を少し優先
+          cands.push(c);
+        }
+      }
+      cands.sort((p, q2) => p.score - q2.score);
+      for (const c of cands) {
+        if (obstacles.some((o) => segDist(c, o) < r + o.r)) continue;
+        obstacles.push({ x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2, r });
+        return text(c.cx, c.cy, c.ang);
+      }
+      // 置けなければ、今いる所の右上（重なるなら少しずつ上へ）
+      for (let dy = 0; dy < 60; dy += 12) {
+        const cx = q.at.x + 6 + half, cy = q.at.y - 9 - dy;
+        const c = { x1: cx - half, y1: cy, x2: cx + half, y2: cy };
+        if (dy + 12 < 60 && obstacles.some((o) => segDist(c, o) < r + o.r)) continue;
+        obstacles.push({ ...c, r });
+        return text(cx, cy, 0);
+      }
+      return "";
     }
 
     function svgPoint(ev) {
