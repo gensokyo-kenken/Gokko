@@ -3860,6 +3860,188 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
+    /// 列車位置案内（passenger.html）で列車を押したとき: 行き先・編成（車両ごとの形式）と、お客様が乗り降りする駅の定刻着・到着見込み。
+    /// 信号場は出さない。打ち切りの駅で終える。在線していない列車は null。
+    /// </summary>
+    public object? PassengerTrain(string train)
+    {
+        lock (_lock)
+        {
+            var run = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Train == train && r.Type != "回送"); // 回送・試運転はお客様に出さない
+            if (run == null) return null;
+            var rows = new List<object>();
+            var dest = "";
+            if (run.Dia is { } dia)
+            {
+                // 通り過ぎた最後の駅（発車の実績があるか、最後尾がその駅より先）
+                var lastPassed = dia.Stops.FindLastIndex(stop =>
+                {
+                    if (stop.StationId is not { } id) return false;
+                    var zone = _data.Line.ZoneOfStation(id);
+                    return run.ActualDep.ContainsKey(id) || zone >= 0 && (run.Rear - zone) * run.Dir.Step() > 0;
+                });
+                for (var i = 0; i < dia.Stops.Count; i++)
+                {
+                    var s = dia.Stops[i];
+                    var change = s.StationId is { } sid ? _central.StopOverride(train, sid) : null;
+                    var end = change == "打ち切り";
+                    var passengerStop = change == "停車" || (change != "通過" && s.Stop is not ("通" or "運停"));
+                    if ((end || passengerStop) && !(s.StationId?.EndsWith("S") == true || s.Name.Contains("信号場") || s.Name is "江原信" or "珠川信"))
+                    {
+                        dest = s.Name;
+                        var scheduled = s.Arr ?? s.Dep; // 着時刻のない駅（始発・発時刻だけの駅）は発時刻
+                        var arrived = s.StationId != null && run.ActualArr.ContainsKey(s.StationId);
+                        var passed = i <= lastPassed;
+                        // 到着見込み: 遅れがあれば定刻に足す。なければ、次の駅だけ走行時間から見込む
+                        var expected = !passed && !arrived && run.Delay is { } delay && ParseDiaTime(scheduled) is { } sec
+                            ? FormatDiaTime(sec + Math.Max(0, delay)) : null;
+                        if (expected == null && !passed && !arrived && scheduled != null
+                            && _clock.Now is { } now && s.StationId is { } nextId
+                            && (_data.Line.ZoneOfStation(nextId) - run.Front) * run.Dir.Step() > 0
+                            && _data.Line.ZoneOfStation(nextId) >= 0
+                            && _model.SecondsTo(RunType(run), run.Dir, run.Front, run.Fraction, nextId) is { } remaining)
+                            expected = FormatDiaTime(now.TotalSeconds + remaining);
+                        rows.Add(new { name = s.Name, scheduled, expected });
+                    }
+                    if (end) break;
+                }
+                // 行き先は時刻表の行き先。司令が途中で打ち切りにしたときだけ、打ち切りの駅
+                if (!dia.Stops.Any(s => s.StationId is { } sid && _central.StopOverride(train, sid) == "打ち切り") && dia.Dest.Length > 0) dest = dia.Dest;
+            }
+            return new { train, dest, cars = run.Player.CarModels, stops = rows };
+        }
+    }
+
+    private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds);
+    private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+
+    private static readonly string[] PassengerKindOrder = ["特急", "快急", "急行", "区急", "準急", "普通"];
+    private ILookup<string, string>? _passengerKinds; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+
+    /// <summary>
+    /// 駅に「普段」止まる種別（駅 → 種別）: その駅を走るその種別の列車のうち、1割以上が止まるもの。
+    /// 浜園の特急のように、臨時停車のときだけ止まるものは入らない（発車案内では「臨時停車」と出す）。
+    /// </summary>
+    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.Dia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
+        .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
+        .GroupBy(x => (x.Id, x.Kind))
+        .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
+        .ToLookup(g => g.Key.Id, g => g.Key.Kind);
+
+    /// <summary>時刻表の、駅ごとのお客様が乗れる発車（回送を除く。終着の駅は含めない）。時刻の順。</summary>
+    private ILookup<string, PassengerDeparture> BuildPassengerDepartures()
+    {
+        var entries = new List<(string Station, PassengerDeparture Train)>();
+        foreach (var dia in _data.Dia.Values)
+        {
+            if (dia.Type == "回送" || TrainInfo(dia.Number) is not { } info) continue;
+            var dest = dia.Stops.LastOrDefault(s => s.Stop == "停");
+            if (dest == null) continue;
+            foreach (var stop in dia.Stops)
+            {
+                // 最後の停車駅は終着なので出さない。ただし発時刻があり、行き先がその先（路線の外）なら、そこからも発車する
+                if (stop == dest && (stop.Dep == null || dia.Dest.Length == 0 || stop.Name == dia.Dest)) break;
+                if (stop.Stop != "停" || stop.StationId == null || stop.Dep == null || ParseDiaTime(stop.Dep) is not { } sec) continue;
+                entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dia.Dest.Length > 0 ? dia.Dest : dest.Name, stop.Dep, stop.Track, info.Dir, sec)));
+            }
+        }
+        return entries.OrderBy(e => e.Train.Seconds).ToLookup(e => e.Station, e => e.Train);
+    }
+
+    /// <summary>
+    /// 列車位置案内で駅を押したときの発車案内: 方面ごとに、これから発車する4本（定刻発・種別・行き先・のりば・運転整理中か）。
+    /// まだ出ていない列車は時刻表の時刻から、走っている列車はまだその駅を出ていなければ入れる（通過・打ち切りの指示がある列車は除く）。
+    /// 出発順序の指示があれば、その順に並べ替える。
+    /// </summary>
+    public object PassengerDepartures(string id)
+    {
+        lock (_lock)
+        {
+            _departuresByStation ??= BuildPassengerDepartures();
+            var now = NowSec();
+            var advisories = _central.PassengerAdvisoryTrains();
+            var zone = _data.Line.ZoneOfStation(id);
+            var running = _runs.Values.Where(r => r.HasPosition && r.Dia != null).ToLookup(r => r.Dia!.Number);
+            var candidates = new List<PassengerDeparture>();
+            foreach (var dep in _departuresByStation[id])
+            {
+                var runs = running[dep.Train];
+                if (!runs.Any())
+                {
+                    if (dep.Seconds >= now) candidates.Add(dep);
+                    continue;
+                }
+                foreach (var run in runs)
+                {
+                    if (run.ActualDep.ContainsKey(id) || (run.Rear - zone) * run.Dir.Step() > 0) continue;
+                    var station = run.Stations.FirstOrDefault(s => s.St.Id == id);
+                    if (station != null && (station.Done || IsCutOff(run, station))) continue;
+                    if (_central.StopOverride(run.Train, id) is "通過" or "打ち切り") continue;
+                    var adjusted = _orderPlan?.Times.GetValueOrDefault((run.Train, id))?.Dep ?? dep.Seconds;
+                    candidates.Add(dep with { Train = run.Train, Seconds = adjusted });
+                }
+            }
+
+            PassengerDeparture[] Next(Dir dir)
+            {
+                var rows = candidates.Where(d => d.Direction == dir).OrderBy(d => d.Seconds).ToArray();
+                var order = EffectiveOrder(id, dir);
+                if (order is { Count: > 0 })
+                {
+                    // 順序の指示に入っていない列車（まだ走っていないものなど）は、時刻の位置に残す
+                    var ranks = order.Select((name, i) => (name, i)).ToLookup(x => x.name, x => x.i);
+                    var ordered = new Queue<PassengerDeparture>(rows.Where(d => ranks.Contains(d.Train)).OrderBy(d => ranks[d.Train].First()));
+                    for (var i = 0; i < rows.Length; i++)
+                        if (ranks.Contains(rows[i].Train)) rows[i] = ordered.Dequeue();
+                }
+                return rows.Take(4).ToArray();
+            }
+
+            return new
+            {
+                time = FormatDiaTime(now),
+                boards = new[] { Dir.Up, Dir.Down }.Select(dir => new
+                {
+                    direction = dir.Label(),
+                    trains = Next(dir).Select(d => new
+                    {
+                        train = d.Train, kind = d.Kind, dest = d.Dest, time = d.Time, track = d.Track,
+                        // その種別がこの駅に普段は止まらない（浜園の特急など）: 臨時停車
+                        specialStop = PassengerKindOrder.Contains(d.Kind) && !PassengerKinds()[id].Contains(d.Kind),
+                        advisory = advisories.Contains(d.Train)
+                    }).ToArray()
+                }).ToArray()
+            };
+        }
+    }
+
+    /// <summary>
+    /// 列車位置案内（passenger.html）用。駅（信号場を除く。路線の順）と、その駅に止まる種別、在線している列車の位置（ゾーン）・種別・行き先・遅れ。
+    /// </summary>
+    public object PassengerPositions()
+    {
+        lock (_lock)
+        {
+            var line = _data.Line;
+            var kinds = PassengerKinds();
+            var stations = line.StationIds.Where(id => !line.StationName(id).Contains("信号場"))
+                .Select(id => new
+                {
+                    id, name = line.StationName(id), zone = line.ZoneOfStation(id),
+                    kinds = PassengerKindOrder.Where(kind => kinds[id].Contains(kind)).ToArray()
+                }).ToArray();
+            var advisories = _central.PassengerAdvisoryTrains();
+            var trains = _runs.Values.Where(r => r.HasPosition && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
+            {
+                train = r.Train, advisory = advisories.Contains(r.Train), kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
+                destination = r.Dia is { } d ? (d.Dest.Length > 0 ? d.Dest : d.Stops.LastOrDefault()?.Name) : null, // 時刻表の行き先
+                delay = r.Delay is { } seconds && seconds >= 60 ? (int)(seconds / 60) : 0
+            }).ToArray();
+            return new { stations, trains, updated = DateTimeOffset.UtcNow, gameTime = _clock.NowText }; // 最終更新はゲームの時刻（時計がなければ updated）
+        }
+    }
+
+    /// <summary>
     /// 在線位置の画面（tid.html）用。列車が踏んでいる軌道回路と、開通させている進路のうち、まだ使う軌道回路を返す。
     /// </summary>
     public object TidView()

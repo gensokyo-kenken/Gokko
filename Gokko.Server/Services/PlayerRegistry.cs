@@ -32,6 +32,8 @@ public sealed class PlayerInfo
 
     // ---- 在線共有モード ----
     public ShareMode Mode { get; set; }
+    /// <summary>車両ごとの形式（運転士のクライアントが送る。列車位置案内の編成に出す）。</summary>
+    public string[] CarModels { get; set; } = [];
     public List<StopInfo> Stops { get; set; } = new();
     public float TraveledDistance { get; set; }
     /// <summary>踏んでいる軌道回路が最後に変わった報告での、走った距離（m）と速度（km/h）。在線の記録に書き、回路の長さを出すのに使う。</summary>
@@ -336,6 +338,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
 
             if (p.Mode == ShareMode.Shared)
             {
+                p.CarModels = report.InGame && report.CarModels is { Length: <= 64 } cars ? cars : [];
                 p.Stops = (report.Stops ?? new List<StopInfo>()).Take(100).ToList();
                 p.TraveledDistance = report.TraveledDistance;
                 // 回路が変わった報告の距離（同じ報告の値なので、時計のずれがない）

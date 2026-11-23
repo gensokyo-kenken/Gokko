@@ -175,6 +175,9 @@ public sealed class DiaTrain
     /// <summary>種別表記（C特1・A特・急行 など）。出発信号機の列選に出す。</summary>
     public required string TypeLabel { get; init; }
 
+    /// <summary>時刻表に書かれた行き先（大道寺・江原検 など）。列車位置案内に出す。書かれていなければ空。</summary>
+    public string Dest { get; set; } = "";
+
     /// <summary>進路を扱う駅で終わるなら、その駅（江原検 → 江ノ原信号場）。路線の外で終わるなら null。</summary>
     public string? TerminalId { get; set; }
 
@@ -542,6 +545,8 @@ public sealed class RailData
                     var type = Str(t, "type") == "試運転" ? "回送" : Str(t, "type");
                     data.Dia[number] = cur = new DiaTrain { Number = number, Type = type, TypeLabel = Str(t, "label") };
                 }
+
+                if (Str(t, "dest") is { Length: > 0 } dest) cur.Dest = dest; // 同じ列番が分けて書かれていたら、あとのもの（先へ行く方）
 
                 if (t.TryGetProperty("next", out var nx) && nx.ValueKind == JsonValueKind.Object
                     && NormalizeTrain(Str(nx, "number")) is { Length: > 0 } nextNumber && Str(nx, "st") is { Length: > 0 } nextStation)

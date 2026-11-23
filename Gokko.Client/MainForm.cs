@@ -1201,6 +1201,8 @@ public sealed partial class MainForm : Form
         };
         if (shared && gameConnected && game != null)
         {
+            if (game.InGame && _role == CrewRole.Driver)
+                report.CarModels = _crewPanel?.CarModels.ToArray() ?? []; // 列車位置案内の編成
             report.Stops = game.Stops;
             report.TraveledDistance = game.TraveledDistance;
             report.NextStationDistance = game.NextStationDistance;
