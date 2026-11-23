@@ -66,6 +66,7 @@ public sealed class AiTrains : BackgroundService
     private readonly List<Dictionary<string, int>> _trackRuns = new(); // _signalRuns と同じ並び。その走りで止まった駅の番線
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
+    private readonly Dictionary<int, int> _carsByUnyo = new(); // 運行番号ごとの両数（ない運行は6両）
 
     private readonly object _lock = new();
     private readonly Dictionary<string, Train> _trains = new();
@@ -1164,7 +1165,7 @@ public sealed class AiTrains : BackgroundService
             var k = st.TrackCircuit.FirstOrDefault(kv => info.TrackCircuits.Contains(kv.Value));
             if (k.Value == null) continue;
             if (dia.Stops.FirstOrDefault(s => s.StationId == st.Id) is not { } ds) break; // ダイヤで通らない駅（番線を変えて逃がした先など）: 駅間と同じ扱い
-            return Add(number, 6, ds.Name, true, k.Key, info);
+            return Add(number, CarsOf(number), ds.Name, true, k.Key, info);
         }
 
         lock (_lock)
@@ -1194,8 +1195,8 @@ public sealed class AiTrains : BackgroundService
 
             var train = new Train
             {
-                Id = $"{PlayerRegistry.AiPrefix}{++_seq}", Seq = _seq, Number = number, Dia = dia, Dir = dir, Cars = 6,
-                Length = 6 * CarLength, StartStation = "", Auto = true, MidLine = true
+                Id = $"{PlayerRegistry.AiPrefix}{++_seq}", Seq = _seq, Number = number, Dia = dia, Dir = dir, Cars = CarsOf(number),
+                Length = CarsOf(number) * CarLength, StartStation = "", Auto = true, MidLine = true
             };
             var x = 0.0;
             var circuits = new List<SegCircuit>();
@@ -1302,7 +1303,7 @@ public sealed class AiTrains : BackgroundService
             }
         }
 
-        foreach (var (number, station, track) in todo) Add(number, 6, station, true, track);
+        foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track);
     }
 
     /// <summary>最後尾が抜けた進路は、ゲームと同じく解く（道筋からも外す）。</summary>
@@ -1341,6 +1342,10 @@ public sealed class AiTrains : BackgroundService
     // =========================================================================================
     // 距離の表
     // =========================================================================================
+
+    /// <summary>自動で出す列車の両数。ダイヤの運行番号から AiTrains.json の carsByUnyo で引く（ない運行は6両）。</summary>
+    private int CarsOf(string number) =>
+        _rail.DiaOf(number)?.Unyo is { } u && _carsByUnyo.TryGetValue(u, out var c) ? c : 6;
 
     private double LengthOf(string circuit) =>
         _circuitLengths.TryGetValue(circuit, out var l) ? l : circuit.StartsWith("TH") ? DefaultStationCircuit : DefaultLineCircuit;
@@ -1390,6 +1395,9 @@ public sealed class AiTrains : BackgroundService
                     _stops.Add(new StopSpec(s.GetProperty("station").GetString()!, s.GetProperty("dir").GetString() == "down" ? Dir.Down : Dir.Up,
                         s.GetProperty("track").GetInt32(), s.GetProperty("signal").GetString()!,
                         s.TryGetProperty("before", out var b) ? b.GetDouble() : 0, s.TryGetProperty("after", out var a) ? a.GetDouble() : null));
+            if (root.TryGetProperty("carsByUnyo", out var carsBy))
+                foreach (var c in carsBy.EnumerateObject())
+                    if (int.TryParse(c.Name, out var unyo) && c.Value.TryGetInt32(out var n)) _carsByUnyo[unyo] = n;
             if (root.TryGetProperty("circuitLengths", out var lens))
                 foreach (var c in lens.EnumerateObject())
                     _circuitLengths[c.Name] = c.Value.GetDouble();
