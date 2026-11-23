@@ -154,7 +154,10 @@
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 3, "routes": ["32LE", "29LC"], "requireFree": ["TH65_ET"], "via": "E線" },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LE", "29LD"], "requireFree": ["TH65_ET"], "via": "E線" },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 3, "routes": ["32LC"] },
-          { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] }
+          { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] },
+          // 増結車（連777・連875C）と切り離した車両（回2131）: E線で折り返し、E線から番線へ
+          { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 3, "routes": ["29LC"] },
+          { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] }
         ],
         // 大道寺止めの入換: 3・4番線から入換Y線（既定）・E線へ
         // Y線へは、Y線から入換するときと同じく E線経由（番線→E線 2xRE、E線→Y線 30R）を既定にし、E線に列車がいれば直接（2xRY）

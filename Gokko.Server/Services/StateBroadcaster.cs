@@ -208,6 +208,8 @@ public sealed class StateBroadcaster : BackgroundService
                 // 2台のゲームは同じ列車を別々に動かしているので位置がずれ（実測で最大 180m）、相手の在線で前の信号が R になって、
                 // 同じ列車に乗っているはずの相手の列車が止められてしまうため
                 var others = shared.Where(o => o.ConnectionId != p.ConnectionId && !SameTrain(o, p)).SelectMany(o => o.TrackCircuits).ToHashSet();
+                // 連結する列車には、番線で待っている増結車の在線を見せない（入換信号機で、増結車のいる番線へ入るため）
+                others.ExceptWith(_routes.CouplingIgnored(p.ConnectionId));
                 state.Signals = _signals.Calculate(others, p.GameRoutes);
 
                 // 単線区間の閉塞信号機は、方向てこと逆向きなら停止に固定する。

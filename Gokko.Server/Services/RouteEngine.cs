@@ -491,6 +491,20 @@ public sealed partial class RouteEngine
         public GroupState Shunt { get; set; }
         public string ShuntWait { get; set; } = "";
 
+        /// <summary>連結（ダイヤの注記に「併」のある駅）: 番線に止まって待っている増結車。いなければ null。</summary>
+        public TrainRun? CouplePartner { get; set; }
+        /// <summary>連結: まだ番線に入りきっていない増結車（回730・連777 など）の列番。いなければ null。</summary>
+        public string? CoupleWaiting { get; set; }
+        /// <summary>連結: 第二場内の代わりに開ける入換信号機の進路（大道寺4番は 28L）。場内を取ったときに決める。</summary>
+        public RouteDef? CoupleShunt { get; set; }
+        public bool CoupleShuntRequested { get; set; }
+        /// <summary>連結: 列車が止まった時刻（入換信号機の手前・番線の中）。完全に止まったことを確かめるのに使う。</summary>
+        public DateTime? CoupleStoppedUtc { get; set; }
+        public bool Coupled { get; set; }
+        /// <summary>解放: 切り離した（「解」の列車を出した）。止まった時刻は完全停止の確認に使う。</summary>
+        public bool Split { get; set; }
+        public DateTime? SplitStoppedUtc { get; set; }
+
         /// <summary>終着の列車の入換（引上げ）: 要求された入換（その番線の shuntOut の何番目か）。要求がなければ null。</summary>
         public int? ShuntOutChoice { get; set; }
         public GroupState ShuntOut { get; set; }
@@ -604,8 +618,8 @@ public sealed partial class RouteEngine
             // 終着の列車の入換（引上げ）: 番線に入りきっていて、その番線から出る入換があれば、それを要求する
             if (ShuntOutStation(run) is { } end)
             {
-                end.ShuntOutChoice = 0;
-                return $"{end.St.Name}: {end.Track}番線から{ShuntOutOptions(run, end)[0].Label}への入換進路を要求しました";
+                end.ShuntOutChoice = DefaultShuntOut(run, end);
+                return $"{end.St.Name}: {end.Track}番線から{ShuntOutOptions(run, end)[end.ShuntOutChoice.Value].Label}への入換進路を要求しました";
             }
 
             // フリー運転で待避線に止まっている列車: 待避線からの出発進路を要求する（待避が終わっていなければ、終わってから開通）
@@ -639,6 +653,20 @@ public sealed partial class RouteEngine
         (st.Terminal || IsTurnbackTrack(run, st)) && run.Dia?.Next?.StationId != st.St.Id && st.Track is { } t
             ? st.St.Routes[run.Dir].ShuntOuts.Where(o => o.From == t).GroupBy(o => o.Label).Select(g => g.First()).ToList()
             : new List<ShuntOutDef>();
+
+    /// <summary>
+    /// 入換（引上げ）の既定の選択肢。増結車になる列車（折り返しの列番が「連」で始まる。回730 → 連777）と、
+    /// 切り離された列車（「解」で始まる。解2076C → 回2131）は、E線へ（E線で折り返して番線へ入る）。ほかは最初の選択肢。
+    /// </summary>
+    private int DefaultShuntOut(TrainRun run, StationRun st)
+    {
+        if (run.Train.StartsWith("解") || run.Dia != null && _data.Turns.TurnOf(run.Dia) is { Number: { } n } && n.StartsWith("連"))
+        {
+            var i = ShuntOutOptions(run, st).FindIndex(o => o.Label == "E線");
+            if (i >= 0) return i;
+        }
+        return 0;
+    }
 
     /// <summary>入換（引上げ）の選択肢の、実際に使う候補: 書いた順に、RequireFree の回路に他の列車がいないもの（なければ最後の候補）。</summary>
     private static ShuntOutDef ShuntOutPath(TrainRun run, StationRun st, ShuntOutDef option, Dictionary<string, TrainRun> occupied)
@@ -915,6 +943,8 @@ public sealed partial class RouteEngine
         foreach (var r in _runs.Values)
         {
             if (r.ConnId == p.ConnectionId) continue;
+            // 切り離した車両（解874・そこから折り返した 回933）は、元の列車（874・975）と同じ番線に現れる
+            if ((SplitOriginOf(RailData.NormalizeTrain(p.TrainNumber)) != null) != (SplitOriginOf(r.Train) != null)) continue;
             if (r.Player.TrackCircuits.Any(mine.Contains)) return r;
             if (r.Requests.Any(q => !q.Released && !q.Entered && q.CancelledUtc == null && q.Def.Circuits.Any(mine.Contains))) return r;
         }
@@ -1106,7 +1136,7 @@ public sealed partial class RouteEngine
         if (!digits.Success) return null;
         var dir = int.Parse(digits.Groups[1].Value[^1..]) % 2 == 1 ? Dir.Down : Dir.Up;
         string type;
-        if (body.StartsWith("回") || body.StartsWith("試")) type = "回送";
+        if (body.StartsWith("回") || body.StartsWith("試") || body.StartsWith("連") || body.StartsWith("解")) type = "回送"; // 連777（増結車）・解2076C（切り離した車両）
         else if (body.Length == 0) type = "普通";
         else
             type = char.ToUpperInvariant(body[^1]) switch
@@ -1497,9 +1527,10 @@ public sealed partial class RouteEngine
                 if (st.IsStart && st.ShuntFrom != null && !st.ShuntRequested) st.ShuntRequested = true;
                 // 引上げは、スタフの折返が「入換」のときだけ（「発」なら、その番線から次の列番でそのまま出る）
                 // 始発でも、その番線の回路にいるときだけ（つなぎ直しなどで列車を作り直したとき、もう引上線にいるのに、引上げの進路を取り直さないように）
+                // 増結車（折返が「併結」）は、番線で連結を待つので引き上げない
                 if (st.ShuntOutChoice == null && ShuntOutOptions(run, st).Count > 0 && FullyInTrack(run, st)
-                    && _data.Turns.TurnOf(run.Dia) is not { Kind: "折返", How: not "入換" })
-                    st.ShuntOutChoice = 0;
+                    && _data.Turns.TurnOf(run.Dia) is not ({ Kind: "折返", How: not "入換" } or { Kind: "併結" }) && !run.Train.StartsWith("連"))
+                    st.ShuntOutChoice = DefaultShuntOut(run, st);
             }
             ApplyHold(run, st, now);
 
@@ -1692,7 +1723,7 @@ public sealed partial class RouteEngine
         {
             (st.Track, st.TrackSource) = (dt, "ダイヤ");
             // ダイヤ運転中は、ダイヤの番線を勝手に変えない（ふさがっていれば空くまで待つ。交換・順序はダイヤどおりに流すので、ずらすと行き違えなくなる）
-            if (!DiaMode) AvoidTakenTrack(run, st, options);
+            if (!DiaMode && st.CouplePartner == null && st.CoupleWaiting == null) AvoidTakenTrack(run, st, options); // 連結する駅は、増結車のいる番線のまま
             return;
         }
 
@@ -2322,6 +2353,8 @@ public sealed partial class RouteEngine
     {
         if (IsCutOff(run, st)) return;
         if (st.Done || !st.Locked && !st.IsStart && !_central.IsForced(run.Train, st.St.Id)) return;
+        UpdateCoupling(run, st, occupied, now);
+        UpdateSplit(run, st, now);
 
         // 終着の列車の入換（引上げ）: 要求があれば、番線に入りきってから入換進路を開通させる
         if (st.ShuntOutChoice is { } outIndex && st.ShuntOut != GroupState.Requested)
@@ -2337,7 +2370,7 @@ public sealed partial class RouteEngine
                     : st.ForceShuntOut ? InterlockConflict(run, outPath, occupied)
                     : PanelControlled(run, st) ? PanelWait
                     : (_central.Hold(run.Train, st.St.Id) & HoldKind.Depart) != 0 ? "出発抑止（集中扱い）"
-                    : Conflict(run, st, outPath, occupied, departure: true);
+                    : SplitOrderHold(run, st) ?? Conflict(run, st, outPath, occupied, departure: true);
                 if (outWait != null) (st.ShuntOut, st.ShuntOutWait) = (GroupState.Waiting, outWait);
                 else
                 {
@@ -2451,7 +2484,8 @@ public sealed partial class RouteEngine
                     : central ? "集中扱い（開通指示待ち）"
                     : timeWait ?? SingleEntryHold(run, st) ?? PrevDepartHold(run, st) ?? (approachWait = ApproachHold(run, st)) ?? (st.Track == null ? DepartTimeHold(run, st, now) : null)
                       ?? DiaStartFirstHold(run, st)
-                      ?? (conflict = Conflict(run, st, st.ArrivePath, occupied, departure: false));
+                      ?? (conflict = Conflict(run, st, CoupleArrivePath(run, st), occupied, departure: false));
+            if (arriveWait == null && !st.ForceArrive && st.CoupleWaiting is { } cw) arriveWait = $"増結車（{cw}）が番線に入るまで";
             st.ArriveBlocked = arriveWait != null && ReferenceEquals(arriveWait, conflict);
             // 第2場内の取り始め待ちだけなら、第1場内を先に開ける駅では第1場内だけ開ける
             if (approachWait != null && ReferenceEquals(arriveWait, approachWait)) RequestFirstHome(run, st, occupied, DiaStartFirstHold(run, st), now);
@@ -2474,6 +2508,7 @@ public sealed partial class RouteEngine
             else if (st.IsStart && !st.DepartureRequested) wait = "出発要求待ち";
             else if (DepartBeforeArrive(st) && !st.IsStart && ApproachHold(run, st) is { } aw) wait = aw;
             else if (needArrive && arriveWait != null && !DepartBeforeArrive(st)) wait = $"場内待ち（{arriveWait}）";
+            else if (st.CouplePartner != null || st.CoupleWaiting != null) wait = "連結待ち";
             else if (needArrive && LeadsToSingleTrack(run, st)) wait = "単線区間のため、場内の開通後に判断";
             else if (OrderHold(run, st, st.DepartPath) is { } ow) wait = ow;
             else wait = PassingHold(run, st, now)
@@ -2485,6 +2520,7 @@ public sealed partial class RouteEngine
                         ?? DepartTimeHold(run, st, now)
                         ?? DiaDepartHold(run, st)
                         ?? ConnectionHold(run, st)
+                        ?? SplitOrderHold(run, st)
                         ?? (conflict = Conflict(run, st, st.DepartPath, occupied, departure: true));
             st.DepartBlocked = wait != null && ReferenceEquals(wait, conflict);
 
@@ -2500,10 +2536,200 @@ public sealed partial class RouteEngine
         {
             if (arriveWait == null)
             {
-                Request(run, st, st.ArrivePath, departure: false, now);
+                Request(run, st, CoupleArrivePath(run, st), departure: false, now);
                 if (st.ForceArrive) (st.ForceArrive, st.ManualUsed) = (false, true);
             }
             else (st.Arrive, st.ArriveWait) = (GroupState.Waiting, arriveWait);
+        }
+    }
+
+    // =========================================================================================
+    // 連結・解放（大道寺の「併B 前2増」など）
+    // ・増結車は、列番が「連」＋この列車の列番の列車（連777 → 777）と、ダイヤでその列番に折り返す列車（回730 → 連777）。
+    //   増結車が止まる駅（ダイヤの終着、ダイヤがなければ今いる駅）で連結する
+    // ・増結車が番線に入って止まるまで、場内は取らない
+    // ・増結車が番線にいれば、場内は第一場内（13LD）だけ取り、第二場内（12L）の代わりに、同じ回路の入換信号機（28L）を、
+    //   列車がその手前で完全に止まってから開ける。増結車の在線は、この列車の進路・信号では見ない
+    // ・連結するまで出発は取らない。連結したら（増結車が消えたら）ふつうに出発
+    // =========================================================================================
+
+    private static readonly TimeSpan CoupleStopCheck = TimeSpan.FromSeconds(3);  // 完全に止まったとみなすまで
+    private static readonly TimeSpan CoupleDoneStop = TimeSpan.FromSeconds(30);  // ユーザーの列車: 番線の中でこれだけ止まっていたら連結した
+    private readonly List<(string Partner, string Train)> _coupled = new();
+
+    /// <summary>この列車に連結する増結車の列番（連777 と、連777 に折り返す 回730）。</summary>
+    private HashSet<string> CouplingPartnerNumbers(string train)
+    {
+        var set = new HashSet<string> { "連" + train };
+        foreach (var d in _data.Dia.Values)
+            if (_data.Turns.TurnOf(d) is { Kind: "折返", Number: { } n2 } && set.Contains(n2)) set.Add(d.Number);
+        return set;
+    }
+
+    /// <summary>増結車が止まる駅: ダイヤの終着。ダイヤがなければ（手入力の 連777 など）今いる駅。</summary>
+    private static string? PartnerStation(TrainRun r) =>
+        r.Dia?.TerminalId ?? r.Stations.FirstOrDefault(s => !s.Done)?.St.Id;
+
+    /// <summary>第二場内と同じ所から同じ回路へ入る入換信号機の進路（大道寺 12L → 28L、11L → 27L）。</summary>
+    private RouteDef? ParallelShunt(RouteDef home) =>
+        _data.Routes.Values.FirstOrDefault(r => r.Interlock == home.Interlock && r.Name != home.Name && r.Kind.Contains("入換")
+                                                && r.From == home.From && r.To == home.To && r.Circuits.SequenceEqual(home.Circuits));
+
+    /// <summary>場内で取る進路。増結車が番線にいれば、最後の進路（第二場内）を除く（入換信号機はあとで開ける）。</summary>
+    private List<RouteDef> CoupleArrivePath(TrainRun run, StationRun st)
+    {
+        if (st.CouplePartner == null || st.ArrivePath.Count < 2 || ParallelShunt(st.ArrivePath[^1]) is not { } shunt) return st.ArrivePath;
+        st.CoupleShunt = shunt;
+        return st.ArrivePath.Take(st.ArrivePath.Count - 1).ToList();
+    }
+
+    private void UpdateCoupling(TrainRun run, StationRun st, Dictionary<string, TrainRun> occupied, DateTime now)
+    {
+        st.CouplePartner = null;
+        st.CoupleWaiting = null;
+        if (st.Coupled || st.IsStart || st.Track is not { } track || !st.St.TrackCircuit.TryGetValue(track, out var tc)) return;
+        var numbers = CouplingPartnerNumbers(run.Train);
+        var partners = _runs.Values.Where(r => r != run && numbers.Contains(r.Train) && PartnerStation(r) == st.St.Id).ToList();
+        if (partners.Count == 0 && st.CoupleShunt == null) return;
+        var partner = partners.FirstOrDefault(r => r.Player.TrackCircuits.Count > 0 && r.Player.TrackCircuits.All(c => c == tc) && r.Player.Speed < StopSpeedKmh);
+        if (partner == null)
+        {
+            // 増結車がまだ番線にいない（入換の途中など）。自分がもう番線に入っていれば待たない
+            if (partners.Count > 0 && !run.Player.TrackCircuits.Contains(tc)) st.CoupleWaiting = partners[0].Train;
+            // 場内を取ったあと増結車がいなくなった（消えた）: 入換信号機の代わりに、第二場内を開ける
+            if (partners.Count == 0 && st.CoupleShunt != null && !st.CoupleShuntRequested && st.Arrive == GroupState.Requested && st.ArrivePath.Count > 0)
+            {
+                run.Requests.Add(new RouteReq { Def = st.ArrivePath[^1], Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
+                st.CoupleShuntRequested = true;
+                _log.Note($"連結: {run.Train} {st.St.Name} 増結車がいないので、第二場内 {st.ArrivePath[^1].Name} を開けます");
+            }
+            return;
+        }
+        st.CouplePartner = partner;
+
+        // 入換信号機: 第一場内を取ったあと、列車がその手前で完全に止まってから開ける
+        if (st.CoupleShunt is { } shunt && !st.CoupleShuntRequested)
+        {
+            if (st.Arrive != GroupState.Requested) return;
+            var before = run.Player.TrackCircuits.Count > 0 && !run.Player.TrackCircuits.Any(shunt.Circuits.Contains);
+            if (before && run.Player.Speed < StopSpeedKmh) st.CoupleStoppedUtc ??= now;
+            else st.CoupleStoppedUtc = null;
+            if (st.CoupleStoppedUtc is not { } stopped || now - stopped < CoupleStopCheck) return;
+            if (InterlockConflict(run, [shunt], occupied, partner) is { } why)
+            {
+                st.ArriveWait = $"連結の入換信号機待ち（{why}）";
+                return;
+            }
+            run.Requests.Add(new RouteReq { Def = shunt, Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
+            (st.CoupleShuntRequested, st.CoupleStoppedUtc) = (true, null);
+            _log.Note($"連結: {run.Train} {st.St.Name} 止まったのを確かめて、入換信号機 {shunt.Name} を開けます（増結車 {partner.Train}）");
+            return;
+        }
+
+        // ユーザーの列車: 番線に入りきって、しばらく止まっていたら連結したとする（自動運転列車は AiTrains が決める）
+        if (st.CoupleShuntRequested && !PlayerRegistry.IsVirtual(run.ConnId)
+            && run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c == tc))
+        {
+            if (run.Player.Speed < StopSpeedKmh) st.CoupleStoppedUtc ??= now;
+            else st.CoupleStoppedUtc = null;
+            if (st.CoupleStoppedUtc is { } s1 && now - s1 >= CoupleDoneStop)
+            {
+                (st.Coupled, st.CouplePartner) = (true, null);
+                _coupled.Add((partner.Train, run.Train));
+                _log.Note($"連結: {run.Train} に {partner.Train} を連結しました（{st.St.Name} {track}番線）");
+            }
+        }
+    }
+
+    /// <summary>連結: 列車（接続ID）→ 駅ID → その番線で止まって待っている増結車の列番。自動運転列車が停止位置を決めるのに使う。</summary>
+    public Dictionary<string, Dictionary<string, string>> CouplePartners()
+    {
+        lock (_lock)
+            return _runs.Values
+                .Select(r => (r.ConnId, Map: r.Stations.Where(s => !s.Done && s.CouplePartner != null).ToDictionary(s => s.St.Id, s => s.CouplePartner!.Train)))
+                .Where(x => x.Map.Count > 0)
+                .ToDictionary(x => x.ConnId, x => x.Map);
+    }
+
+    /// <summary>信号の上限で見ない軌道回路: 連結する列車には、番線で待っている増結車の在線を見せない（入換信号機で入るため）。</summary>
+    public List<string> CouplingIgnored(string connId)
+    {
+        lock (_lock)
+            return _runs.TryGetValue(connId, out var run)
+                ? run.Stations.Where(s => !s.Done && s.CouplePartner != null).SelectMany(s => s.CouplePartner!.Player.TrackCircuits).ToList()
+                : new List<string>();
+    }
+
+    // ---- 解放 ----
+    // ・ダイヤに「解」＋この列車の列番の列車があれば、その最初の駅で切り離す（解2076C は大道寺2番線、解874 は大道寺3番線）
+    // ・ユーザーの列車は、番線に入りきって完全に止まったら切り離す。切り離した車両は自動運転列車として同じ番線に出す（AiTrains）
+    // ・自動運転列車は、AiTrains が駅に着いたときに切り離す
+
+    private readonly List<(string Child, string Parent, string Station, int Track)> _splits = new();
+
+    private void UpdateSplit(TrainRun run, StationRun st, DateTime now)
+    {
+        // 自動運転列車は、着いたときに AiTrains が切り離す（すぐ折り返して列番が変わることがあるので）
+        if (PlayerRegistry.IsVirtual(run.ConnId)) return;
+        if (st.Split || st.IsStart || st.Track is not { } track || !st.St.TrackCircuit.TryGetValue(track, out var tc)) return;
+        if (_data.DiaOf("解" + run.Train) is not { } child || child.Stops.FirstOrDefault(s => s.StationId != null)?.StationId != st.St.Id) return;
+        var inTrack = run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c == tc);
+        if (inTrack && run.Player.Speed < StopSpeedKmh) st.SplitStoppedUtc ??= now;
+        else st.SplitStoppedUtc = null;
+        if (st.SplitStoppedUtc is not { } s0 || now - s0 < CoupleStopCheck) return;
+        st.Split = true;
+        _splits.Add((child.Number, run.Train, st.St.Name, track));
+        _log.Note($"解放: {run.Train} から {child.Number} を切り離します（{st.St.Name} {track}番線）");
+    }
+
+    /// <summary>切り離した車両の側の列車なら、その「解」のダイヤ（解874 自身、または 解874 から折り返した 回933）。元の列車の側なら null。</summary>
+    private DiaTrain? SplitOrigin(TrainRun r) => SplitOriginOf(r.Train);
+
+    private DiaTrain? SplitOriginOf(string train)
+    {
+        if (train.StartsWith("解")) return _data.DiaOf(train);
+        return _data.Dia.Values.FirstOrDefault(d => d.Number.StartsWith("解") && _data.Turns.TurnOf(d) is { Number: { } n } && n == train);
+    }
+
+    /// <summary>
+    /// 切り離したあと、同じ番線にいる2本の出る順番。切り離した車両は、元の列車が着いた向きで後ろ側にいる。
+    /// その向きに出るなら元の列車の側が先（2076C が出てから、解2076C が E線へ）、反対向きに出るなら切り離した車両の側が先
+    /// （874 から折り返した 975 は、解874 から折り返した 回933 が出てから）。
+    /// </summary>
+    private string? SplitOrderHold(TrainRun run, StationRun st)
+    {
+        if (st.Track is not { } track || !st.St.TrackCircuit.TryGetValue(track, out var tc) || !run.Player.TrackCircuits.Contains(tc)) return null;
+        var mine = SplitOrigin(run);
+        foreach (var o in _runs.Values.Where(o => o != run && o.Player.TrackCircuits.Contains(tc)))
+        {
+            var theirs = SplitOrigin(o);
+            if (mine == null && theirs != null && TrainInfo(theirs.Number)?.Dir is { } arrived && run.Dir != arrived)
+                return $"切り離した車両（{o.Train}）が先";
+            if (mine != null && theirs == null && TrainInfo(mine.Number)?.Dir is { } arrived2 && run.Dir == arrived2)
+                return $"元の列車（{o.Train}）が先";
+        }
+        return null;
+    }
+
+    /// <summary>切り離した組（切り離した車両の列番, 元の列車の列番, 駅名, 番線）。取り出すと消える。</summary>
+    public List<(string Child, string Parent, string Station, int Track)> TakeSplits()
+    {
+        lock (_lock)
+        {
+            var list = _splits.ToList();
+            _splits.Clear();
+            return list;
+        }
+    }
+
+    /// <summary>ユーザーの列車が連結を終えた組（増結車の列番, 列車の列番）。取り出すと消える。</summary>
+    public List<(string Partner, string Train)> TakeCoupled()
+    {
+        lock (_lock)
+        {
+            var list = _coupled.ToList();
+            _coupled.Clear();
+            return list;
         }
     }
 
@@ -2522,12 +2748,13 @@ public sealed partial class RouteEngine
     /// 連動の確認（駅扱いの強制進路用）: 進路の回路に他の列車がいない、他の列車の進路と重ならない。
     /// サーバーの抑止・待避・単線の交換・順番待ちなどは見ない。
     /// </summary>
-    private string? InterlockConflict(TrainRun run, List<RouteDef> path, Dictionary<string, TrainRun> occupied)
+    private string? InterlockConflict(TrainRun run, List<RouteDef> path, Dictionary<string, TrainRun> occupied, TrainRun? ignore = null)
     {
+        // ignore: 見ない列車（連結で、番線で待っている増結車。その在線と、まだ残っている入換の進路）
         var circuits = Circuits(path).ToHashSet();
         foreach (var c in circuits)
-            if (occupied.TryGetValue(c, out var o) && o != run) return $"在線（{o.Train}）";
-        foreach (var other in _runs.Values.Where(o => o != run))
+            if (occupied.TryGetValue(c, out var o) && o != run && o != ignore) return $"在線（{o.Train}）";
+        foreach (var other in _runs.Values.Where(o => o != run && o != ignore))
             if (other.Requests.Any(r => StillHeld(other, r) && LiveCircuits(other, r).Any(circuits.Contains)))
                 return $"進路が重なる（{other.Train}）";
         return null;
