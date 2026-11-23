@@ -3377,6 +3377,8 @@ public sealed partial class RouteEngine
             // 在線を共有している列車だけ（特発のみ共有の列車は _runs に入らないが、念のためここでも絞る）
             var runs = _runs.Values.Where(r => r.HasPosition && r.Player.Mode == ShareMode.Shared).OrderBy(r => r.Train).ToList();
 
+            // 走行順は、この画面を作る間は変わらないので、区間ごとに1回だけ出す
+            var sectionOrders = new Dictionary<(string, string), IReadOnlyList<string>?>();
             // 1回目: スジずらし（発車時刻）だけを入れた見込み。2回目から、走行順・出発順序の先の列車を待つ時間と、
             // 先の列車に詰まる分（駅間で追いつかない・同じ番線は先の列車が出てから）を足す。先の列車が詰まれば後ろの列車も詰まるので、変わらなくなるまで（4回まで）
             var basePlans = runs.ToDictionary(r => r, r => Plan(r, now, z => SlideDepart(r, z)));
@@ -3388,14 +3390,17 @@ public sealed partial class RouteEngine
                 plans = runs.ToDictionary(r => r, r => Plan(r, now, z => MinDepart(r, z), DiaMode ? z => MinArrive(prev, r, z) : null));
                 if (runs.All(r => SameTimes(prev[r], plans[r]))) break;
             }
+            IReadOnlyList<string>? SectionOrderOf(string a, string b) =>
+                sectionOrders.TryGetValue((a, b), out var o) ? o : sectionOrders[(a, b)] = EffectiveSectionOrder(a, b);
             DateTime? MinDepart(TrainRun r, int z)
             {
                 DateTime? m = SlideDepart(r, z);
                 void Max(DateTime? t) { if (t != null && (m == null || t > m)) m = t; }
                 if (_data.Line.StationAtZone(z) is not { } sid || r.Stations.FirstOrDefault(s => s.St.Id == sid && !s.Done) is not { } st) return m;
 
-                // 単線区間の走行順: 先の列車が区間を通り終えるまで（同じ向きなら先の列車がこの駅を出たあと、逆向きなら先の列車がこの駅に着いたあと）
-                if (NextControlStation(r, st) is { } nx && _data.IsSingleTrack(sid, nx) && _central.SectionOrder(sid, nx) is { } so && so.Contains(r.Train))
+                // 単線区間の走行順: 先の列車が区間を通り終えるまで（同じ向きなら先の列車がこの駅を出たあと、逆向きなら先の列車がこの駅に着いたあと）。
+                // 手で決めていなければ、運転と同じ自動の走行順（EffectiveSectionOrder）で。単線区間に同じ時刻に2本いる線にしない
+                if (NextControlStation(r, st) is { } nx && _data.IsSingleTrack(sid, nx) && SectionOrderOf(sid, nx) is { } so && so.Contains(r.Train))
                     foreach (var name in so.TakeWhile(t => t != r.Train))
                         if (RunByTrain(name) is { } p && basePlans.TryGetValue(p, out var pp) && !SectionCleared(p, sid, nx))
                             Max(p.Dir == r.Dir ? pp.DepAt.TryGetValue(z, out var d1) ? d1 : null : pp.ArrAt.TryGetValue(z, out var a1) ? a1 : null);
