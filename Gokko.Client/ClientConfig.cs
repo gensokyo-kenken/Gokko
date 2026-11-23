@@ -99,6 +99,15 @@ public sealed class ClientConfig
     /// <summary>乗務タブレットの窓を、いつも最前面に出すか。</summary>
     public bool TabletTopMost { get; set; } = true;
 
+    /// <summary>ロープレ時計の窓の位置と大きさ（"x,y,幅,高さ"）。空なら画面の右上に出す。</summary>
+    public string ClockBounds { get; set; } = "";
+
+    /// <summary>ロープレ時計の窓を、いつも最前面に出すか。</summary>
+    public bool ClockTopMost { get; set; } = true;
+
+    /// <summary>ロープレ時計の窓を開いていたか（次の起動でも開く）。</summary>
+    public bool ClockOpen { get; set; }
+
     /// <summary>車掌用操作盤の位置と大きさ（"x,y,幅,高さ"）。空なら画面の右上に出す。</summary>
     public string ConductorPanelBounds { get; set; } = "";
 
