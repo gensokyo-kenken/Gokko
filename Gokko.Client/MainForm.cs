@@ -113,8 +113,8 @@ public sealed partial class MainForm : Form
         }
 
         Text = (_role == CrewRole.Conductor ? "特発共有クライアント（車掌）" : _role == CrewRole.Rider ? "特発共有クライアント（添乗）" : mode == ShareMode.Shared ? "特発共有クライアント（在線共有）" : "特発共有クライアント（特発のみ）") + $"  ID:{crew.Id}";
-        ClientSize = new Size(560, 600);
-        MinimumSize = new Size(480, 520);
+        ClientSize = new Size(560, 640);
+        MinimumSize = new Size(480, 560);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Yu Gothic UI", 10f);
 
@@ -217,11 +217,7 @@ public sealed partial class MainForm : Form
         _connectButton.Size = new Size(100, 30);
         _gameButton.Size = new Size(100, 30);
         _gameButton.Margin = new Padding(8, 3, 0, 3);
-        _tabletButton.Size = new Size(110, 30);
-        _tabletButton.Margin = new Padding(8, 3, 0, 3);
-        _menuButton.Size = new Size(120, 30);
-        _menuButton.Margin = new Padding(8, 3, 0, 3);
-        buttons.Controls.AddRange([_connectButton, _gameButton, _tabletButton, _menuButton]);
+        buttons.Controls.AddRange([_connectButton, _gameButton]);
         // 運転士（在線共有）: ゲームで使っているキー（ブザー・勾配起動など）。押すと、乗っている車掌のゲームでも同じボタンを押す
         if (_crewPanel != null && _role == CrewRole.Driver)
         {
@@ -237,6 +233,15 @@ public sealed partial class MainForm : Form
         }
 
         AddWide(buttons, SizeType.Absolute, 40);
+
+        // 画面を開くボタンは、接続のボタンとは別の段に（乗務タブレットはクライアントの中の窓、ブラウザメニューはふつうのブラウザ）
+        var screens = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        _tabletButton.Size = new Size(130, 30);
+        _tabletButton.Margin = new Padding(0, 3, 0, 3);
+        _menuButton.Size = new Size(130, 30);
+        _menuButton.Margin = new Padding(8, 3, 0, 3);
+        screens.Controls.AddRange([_tabletButton, _menuButton]);
+        AddWide(screens, SizeType.Absolute, 40);
 
         // 今のモードと、モードを選ぶ画面に戻るボタン（クライアントを起動し直さずに、運転士・車掌・司令などを選び直す）
         var modeRow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
@@ -612,7 +617,8 @@ public sealed partial class MainForm : Form
     {
         try
         {
-            CrewApi.OpenBrowser(CrewApi.MenuUrl(_crew));
+            CrewApi.OpenBrowser(CrewApi.MenuUrl(WebCrew));
+            if (WebCrew == null) ShowMessage("サーバーに接続してから押すと、ログインしたまま開きます（今はログインせずに開きました）");
         }
         catch
         {
@@ -622,6 +628,24 @@ public sealed partial class MainForm : Form
 
     private TabletForm? _tabletForm;
 
+    // クライアントのログインの合い札は、合言葉を入れてサーバーに接続できるまでは「仮」で、タブレット・メニューでは使えない。
+    // 接続できたら本物になるので、それまでに開いた乗務タブレットの窓は、接続できた時にログインした状態で開き直す
+    private bool _tokenConfirmed;
+    private bool _tabletNeedsLogin;
+
+    /// <summary>タブレット・メニューに渡すログイン（まだ接続していなければ null）。</summary>
+    private CrewSession? WebCrew => _tokenConfirmed || _server.IsJoined ? _crew : null;
+
+    /// <summary>接続できたら（合い札が本物になったら）、ログインせずに開いていた乗務タブレットの窓を、ログインした状態で開き直す。</summary>
+    private void CheckTabletLogin()
+    {
+        if (_tokenConfirmed || !_server.IsJoined) return;
+        _tokenConfirmed = true;
+        if (_tabletNeedsLogin && _tabletForm is { IsDisposed: false })
+            _tabletForm.Navigate(CrewApi.TabletUrl(EffectiveTrainNumber(_game.Latest), _crew, remember: true));
+        _tabletNeedsLogin = false;
+    }
+
     /// <summary>
     /// 乗務タブレット（サーバーの tablet.html）を、自分の列番を付けて開く。列番がなければ、列車を選ぶ画面を開く。
     /// クライアントの中の窓（WebView2。最前面にできる）で開く。WebView2 が使えなければ、ふつうのブラウザで開く。
@@ -629,7 +653,12 @@ public sealed partial class MainForm : Form
     private void OpenTablet()
     {
         var train = EffectiveTrainNumber(_game.Latest);
-        var url = CrewApi.TabletUrl(train, _crew, remember: true); // ログインしたまま開く（窓の中でメニューに行っても入り直さなくてよい）
+        var url = CrewApi.TabletUrl(train, WebCrew, remember: true); // ログインしたまま開く（窓の中でメニューに行っても入り直さなくてよい）
+        if (WebCrew == null)
+        {
+            _tabletNeedsLogin = true;
+            ShowMessage("まだサーバーに接続していないので、ログインせずに開きました（接続できたら、ログインした状態に切り替わります）");
+        }
         try
         {
             if (TabletForm.Available)
@@ -895,6 +924,7 @@ public sealed partial class MainForm : Form
 
     private void UpdateView(ClientState? state)
     {
+        CheckTabletLogin();
         var running = _server.Status is ServerStatus.Connecting or ServerStatus.Connected;
         _connectButton.Text = running ? "切断" : "接続";
         _passwordBox.Enabled = !running;

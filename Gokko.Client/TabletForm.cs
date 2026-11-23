@@ -120,6 +120,13 @@ internal sealed class TabletForm : Form
         if (_ready) _web.CoreWebView2.Navigate(url);
     }
 
+    /// <summary>手前に出さずに、別の URL を開く（ログインした状態に切り替えるときなど）。まだ用意中なら、用意できたときに開く。</summary>
+    public void Navigate(string url)
+    {
+        _url = url;
+        if (_ready) _web.CoreWebView2.Navigate(url);
+    }
+
     private void SaveBounds()
     {
         var r = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
