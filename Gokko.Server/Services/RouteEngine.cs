@@ -1953,7 +1953,8 @@ public sealed partial class RouteEngine
                     if (_levers.TryGetValue(ds.Section, out var lv) && lv.Locked && lv.Dir != ds.Dir)
                         return $"{train}: {routeName} は開通させません（方向てこが{lv.Dir.Label()}向きに鎖錠中: {secName}）";
                     var (za, zb) = (_data.Line.ZoneOfStation(ds.Section.Item1), _data.Line.ZoneOfStation(ds.Section.Item2));
-                    if (_runs.Values.FirstOrDefault(o => o != run && o.Player.Zones.Any(z => z > Math.Min(za, zb) && z < Math.Max(za, zb))) is { } inSec)
+                    // 同じ向きの列車がいても続行できる（逆向きの列車がいるときだけ断る）
+                    if (_runs.Values.FirstOrDefault(o => o != run && o.Dir != ds.Dir && o.Player.Zones.Any(z => z > Math.Min(za, zb) && z < Math.Max(za, zb))) is { } inSec)
                         return $"{train}: {routeName} は開通させません（単線区間 {secName} に {inSec.Train} がいます）";
                     _levers[ds.Section] = (ds.Dir, true); // すぐに倒す（次の周期を待たずに、対向の出発を止める）
                 }
@@ -2724,7 +2725,11 @@ public sealed partial class RouteEngine
         var order = EffectiveSectionOrder(st.St.Id, next); // ダイヤ運転中は、手で決めていなければダイヤの時刻順
         if (order != null && order.Contains(run.Train))
         {
-            var before = order.TakeWhile(t => t != run.Train).Where(t => RunByTrain(t) is { } p && !SectionCleared(p, st.St.Id, next)).ToList();
+            // 逆向きの列車は、区間を通り終えるまで待つ。同じ向きの列車は、この駅を出て区間に入れば続けて出てよい
+            // （単線区間は続行運転ができる。間隔は閉塞信号機と前方在線で守る）
+            var before = order.TakeWhile(t => t != run.Train)
+                .Where(t => RunByTrain(t) is { } p && !SectionCleared(p, st.St.Id, next) && !(p.Dir == run.Dir && EnteredSection(p, st)))
+                .ToList();
             return before.Count > 0 ? $"走行順待ち（{st.St.Name}〜{nextName}: {string.Join("・", before)} が先）" : null;
         }
 
@@ -2835,6 +2840,9 @@ public sealed partial class RouteEngine
         if (d == 0 || o.Player.Zones.Contains(z)) return 0;
         return _model.SecondsTo(RunType(o), o.Dir, o.Front, o.Fraction, station);
     }
+
+    /// <summary>同じ向きの列車が、駅 st を出て、その先の駅間に入ったか（先頭が駅より先にある）。</summary>
+    private static bool EnteredSection(TrainRun p, StationRun st) => p.HasPosition && (p.Front - st.Zone) * p.Dir.Step() > 0;
 
     /// <summary>その列車が、駅 a〜b の単線区間を通り終えたか（もう通らない列車も含む）。</summary>
     private bool SectionCleared(TrainRun p, string a, string b)
