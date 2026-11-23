@@ -573,9 +573,9 @@
     const simpleOn = () => readOnly && cur().simple === true;
     // 計画の線を引くか（ふだんはダイヤ運転中だけ。読むだけの図はいつでも。時刻表だけのときは必ず）
     const planWanted = () => !!api && (diaMode || readOnly) && (planOn() || simpleOn());
-    // 終日表示: ロープレ時刻の 3時〜26時 を横に並べ、スクロールして過去の実績・先の計画を見る（「現在時刻」で今に戻る）。これも表示ごとに残す
+    // 終日表示: ロープレ時刻の 3時〜26時 を横に並べ、スクロールして過去の実績・先の計画を見る（「現在時刻」で今に戻る）。いつも終日表示
     const DAY_FROM = 3 * 3600, DAY_LEN = 23 * 3600;
-    const dayOn = () => cur().day === true;
+    const dayOn = () => true;
     let jumpNow = dayOn(); // 次に描いたあと、今の位置までスクロールする
     let lastL = null; // 前に描いたときの配置
     let plan = null, planLoading = false, diaMode = false, shuntSec = {};
@@ -629,8 +629,7 @@
       filter.innerHTML = [
         group("列車", ["全部", "上りのみ", "下りのみ"].map((f) => toggle(`data-filter="${f}"`, f === shown, f, `${f}の列車を出す`)).join("")),
         group("表示", toggle(`data-dg-detail="1"`, view.split, "詳細表示", "番線ごとの段に分け、番線の競合を見る")),
-        group("時間", toggle(`data-dg-day="1"`, dayOn(), "終日", "3時〜26時を並べて、横にスクロールして見る（図の何もない所をつかんで動かせる）")
-          + (dayOn() ? `<button data-dg-now="1" title="今の時刻までスクロールする">現在時刻</button>` : `${step("pastMin", "過去", "分")} ${step("futureMin", "先", "分")}`)),
+        group("時間", `<button data-dg-now="1" title="今の時刻までスクロールする（3時〜26時を並べた図。図の何もない所をつかんで横に動かせる）">現在時刻</button>`),
         group("大きさ", `<button data-dg-zoom="1.25" title="1分の幅・駅の間隔${view.split ? "・番線の段" : ""}をまとめて大きく（Ctrl+ホイールでも）">拡大</button>
           <button data-dg-zoom="0.8" title="まとめて小さく">縮小</button>
           ${step("minPx", "1分の幅", "px")} ${step("stationPx", "駅の間隔", "px")} ${view.split ? step("trackPx", "番線の段", "px") : ""}
