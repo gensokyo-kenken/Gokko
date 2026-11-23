@@ -1229,11 +1229,16 @@ public sealed partial class RouteEngine
         return PlotY(run);
     }
 
-    /// <summary>ダイヤグラムの段: 駅で、入換線など（Stations.json の diagramRows で軌道回路を書いた段）にいれば、その段の名前。</summary>
+    /// <summary>
+    /// ダイヤグラムの段: 駅で、入換線など（Stations.json の diagramRows で軌道回路を書いた段）にいれば、その段の名前。
+    /// 大道寺の XT のように段の回路が本線上（駅間のゾーン）にあるときは、入換でそこへ入った列車だけをその段に描く。
+    /// 発着・通過で踏んだだけの列車まで段に入れると、線が X線へ跳ねてから番線へ戻ってしまう
+    /// </summary>
     private string? SidingRow(TrainRun run)
     {
         if (DiagramY(run) is var y && y % 2 != 0 || _data.Line.StationAtZone((int)y) is not { } sid || !_data.Stations.TryGetValue(sid, out var st)) return null;
-        return st.DiagramRows.FirstOrDefault(r => r.Circuit != null && run.Player.TrackCircuits.Contains(r.Circuit)).Label;
+        return st.DiagramRows.FirstOrDefault(r => r.Circuit != null && run.Player.TrackCircuits.Contains(r.Circuit)
+            && (_data.Line.ZoneOfCircuit(r.Circuit) is not { } z || z % 2 == 0 || run.ShuntCircuits.ContainsKey(r.Circuit))).Label;
     }
 
     private static double PlotY(TrainRun run)
@@ -3267,6 +3272,7 @@ public sealed partial class RouteEngine
             if (dep > arr) points.Add(new { t = dep, y = (double)z });
         }
 
+        AddSidingWait(r, points, now, depAt.TryGetValue(r.Front, out var sidingLeave) ? sidingLeave : null);
         return new PlanResult(points, arrAt, depAt);
     }
 
@@ -3340,7 +3346,32 @@ public sealed partial class RouteEngine
             if (dep > arr) points.Add(new { t = dep, y = (double)z });
         }
 
+        AddSidingWait(r, points, now, depAt.TryGetValue(r.Front, out var sidingLeave) ? sidingLeave : null);
         return points.Count > 1 ? new PlanResult(points, arrAt, depAt) : null;
+    }
+
+    /// <summary>
+    /// 引上線・入換線（新野崎の5番線、大道寺のY線など）にいる始発の列車の見込み: スタフの入換時刻まではその段にいて、
+    /// 入換にかかる秒数（shuntSeconds、なければ 75 秒）で出る番線へ移る。入れないと、引上線にいる間ずっと出る番線にいることになり、
+    /// その番線を使う列車と番線の競合に見えてしまう。入換時刻が書かれていなければ、発車の入換の秒数前まで引上線にいるものとする
+    /// </summary>
+    private void AddSidingWait(TrainRun r, List<object> points, DateTime now, DateTime? leave)
+    {
+        if (r.Front % 2 != 0 || SidingRow(r) is not { } row || _data.Line.StationAtZone(r.Front) is not { } sid
+            || !_data.Stations.TryGetValue(sid, out var st)) return;
+        // ここから出る列車だけ（終着で引上線に入った列車は、そのまま引上線にいる）
+        if (r.Dia?.Stops.FirstOrDefault(s => s.StationId == sid) is not { Dep: not null } diaStop) return;
+        var track = r.Stations.FirstOrDefault(s => s.Zone == r.Front)?.Track ?? diaStop.Track;
+        var speed = _clock.Now != null && _clock.Speed > 0 ? _clock.Speed : 1;
+        var move = (track != null && st.ShuntSeconds.TryGetValue($"{row}>{track}", out var sec) ? sec : 75) / speed;
+        DateTime? start = DiaShuntTimes.TryGetValue(r.Dia.Number, out var t) ? now.AddSeconds((t - NowSec()) / speed)
+            : leave?.AddSeconds(-move);
+        if (start == null) return;
+        var s0 = start.Value < now ? now : start.Value;
+        if (leave is { } l && s0.AddSeconds(move) > l) s0 = l.AddSeconds(-move) < now ? now : l.AddSeconds(-move);
+        var y = (double)r.Front;
+        points.Insert(1, new { t = s0, y, row = (string?)row });
+        points.Insert(2, new { t = s0.AddSeconds(move), y, row = (string?)null });
     }
 
     /// <summary>
