@@ -30,7 +30,7 @@ function trainLabel(number) {
 function showTrainSummary(t, dest, position) {
   show(trainLabel(t.train), "");
   panel.querySelector("p").append(kindBadge(t.kind, t.type), "　" +
-    [destination(dest), t.direction, position, t.delay && t.delay + "分遅れ"].filter(Boolean).join("　"));
+    [destination(dest, t.direction), t.direction, position, t.delay && t.delay + "分遅れ"].filter(Boolean).join("　"));
 }
 function show(title, message) {
   panel.querySelector("h2").textContent = title;
@@ -40,7 +40,9 @@ function show(title, message) {
 function minuteTime(value) {
   return value ? value.split(":").slice(0, 2).join(":") : "―";
 }
-function destination(value) {
+// 行き先。江原検（車庫）行きは、お客様が乗れる最後の駅で出す（上りは江ノ原、下りは大道寺）
+function destination(value, direction) {
+  if (value && /^江原検/.test(value)) value = direction === "上り" ? "江ノ原" : "大道寺";
   return value && !/信号場|江原信/.test(value) ? value + "行" : "";
 }
 async function readBoard(station) {
@@ -56,7 +58,7 @@ async function readBoard(station) {
     for (const board of data.boards) {
       summary.append(board.direction + "\n");
       for (const s of board.stages) {
-        const info = [destination(s.dest), s.track && s.track + "番線", s.status].filter(Boolean).join("　");
+        const info = [destination(s.dest, board.direction), s.track && s.track + "番線", s.status].filter(Boolean).join("　");
         summary.append(trainLabel(s.train) + "　", kindBadge(s.kind, s.type), "　" + info + "\n");
       }
       if (!board.stages.length) summary.append("接近列車はありません\n");
