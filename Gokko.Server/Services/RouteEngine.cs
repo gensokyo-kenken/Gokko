@@ -3627,7 +3627,7 @@ public sealed partial class RouteEngine
     {
         lock (_lock)
         {
-            var run = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Train == train);
+            var run = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Train == train && r.Type != "回送"); // 回送・試運転はお客様に出さない
             if (run == null) return null;
             var rows = new List<object>();
             var dest = "";
@@ -3649,7 +3649,7 @@ public sealed partial class RouteEngine
                     if ((end || passengerStop) && !(s.StationId?.EndsWith("S") == true || s.Name.Contains("信号場") || s.Name is "江原信" or "珠川信"))
                     {
                         dest = s.Name;
-                        var scheduled = s.Arr ?? (change == "停車" || end ? s.Dep : null);
+                        var scheduled = s.Arr ?? s.Dep; // 着時刻のない駅（始発・発時刻だけの駅）は発時刻
                         var arrived = s.StationId != null && run.ActualArr.ContainsKey(s.StationId);
                         var passed = i <= lastPassed;
                         // 到着見込み: 遅れがあれば定刻に足す。なければ、次の駅だけ走行時間から見込む
@@ -3688,13 +3688,13 @@ public sealed partial class RouteEngine
                     id, name = line.StationName(id), zone = line.ZoneOfStation(id),
                     kinds = order.Where(kind => stops[id].Contains(kind)).ToArray()
                 }).ToArray();
-            var trains = _runs.Values.Where(r => r.HasPosition).Select(r => new
+            var trains = _runs.Values.Where(r => r.HasPosition && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
             {
                 train = r.Train, kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
                 destination = r.Dia?.Stops.LastOrDefault()?.Name,
                 delay = r.Delay is { } seconds && seconds >= 60 ? (int)(seconds / 60) : 0
             }).ToArray();
-            return new { stations, trains, updated = DateTimeOffset.UtcNow };
+            return new { stations, trains, updated = DateTimeOffset.UtcNow, gameTime = _clock.NowText }; // 最終更新はゲームの時刻（時計がなければ updated）
         }
     }
 

@@ -77,7 +77,7 @@ async function readTrain(t, position) {
     const formation = cars.length ? cars.length + "両編成　" + cars.map(c => c || "形式不明").join("・") : "編成情報未取得";
     const table = node("table","");
     const head = table.createTHead().insertRow();
-    for (const title of ["停車駅","定刻着","到着見込み"]) head.append(node("th","",title));
+    for (const title of ["停車駅","定刻","到着見込み"]) head.append(node("th","",title));
     const body = table.createTBody();
     for (const stop of data.stops) {
       const row = body.insertRow();
@@ -91,7 +91,7 @@ async function readTrain(t, position) {
 }
 panel.addEventListener("close", () => { selection = null; selectedTrain = null; schedule.replaceChildren(); });
 
-function draw({stations, trains, updated}) {
+function draw({stations, trains, updated, gameTime}) {
   const rows = [];
   const fragment = document.createDocumentFragment();
   function row(station, label) {
@@ -153,7 +153,7 @@ function draw({stations, trains, updated}) {
   }
   map.replaceChildren(fragment);
   document.querySelector("#range").textContent = stations.length ? stations[0].name + " — " + stations.at(-1).name : "";
-  statusBar.textContent = (trains.length ? "在線 " + trains.length + "列車" : "現在、在線列車はありません") + "　｜　最終更新 " + new Date(updated).toLocaleTimeString("ja-JP", {hour:"2-digit", minute:"2-digit", hourCycle:"h23"});
+  statusBar.textContent = (trains.length ? "在線 " + trains.length + "列車" : "現在、在線列車はありません") + "　｜　最終更新 " + (gameTime ? minuteTime(gameTime) : new Date(updated).toLocaleTimeString("ja-JP", {hour:"2-digit", minute:"2-digit", hourCycle:"h23"}));
 }
 async function refresh() {
   clearTimeout(timer);
