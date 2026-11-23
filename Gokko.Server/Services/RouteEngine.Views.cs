@@ -22,9 +22,9 @@ public sealed partial class RouteEngine
     /// <summary>作り置きがこれより古ければ使わず、その場で作る（配信のループが止まっているときなど）。</summary>
     private static readonly TimeSpan ViewMaxAge = TimeSpan.FromSeconds(2);
 
-    /// <summary>作り直す間隔の下限（種類ごと）。ダイヤグラムは作るのが重く（約20ms）、画面も1秒ごとに読むので、1秒ごとにする
+    /// <summary>作り直す間隔の下限（種類ごと）。作るのが重いもの（11/23 の本番でダイヤグラム 約10ms・出発順序 約6ms）は、画面も1秒ごとに読むので、1秒ごとにする
     /// （配信のループは0.5秒ごとなので、少し短めの 0.9 秒にする。1.0 秒だと、ちょうど1秒後の回が足りずに 1.5 秒ごとになる）。</summary>
-    private static TimeSpan ViewInterval(string kind) => kind == ViewDiagram ? TimeSpan.FromMilliseconds(900) : TimeSpan.Zero;
+    private static TimeSpan ViewInterval(string kind) => kind is ViewDiagram or ViewOrders ? TimeSpan.FromMilliseconds(900) : TimeSpan.Zero;
 
     private sealed record ViewItem(long At, object Value);
     private sealed record ViewSet(Dictionary<string, ViewItem> Items);
