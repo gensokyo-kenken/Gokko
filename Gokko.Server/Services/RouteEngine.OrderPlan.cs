@@ -33,11 +33,11 @@ public sealed partial class RouteEngine
 
     private double ClockSpeed => _clock.Now != null && _clock.Speed > 0 ? _clock.Speed : 1;
 
-    /// <summary>ダイヤのその駅の時刻（運転日の秒。4時前は翌日）。depart なら発（通過）、なければ着。</summary>
+    /// <summary>ダイヤのその駅の時刻（運転日の秒。4時前は翌日）。depart なら発（通過）、なければ着。運転停車（運停）も止まる駅として扱う。</summary>
     private static double? DiaDaySec(TrainRun run, string stationId, bool depart)
     {
         var stop = run.Dia?.Stops.FirstOrDefault(x => x.StationId == stationId);
-        if (stop == null || stop.Stop == "運停") return null;
+        if (stop == null) return null;
         return depart ? DaySec(stop.Dep) ?? DaySec(stop.Arr) : DaySec(stop.Arr) ?? DaySec(stop.Dep);
     }
 
