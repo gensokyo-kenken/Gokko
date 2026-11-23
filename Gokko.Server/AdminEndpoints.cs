@@ -192,14 +192,14 @@ public static class AdminEndpoints
                 : Results.BadRequest(new { ok = false, message = error });
         });
 
-        // 列車位置案内（passenger.html。お客様向け）。見るだけで、合言葉なしで誰でも見られる。信号場の接近案内は出さない
+        // 列車位置案内（passenger.html。お客様向け）。見るだけで、合言葉なしで誰でも見られる。信号場の発車案内は出さない
         app.MapGet("/api/passenger/train", (string train, RouteEngine engine) =>
             engine.PassengerTrain(train) is { } info ? Results.Ok(info) : Results.NotFound());
         app.MapGet("/api/passenger/positions", (RouteEngine engine, ResponseCache cache) =>
             cache.Get("passenger-positions", TimeSpan.FromSeconds(4), engine.PassengerPositions));
-        app.MapGet("/api/passenger/arrivals/{id}", (string id, RouteEngine engine, ArrivalBoards boards, ResponseCache cache) =>
-            boards.Get(id) is { } station && !station.Name.Contains("信号場")
-                ? cache.Get("passenger-arrivals-" + station.Id, TimeSpan.FromSeconds(4), () => engine.ArrivalBoard(station, 3))
+        app.MapGet("/api/passenger/departures/{id}", (string id, RailData rail, RouteEngine engine, ResponseCache cache) =>
+            rail.Line.ZoneOfStation(id) >= 0 && !rail.Line.StationName(id).Contains("信号場")
+                ? cache.Get("passenger-departures-" + id, TimeSpan.FromSeconds(4), () => engine.PassengerDepartures(id))
                 : Results.NotFound());
 
         // 在線位置の画面（tid.html）。見るだけで、操作はできない。合言葉なしで誰でも見られる

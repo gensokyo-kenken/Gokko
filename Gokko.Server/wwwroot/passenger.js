@@ -27,10 +27,19 @@ function kindBadge(kind, label) {
 function trainLabel(number) {
   return String(number).replace(/列車$/, "") + "列車";
 }
+const advisoryText = "運転整理中です。今後の運転状況にご注意ください。";
+function advisoryIcon() {
+  const icon = node("span", "advisory-icon", "⚠");
+  icon.title = advisoryText;
+  icon.setAttribute("role", "img");
+  icon.setAttribute("aria-label", advisoryText);
+  return icon;
+}
 function showTrainSummary(t, dest, position) {
   show(trainLabel(t.train), "");
   panel.querySelector("p").append(kindBadge(t.kind, t.type), "　" +
     [destination(dest, t.direction), t.direction, position, t.delay && t.delay + "分遅れ"].filter(Boolean).join("　"));
+  if (t.advisory) panel.querySelector("p").append(node("span","advisory-note","⚠ " + advisoryText));
 }
 function show(title, message) {
   panel.querySelector("h2").textContent = title;
@@ -47,24 +56,38 @@ function destination(value, direction) {
 }
 async function readBoard(station) {
   try {
-    const res = await fetch("/api/passenger/arrivals/" + encodeURIComponent(station.id), {cache:"no-store"});
+    const res = await fetch("/api/passenger/departures/" + encodeURIComponent(station.id), {cache:"no-store"});
     if (selection !== station) return;
-    if (res.status === 404) { show(station.name, "この駅の接近案内はありません。"); return; }
+    if (res.status === 404) { show(station.name, "この駅の発車案内はありません。"); return; }
     if (!res.ok) throw Error();
     const data = await res.json();
     if (selection !== station) return;
-    show(station.name, "");
-    const summary = panel.querySelector("p");
+    show(station.name + "駅　発車案内", "発車順　" + minuteTime(data.time) + " 現在");
+    const area = document.createDocumentFragment();
     for (const board of data.boards) {
-      summary.append(board.direction + "\n");
-      for (const s of board.stages) {
-        const info = [destination(s.dest, board.direction), s.track && s.track + "番線", s.status].filter(Boolean).join("　");
-        summary.append(trainLabel(s.train) + "　", kindBadge(s.kind, s.type), "　" + info + "\n");
+      area.append(node("strong","",board.direction));
+      if (!board.trains.length) {
+        area.append(node("p","","本日の発車予定はありません"));
+        continue;
       }
-      if (!board.stages.length) summary.append("接近列車はありません\n");
-      summary.append("\n");
+      const table = node("table","");
+      const head = table.createTHead().insertRow();
+      for (const label of ["定刻発","種別・行先","のりば"]) head.append(node("th","",label));
+      const body = table.createTBody();
+      for (const t of board.trains) {
+        const row = body.insertRow();
+        row.insertCell().append(node("b","",minuteTime(t.time)));
+        const service = row.insertCell();
+        if (t.advisory) service.append(advisoryIcon(), " ");
+        service.append(kindBadge(t.kind,t.kind), " " + destination(t.dest, board.direction), node("small","departure-number",trainLabel(t.train)));
+        row.insertCell().textContent = t.track ? t.track + "番" : "―";
+      }
+      area.append(table);
     }
-  } catch { if (selection === station) show(station.name, "接近案内を取得できませんでした。"); }
+    if (data.boards.some(board => board.trains.some(t => t.advisory)))
+      area.prepend(node("span","advisory-note","⚠ の列車は運転整理中です。今後の運転状況にご注意ください。"));
+    schedule.replaceChildren(area);
+  } catch { if (selection === station) { schedule.replaceChildren(); show(station.name, "発車案内を取得できませんでした。"); } }
 }
 async function readTrain(t, position) {
   const request = ++detailRequest;
@@ -110,7 +133,7 @@ function draw({stations, trains, updated, gameTime}) {
     }
     if (station) name.onclick = () => {
       selection = station;
-      show(label, "接近案内を読み込み中…");
+      show(label, "発車案内を読み込み中…");
       readBoard(station);
     };
     const up = node("div","lane"), down = node("div","lane");
@@ -136,8 +159,9 @@ function draw({stations, trains, updated, gameTime}) {
     const service = node("span","train-service");
     service.append(tag);
     if (t.delay) service.append(node("span","delay","+" + t.delay + "分"));
+    if (t.advisory) number.append(" ", advisoryIcon());
     btn.append(service,face,number);
-    btn.setAttribute("aria-label", [kind,trainLabel(t.train),t.direction,at.label].join(" "));
+    btn.setAttribute("aria-label", [kind,trainLabel(t.train),t.direction,at.label,t.advisory ? advisoryText : ""].filter(Boolean).join(" "));
 
     if (selectedTrain === t.train) activeDetail = [t, at.label];
     btn.onclick = () => {

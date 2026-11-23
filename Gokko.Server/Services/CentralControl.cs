@@ -368,6 +368,23 @@ public sealed class CentralControl(GameClock clock)
     }
 
     /// <summary>
+    /// 列車位置案内（お客様向け）の「運転整理中」の印を付ける列車: 出発順序・走行順・番線・抑止・開通指示・臨時停車などの指示が出ている列車。
+    /// </summary>
+    public HashSet<string> PassengerAdvisoryTrains()
+    {
+        lock (_lock)
+        {
+            var trains = _orders.Values.SelectMany(list => list).ToHashSet(StringComparer.Ordinal);
+            foreach (var list in _sectionOrders.Values) trains.UnionWith(list);
+            foreach (var key in _tracks.Keys) trains.Add(key.Train);
+            foreach (var key in _holds.Keys) trains.Add(key.Train);
+            foreach (var key in _openAt.Keys) trains.Add(key.Train);
+            foreach (var key in _stops.Keys) trains.Add(key.Train);
+            return trains;
+        }
+    }
+
+    /// <summary>
     /// 手で入れた指示をまとめて取り消す（ロープレ時刻を設定したとき）: 列車ごとの指示（番線・抑止・開通指示・臨時停車など・
     /// 発車時刻・駅扱いの強制進路）と、出発順序・走行順。駅の扱い（列車扱い・集中扱い・駅扱い）と運転モードは残す。
     /// 取り消した数を返す。
