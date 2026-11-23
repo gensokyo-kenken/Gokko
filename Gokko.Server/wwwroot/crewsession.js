@@ -3,6 +3,7 @@
 // ・メニューのタイルから開くと、アドレスに #handoff=引き継ぎ札（30秒・1回だけ）が付いてくる。札を合い札に替えて、このタブの中だけ（sessionStorage）に覚える
 //   → 同じタブの中なら、再読み込みや画面の行き来をしてもログインしたまま。URL を直接貼り付けて開いたタブには札がないので、ログインを求める
 // ・PC のクライアントから開いたとき（#crew=社員番号&token=合い札）も、このタブに覚える
+//   &remember=1 が付いていれば（クライアントの中の乗務タブレットの窓・［ブラウザメニュー］）、メニューのログインとしても覚える（メニューに行っても入り直さなくてよい）
 // ・画面でパスワードを入れてログインしたときは、メニューにも覚える（GokkoCrew.login）。本人が入れたので、メニューに戻っても入り直さなくてよい
 // ・Discord でログインして戻ってきたとき（#discord=引き継ぎ札）は、このタブとメニューの両方に覚える。紐づけて戻ってきたときは #discordLinked=1
 // ・ログイン（パスワード・Discord）には、参加の合言葉（クライアントの接続と同じ）も要る。ログインの欄に GokkoCrew.passField で欄を足し、
@@ -34,7 +35,10 @@
       if (x.status === 200) { const j = JSON.parse(x.responseText); write(j.id, j.token); if (discord) remember(j.id, j.token); }
     } catch (e) {}
   }
-  if (h.get("crew") && h.get("token")) write(h.get("crew"), h.get("token"));
+  if (h.get("crew") && h.get("token")) {
+    write(h.get("crew"), h.get("token"));
+    if (h.get("remember") === "1") remember(h.get("crew"), h.get("token"));
+  }
   const linked = h.get("discordLinked") === "1"; // Discord と紐づけて戻ってきた
   if (code || h.get("crew") || linked) history.replaceState(null, "", location.pathname + location.search); // 札・合い札をアドレスに残さない
 

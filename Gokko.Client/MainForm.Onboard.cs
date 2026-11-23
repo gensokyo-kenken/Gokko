@@ -225,17 +225,16 @@ public sealed partial class MainForm
         Volume("連絡音量", () => _config.Radio.IntercomVolume, v => _config.Radio.IntercomVolume = v, 1);
         if (talk) Volume("送る音量", () => _config.Radio.OnboardSendGain, v => _config.Radio.OnboardSendGain = v, 2);
 
-        // 説明は残りの場所に出す。窓が狭くて入りきらないときは、ここだけスクロールする（上の操作や音量は切れない）
+        // 説明もいちばん下に積む。窓が狭くて入りきらないときは、タブ全体をスクロールする（操作・音量・説明のどれも切れない）
         var helpText = new Label
         {
-            AutoSize = true, Padding = new Padding(0, 10, 0, 0), ForeColor = Color.FromArgb(90, 96, 108),
+            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 10, 0, 0), ForeColor = Color.FromArgb(90, 96, 108),
             Text = talk ? OnboardTexts.CrewHelp : OnboardTexts.RiderHelp // 文言は OnboardTexts.cs
         };
-        var help = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        help.Controls.Add(helpText);
-        help.ClientSizeChanged += (_, _) => helpText.MaximumSize = new Size(Math.Max(100, help.ClientSize.Width - 4), 0);
+        page.AutoScroll = true;
+        page.ClientSizeChanged += (_, _) => helpText.MaximumSize = new Size(Math.Max(100, page.ClientSize.Width - page.Padding.Horizontal - 4), 0);
 
-        page.Controls.Add(help);
+        page.Controls.Add(helpText);
         page.Controls.Add(volumes);
         page.Controls.Add(_onboardModel);
         _onboardMonitorBox.Visible = talk;
