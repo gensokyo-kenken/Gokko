@@ -1,5 +1,5 @@
 {
- "_comment": "にぎやかしの列車（AiTrains）の距離の表。signalRuns: ゲームの自動運転で走ったときの、信号機の位置（走った距離, m）と、止まった駅の番線（tracks）と、制限速度が変わった地点（[走った距離, km/h]。前の信号機が G でない間の値は除く）。stops: 番線ごとの停止位置（信号機の before m 手前、または after m 先）。circuitLengths: 軌道回路の長さの粗い見込み（在線ログと運転記録の突き合わせ）。carsByUnyo: 運行番号ごとの両数（自動で出す列車。ない運行は6両）",
+ "_comment": "にぎやかしの列車（AiTrains）の距離の表。signalRuns: ゲームの自動運転で走ったときの、信号機の位置（走った距離, m）と、止まった駅の番線（tracks）と、制限速度が変わった地点（[走った距離, km/h]。前の信号機が G でない間の値は除く）。stops: 番線ごとの停止位置（信号機の before m 手前、または after m 先）。circuitLengths: 軌道回路の長さの粗い見込み（在線ログと運転記録の突き合わせ）。carsByUnyo: 運行番号ごとの両数（自動で出す列車。ない運行は6両）。stops の couple・stopB: 連結する列車の連結位置（6両停目の40m手前）と停B（4両停目の4m手前）。大道寺4番は試験で測った値、3番は4番と同じ間隔での見込み",
  "carsByUnyo": { "30": 2, "32": 2, "74": 4, "76": 4 },
  "signalRuns": [
   {
@@ -1961,14 +1961,18 @@
    "dir": "down",
    "track": 3,
    "signal": "大道寺下り出発5L",
-   "before": 14.3
+   "before": 14.3,
+   "couple": 54.3,
+   "stopB": 63.6
   },
   {
    "station": "大道寺",
    "dir": "down",
    "track": 4,
    "signal": "大道寺下り出発6L",
-   "before": 19.2
+   "before": 19.2,
+   "couple": 59.2,
+   "stopB": 68.5
   },
   {
    "station": "奥峯口",
