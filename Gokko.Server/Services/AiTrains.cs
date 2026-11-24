@@ -29,6 +29,7 @@ public sealed class AiTrains : BackgroundService
     private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
     private const double Accel = 0.65;          // m/s²（約 2.3km/h/s）
     private const double Decel = 0.70;          // m/s²（約 2.5km/h/s）
+    private const double ProtectionDecel = 1.1; // m/s²（防護受信時、約4 km/h/s）
     private const double SignalMargin = 8;      // R の信号機の何 m 手前で止まるか
     private const double CarLength = 20;
     private const double DefaultStationCircuit = 150;
@@ -57,6 +58,8 @@ public sealed class AiTrains : BackgroundService
     private readonly CrewRoster _crew;
     private readonly DutyRosters _duties;
     private readonly CrewRelay _relay;
+    private readonly ProtectionRadio _protectionRadio;
+    private readonly DispatcherProtection _dispatcherProtection;
     private readonly ILogger<AiTrains>? _logger;
 
     private readonly Dictionary<string, HashSet<string>> _adj;
@@ -86,11 +89,14 @@ public sealed class AiTrains : BackgroundService
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
-        IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ILogger<AiTrains>? logger = null)
+        IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ProtectionRadio protectionRadio,
+        DispatcherProtection dispatcherProtection, ILogger<AiTrains>? logger = null)
     {
         _crew = crew;
         _duties = duties;
         _relay = relay;
+        _protectionRadio = protectionRadio;
+        _dispatcherProtection = dispatcherProtection;
         _rail = rail;
         _players = players;
         _clock = clock;
@@ -286,6 +292,7 @@ public sealed class AiTrains : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        HashSet<(int First, int Last)> activeProtection = new();
         var last = DateTime.UtcNow;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -308,6 +315,11 @@ public sealed class AiTrains : BackgroundService
                 var users = UserTrains(snapshot);
                 var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.TrainNumber.Length > 0)
                     .Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
+
+                // 防護無線（運転士の発報・司令の区間防護）の範囲。自分のロックの外で集める
+                activeProtection.Clear();
+                _protectionRadio.CopyActiveRangesTo(activeProtection);
+                _dispatcherProtection.CopyActiveRangesTo(activeProtection);
 
                 List<string> departures = new();
                 var couplePartners = _routes.CouplePartners();
@@ -343,7 +355,9 @@ public sealed class AiTrains : BackgroundService
                         if (!_trains.ContainsKey(t.Id)) continue; // この周期の中で消えた（連結した増結車）
                         // ユーザーがその列番で出てきたら、自動運転の列車は消して、ユーザーに運転してもらう（途中駅からでも）
                         // 上りが赤山町の 9LT（三郷方の出口）か 2RAT（1番線）に入ったら、20秒で消す（その先はゲームの線区の外）
-                        if (t.Dir == Dir.Up && t.ExitUtc == null && t.Info.TrackCircuits.Any(ExitCircuits.Contains))
+                        var protectedStop = ShouldStopForProtection(t, activeProtection);
+                        if (protectedStop) t.ExitUtc = null;
+                        else if (t.Dir == Dir.Up && t.ExitUtc == null && t.Info.TrackCircuits.Any(ExitCircuits.Contains))
                             t.ExitUtc = now + TimeSpan.FromSeconds(ExitSeconds / Math.Max(0.1, _clock.Speed));
                         if (t.ExitUtc is { } ex && now >= ex)
                         {
@@ -362,7 +376,7 @@ public sealed class AiTrains : BackgroundService
                         // 1本の列車で例外が出ても、ほかの列車は動かし続ける（周期ごと止まると、後ろに並ぶ列車がすべて動かなくなる）
                         try
                         {
-                            Step(t, dt * _clock.Speed, now);
+                            Step(t, dt * _clock.Speed, now, protectedStop);
                         }
                         catch (Exception stepError)
                         {
@@ -370,7 +384,7 @@ public sealed class AiTrains : BackgroundService
                             continue;
                         }
                         if (t.WantDeparture) { departures.Add(t.Id); t.WantDeparture = false; }
-                        if (t.FinishedUtc is { } f && now - f > TerminalLinger)
+                        if (!protectedStop && t.FinishedUtc is { } f && now - f > TerminalLinger)
                         {
                             _trains.Remove(t.Id);
                             _log.Note($"にぎやかし: {t.Number} は {t.Status}。在線を消しました");
@@ -408,7 +422,23 @@ public sealed class AiTrains : BackgroundService
         }
     }
 
-    private void Step(Train t, double dt, DateTime utcNow)
+    private static bool ShouldStopForProtection(Train t, HashSet<(int First, int Last)> active)
+    {
+        // 制動中に範囲を抜けても、その発報が解除されるまで停車を保つ。
+        if (t.ReceivedRanges.Count > 0) t.ReceivedRanges.IntersectWith(active);
+        foreach (var range in active)
+        {
+            foreach (var zone in t.Info.Zones)
+            {
+                if (zone < range.First || zone > range.Last) continue;
+                t.ReceivedRanges.Add(range);
+                break;
+            }
+        }
+        return t.ReceivedRanges.Count > 0 || t.BrakingForProtection;
+    }
+
+    private void Step(Train t, double dt, DateTime utcNow, bool protectedStop)
     {
         if (!_clock.IsRunning) dt = 0; // ロープレ時刻が止まっている間は止まる
         Extend(t);
@@ -419,6 +449,21 @@ public sealed class AiTrains : BackgroundService
         double? stopX = next != null ? StopX(t, next) : null;
         var target = t.PathEnd - (t.Blocked ? SignalMargin : 2);
         if (stopX is { } sx && sx < target + 0.01) target = sx;
+
+        if (protectedStop)
+        {
+            // 発車・折返しを進めず、走行中なら現在の進路内で停止する。
+            var brakingRoom = Math.Max(0, target - t.Head);
+            var brakeTime = Math.Min(dt, t.Speed / ProtectionDecel);
+            var brakingDistance = (t.Speed - 0.5 * ProtectionDecel * brakeTime) * brakeTime;
+            t.Head += Math.Min(brakingRoom, brakingDistance);
+            t.Speed = brakingDistance >= brakingRoom || dt >= t.Speed / ProtectionDecel ? 0 : t.Speed - ProtectionDecel * dt;
+            t.BrakingForProtection = t.Speed > 0;
+            t.Status = t.BrakingForProtection ? "防護無線受信・制動中" : "防護無線により停車中";
+            Release(t);
+            UpdateInfo(t);
+            return;
+        }
 
         // 止まっている（駅で）
         if (t.Dwelling)
@@ -1627,6 +1672,8 @@ public sealed class AiTrains : BackgroundService
         public string? EndSignal { get; set; }
         public HashSet<string> RedSignals { get; set; } = new();
         public bool Received { get; set; }
+        public HashSet<(int First, int Last)> ReceivedRanges { get; } = new();
+        public bool BrakingForProtection { get; set; }
         public bool Dwelling { get; set; }
         public int DwellIndex { get; set; }
         public DateTime ArrivedUtc { get; set; }
