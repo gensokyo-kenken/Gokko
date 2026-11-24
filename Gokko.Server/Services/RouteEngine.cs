@@ -946,10 +946,19 @@ public sealed partial class RouteEngine
             // 切り離した車両（解874・そこから折り返した 回933）は、元の列車（874・975）と同じ番線に現れる
             if ((SplitOriginOf(RailData.NormalizeTrain(p.TrainNumber)) != null) != (SplitOriginOf(r.Train) != null)) continue;
             if (r.Player.TrackCircuits.Any(mine.Contains)) return r;
-            if (r.Requests.Any(q => !q.Released && !q.Entered && q.CancelledUtc == null && q.Def.Circuits.Any(mine.Contains))) return r;
+            // 進路に入ったあとも、列車がまだ通っていない回路（番線に入りきるまでの番線など）にいれば待つ。入った進路を見ないと、
+            // 遅れて館浜に入ってくる列車が場内に入ったとたん、その番線に出した自動運転の列車が始まって出発進路を要求し、入ってくる列車が番線に入れない
+            if (r.Requests.Any(q => !q.Released && q.CancelledUtc == null && LiveCircuits(r, q).Any(mine.Contains))) return r;
         }
 
         return null;
+    }
+
+    /// <summary>列車が要求している・開いている進路の、まだ使う軌道回路（自動運転の列車を出す番線を選ぶため。ゲームにまだ開いていない進路も含む）。</summary>
+    public HashSet<string> ReservedCircuits()
+    {
+        lock (_lock)
+            return _runs.Values.SelectMany(r => r.Requests.Where(q => !q.Released && q.CancelledUtc == null).SelectMany(q => LiveCircuits(r, q))).ToHashSet();
     }
 
     /// <summary>列車（進路・駅の状態）を別の接続IDへ移す（継続乗務）。</summary>
