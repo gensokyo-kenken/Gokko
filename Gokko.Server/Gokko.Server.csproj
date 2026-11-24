@@ -28,6 +28,8 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.8.1" />
+    <!-- Crew.db の接続・スキーマ作成・トランザクションに使用 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
 
 </Project>

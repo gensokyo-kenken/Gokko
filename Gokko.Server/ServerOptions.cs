@@ -55,7 +55,7 @@ public sealed class DiscordOptions
     public string RedirectUri { get; set; } = "";
 
     /// <summary>
-    /// Discord のユーザー ID をそのまま保存しないための鍵（秘密。長いランダムな文字列）。Crew.json には、この鍵で作った HMAC だけを書く。
+    /// Discord のユーザー ID をそのまま保存しないための鍵（秘密。長いランダムな文字列）。Crew.db には、この鍵で作った HMAC だけを書く。
     /// 変えると、紐づけがすべて外れる。
     /// </summary>
     public string IdKey { get; set; } = "";
