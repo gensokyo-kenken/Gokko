@@ -63,6 +63,7 @@ public static class Protocol
 
     /// <summary>司令員: 通話中に共通・個別を切り替える。引数 long（通話の番号）・bool（個別通話か）、戻り値 <see cref="TrainRadioResult"/>。</summary>
     public const string ChangeRadioMode = "ChangeRadioMode";
+    public const string SelectRadioResponder = "SelectRadioResponder";
 
     /// <summary>通話を終える（当事者のどちらからでも）。引数 long（通話の番号）、戻り値 <see cref="TrainRadioResult"/>。</summary>
     public const string EndRadioCall = "EndRadioCall";

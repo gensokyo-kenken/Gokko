@@ -65,6 +65,9 @@ public sealed class TrainRadioCall
 
     /// <summary>一斉通告（司令員だけが話し、全員に聞こえる）。</summary>
     public bool IsBroadcast => Caller == null;
+
+    /// <summary>個別通話に切り替えている間も含め、一斉通告として開始した通話。</summary>
+    public bool BroadcastSession { get; set; }
 }
 
 /// <summary>列車無線の状態（その人から見たもの）。</summary>
