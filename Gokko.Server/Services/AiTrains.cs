@@ -420,6 +420,13 @@ public sealed class AiTrains : BackgroundService
         var target = t.PathEnd - (t.Blocked ? SignalMargin : 2);
         if (stopX is { } sx && sx < target + 0.01) target = sx;
 
+        // 番線への入換が出発と反対向きだった（大道寺の X線 → 1番線）: 番線に入って止まったら、向きを変える
+        if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && ReverseInPlatform(t, next, utcNow))
+        {
+            UpdateInfo(t);
+            return;
+        }
+
         // 止まっている（駅で）
         if (t.Dwelling)
         {
@@ -689,6 +696,40 @@ public sealed class AiTrains : BackgroundService
         }
         t.Status = $"引上線で折り返し（{old} → {number}）。番線への入換待ち";
         _log.Note($"にぎやかし: {old} は {here.Name} の引上線で折り返して {number} になりました");
+    }
+
+    /// <summary>
+    /// 引上線などから番線への入換が、出発と反対向きだったとき（大道寺の X線 → 1番線。X線は出発していく側の本線にある）、
+    /// 番線に入って止まったら向きを変え、出発の停止位置にいることにする。道筋は番線の回路から作り直す（<see cref="TurnBack"/> と同じ）。
+    /// 出発信号機が道筋の先にあれば（入換と出発が同じ向き。大道寺の Y線 → 番線）、何もしない。
+    /// </summary>
+    private bool ReverseInPlatform(Train t, PlanStop p, DateTime utcNow)
+    {
+        if (!_rail.Stations.TryGetValue(p.StationId, out var st) || t.PathEnd - t.Head > SignalMargin + 3) return false;
+        var here = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+        if (here == null || st.TrackCircuit.FirstOrDefault(kv => kv.Value == here) is not { Value: not null } hit) return false;
+        var track = hit.Key;
+        if (_stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == track) is { } spec && BoundaryOf(t, spec.Signal) != null) return false;
+
+        var before = (FindStop(p.Name, t.Dir, track) ?? FindStop(st.Name, t.Dir, track))?.Before ?? 20;
+        var len = Math.Max(LengthOf(here), t.Length + before + 10);
+        t.Path.Clear();
+        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(here, 0, len)]));
+        t.Head = len - before;
+        t.StartHead = t.Head;
+        t.Plan[0] = p with { Track = track };
+        t.StartTrack = track;
+        t.PlanIndex = 0;
+        t.DwellIndex = 0;
+        t.Dwelling = true;
+        t.ArrivedUtc = utcNow;
+        t.DepartureAsked = false;
+        t.Blocked = true;
+        t.EndSignal = null;
+        t.FromShunt = false;
+        t.Info.LastCenter = null;
+        t.Status = $"{st.Name} {track}番線で向きを変えました（入換を終えて出発待ち）";
+        return true;
     }
 
     /// <summary>

@@ -9786,6 +9786,7 @@
     },
     {
       "number": "951", "type": "普通", "label": "普通", "dest": "大道寺", "unyo": 50,
+      "turn": { "kind": "折返", "number": "1050", "time": "10:01", "how": "入換", "via": "X線", "text": "1050 10:01入換 普通 日野森行" },
       "stops": [
         { "st": "TH48", "name": "東井", "stop": "停", "arr": null, "dep": "09:09:00", "track": 4 },
         { "st": "TH49", "name": "白石町", "stop": "停", "arr": null, "dep": "09:10:40", "track": null },

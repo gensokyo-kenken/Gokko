@@ -202,8 +202,9 @@ public sealed class DiaTrain
 /// <summary>
 /// 終点のあと。Kind は 折返（Number の列車として折り返す。Time はその発車・入換の時刻、How は「発」か「入換」）、
 /// 引継（同じ列番のまま線区の外へ）、滞泊（その駅で夜を越す）。
+/// Via は、入換で折り返すときに引き上げる線（TrackRoutes.json の shuntOut の label。"X線" など）。書かれていなければ既定の線。
 /// </summary>
-public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How);
+public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How, string? Via = null);
 
 /// <summary>時刻表の1駅（StationId は路線の外の駅なら null。Stop は 停・通・運停）。</summary>
 public sealed record DiaStop(string Name, string? StationId, string Stop, string? Arr, string? Dep, int? Track = null, string? Note = null);
@@ -555,7 +556,8 @@ public sealed class RailData
                 cur.Unyo ??= t.TryGetProperty("unyo", out var un) && un.ValueKind == JsonValueKind.Number ? un.GetInt32() : Gokko.Common.Unyo.FromTrain(number);
                 if (t.TryGetProperty("turn", out var tn) && tn.ValueKind == JsonValueKind.Object && Str(tn, "kind") is { Length: > 0 } turnKind)
                     cur.Turn = new DiaTurn(turnKind, NormalizeTrain(Str(tn, "number")) is { Length: > 0 } tno ? tno : null,
-                        Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null);
+                        Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null,
+                        Str(tn, "via") is { Length: > 0 } tvia ? tvia : null);
 
                 if (cur.Stops.Count == 0)
                     foreach (var s in t.GetProperty("stops").EnumerateArray())

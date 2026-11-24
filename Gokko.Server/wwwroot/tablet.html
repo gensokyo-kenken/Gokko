@@ -342,7 +342,7 @@
       out.push(t.kind === "折返" && t.number
         ? `後運用　<a class="turn-link" href="tablet.html?train=${encodeURIComponent(t.number)}">${esc(t.number)}</a>（${
             // 着いた番線でそのまま列番を変え、入換は次の列番で行う（江ノ原信号場10番線など）
-            t.inPlace != null ? `${esc(String(t.inPlace))}番線で列番変更、` : ""}${esc((t.time || "").slice(0, 5))}${esc(t.how || "")}）${changed}`
+            t.inPlace != null ? `${esc(String(t.inPlace))}番線で列番変更、` : ""}${esc((t.time || "").slice(0, 5))}${esc(t.how || "")}${t.via ? `・${esc(t.via)}` : ""}）${changed}`
         : esc(t.kind) + (t.number ? `：${esc(t.number)}` : "") + changed);
     }
     return out.length ? `<div class="staff"><div class="staff-foot">${out.join("<br>")}</div></div>` : "";

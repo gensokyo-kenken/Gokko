@@ -487,6 +487,8 @@ public sealed partial class RouteEngine
         public string DepartWait { get; set; } = "";
         /// <summary>始発で、引上線などの入換が必要な番線にいるなら、その番線。</summary>
         public string? ShuntFrom { get; set; }
+        /// <summary>始発で、出発できる番線に一度でもいたか。いたら、本線の回路（大道寺の X線）からの入換元とはもうみなさない。</summary>
+        public bool WasOnDepartTrack { get; set; }
         public bool ShuntRequested { get; set; }
         public GroupState Shunt { get; set; }
         public string ShuntWait { get; set; } = "";
@@ -579,6 +581,9 @@ public sealed partial class RouteEngine
         /// </summary>
         public Dictionary<string, int> ShuntCircuits { get; } = new();
 
+        /// <summary>始発の入換元（大道寺の X線など）にいるかを、列車を見つけたときに一度だけ確かめたか。</summary>
+        public bool ShuntStartChecked { get; set; }
+
         /// <summary>駅ごとの実際の着時刻・発時刻（ロープレ時刻の運転日の秒）。着は停車なら止まった時、通過なら駅に入った時。発は出発信号機を踏んだ時。</summary>
         public Dictionary<string, double> ActualArr { get; } = new();
         public Dictionary<string, double> ActualDep { get; } = new();
@@ -656,10 +661,17 @@ public sealed partial class RouteEngine
 
     /// <summary>
     /// 入換（引上げ）の既定の選択肢。増結車になる列車（折り返しの列番が「連」で始まる。回730 → 連777）と、
-    /// 切り離された列車（「解」で始まる。解2076C → 回2131）は、E線へ（E線で折り返して番線へ入る）。ほかは最初の選択肢。
+    /// 切り離された列車（「解」で始まる。解2076C → 回2131）は、E線へ（E線で折り返して番線へ入る）。
+    /// ダイヤの折返に引き上げる線（Via）が書かれていればその線。ほかは最初の選択肢。
     /// </summary>
     private int DefaultShuntOut(TrainRun run, StationRun st)
     {
+        // ダイヤの折返に引き上げる線が書かれていれば、その線（大道寺の 951 → 1050 は X線）
+        if (run.Dia != null && _data.Turns.TurnOf(run.Dia) is { Via: { Length: > 0 } via })
+        {
+            var i = ShuntOutOptions(run, st).FindIndex(o => o.Label == via);
+            if (i >= 0) return i;
+        }
         if (run.Train.StartsWith("解") || run.Dia != null && _data.Turns.TurnOf(run.Dia) is { Number: { } n } && n.StartsWith("連"))
         {
             var i = ShuntOutOptions(run, st).FindIndex(o => o.Label == "E線");
@@ -1234,6 +1246,21 @@ public sealed partial class RouteEngine
     {
         var p = run.Player;
         if (p.TrackCircuits.Count == 0) return p.Zones;
+
+        // 列車を見つけたとき、ダイヤの始発駅の入換元（駅間のゾーンにある回路。大道寺の X線）にいれば、その回路と、
+        // そこから番線への入換の進路の回路を、始発駅のものとして数える。引上げで X線に入ってから列番を変えた列車（951 → 1050）は、
+        // 引上げの進路が前の列番のものなので、そのままでは大道寺を出たことになってしまうため
+        if (!run.ShuntStartChecked)
+        {
+            run.ShuntStartChecked = true;
+            if (run.Dia?.Stops.FirstOrDefault()?.StationId is { } sid && _data.Stations.TryGetValue(sid, out var sst)
+                && _data.Line.ZoneOfStation(sid) is var sz && sz >= 0)
+                foreach (var sh in sst.Routes[run.Dir].Shunts.Where(s => s.FromCircuit != null && p.TrackCircuits.Contains(s.FromCircuit)))
+                foreach (var c in sh.Routes.SelectMany(r => r.Circuits).Prepend(sh.FromCircuit!))
+                    if (_data.Line.ZoneOfCircuit(c) is { } z && Math.Abs(z - sz) == 1)
+                        run.ShuntCircuits[c] = sz;
+        }
+
         var live = run.Requests.Where(r => !r.Released && r.CancelledUtc == null).Select(r => r.Def)
             .Concat(p.GameRoutes.Select(k => _data.Routes.GetValueOrDefault(k)).OfType<RouteDef>())
             .Where(d => d.Circuits.Any(p.TrackCircuits.Contains))
@@ -1666,9 +1693,14 @@ public sealed partial class RouteEngine
 
         // 始発で、入換の元の番線（引上線など）にいるか。入換が終わってホームに入れば、ふつうの始発に戻る
         st.ShuntFrom = null;
+        // 出発できる番線にいたことがあれば覚えておく。大道寺の X線は本線の回路なので、1番線から出発して X線に入った列車を、
+        // X線からの入換元と取り違えないように
+        if (st.IsStart && routes.Depart.Keys.Any(k => st.St.TrackCircuit.TryGetValue(k, out var dc) && run.Player.TrackCircuits.Contains(dc)))
+            st.WasOnDepartTrack = true;
         if (st.IsStart)
             foreach (var sh in routes.Shunts)
             {
+                if (sh.FromCircuit != null && st.WasOnDepartTrack) continue;
                 var fc = sh.FromCircuit ?? (sh.From is { } f && st.St.TrackCircuit.TryGetValue(f, out var c) ? c : null);
                 // 入換の行き先の番線にもういれば、入換はいらない（江ノ原信号場の13番線の長い列車が、一直線の10番線側にはみ出していても、
                 // 10番線にいるとはみなさない）
@@ -4251,7 +4283,7 @@ public sealed partial class RouteEngine
                 renumber = dia.Next is { } nx ? new { number = nx.Number, station = _data.Line.StationName(nx.StationId) } : null,
                 // 後運用（差し替えていれば changed、時刻表の後運用が original）
                 turn = _data.Turns.TurnOf(dia) is { } tn
-                    ? new { kind = tn.Kind, number = tn.Number, time = tn.Time, how = tn.How, inPlace = TurnsInPlace(dia) ? dia.Stops[^1].Track : null, changed = _data.Turns.IsChanged(dia.Number), original = dia.Turn?.Number }
+                    ? new { kind = tn.Kind, number = tn.Number, time = tn.Time, how = tn.How, via = tn.Via, inPlace =TurnsInPlace(dia) ? dia.Stops[^1].Track : null, changed = _data.Turns.IsChanged(dia.Number), original = dia.Turn?.Number }
                     : null,
                 stops,
                 duty,
