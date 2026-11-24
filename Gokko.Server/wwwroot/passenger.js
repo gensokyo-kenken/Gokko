@@ -14,15 +14,19 @@ function node(tag, className, text) {
   if (text != null) el.textContent = text;
   return el;
 }
-const kindColors = new Map([
-  ["特急", "#bf2027"], ["快急", "#773ab0"], ["快速急行", "#773ab0"],
-  ["急行", "#b74d00"], ["区急", "#147444"], ["区間急行", "#147444"],
-  ["準急", "#205eb1"], ["普通", "#111111"]
+const serviceClasses = new Map([
+  ["普通", "service-local"], ["特急", "service-limited-express"],
+  ["快急", "service-rapid-express"], ["快速急行", "service-rapid-express"],
+  ["急行", "service-express"],
+  ["区急", "service-section-express"], ["区間急行", "service-section-express"],
+  ["準急", "service-semi-express"]
 ]);
+// 種別の色（CSS の service-○○）。種別の札と列車の絵に使う
+function serviceClass(kind, label) {
+  return serviceClasses.get(kind) || serviceClasses.get(label) || "service-other";
+}
 function kindBadge(kind, label) {
-  const badge = node("span", "kind", label || kind || "列車");
-  badge.style.backgroundColor = kindColors.get(kind) || kindColors.get(label) || "#586472";
-  return badge;
+  return node("span", "kind " + serviceClass(kind, label), label || kind || "列車");
 }
 function trainLabel(number) {
   return String(number).replace(/列車$/, "") + "列車";
@@ -186,9 +190,8 @@ function draw({stations, trains, updated, gameTime}) {
     const btn = node("button","train");
     const kind = t.type || "列車";
     const tag = kindBadge(t.kind, kind);
-    const face = node("img","face");
-    face.src = "passenger-train.png";
-    face.alt = "";
+    const face = node("span", "face " + serviceClass(t.kind, kind));
+    face.setAttribute("aria-hidden", "true");
     const down = t.direction === "下り";
     const number = node("span","number",(down ? "▼ " : "▲ ") + trainLabel(t.train));
     const service = node("span","train-service");

@@ -6,8 +6,28 @@
 
 .row{min-height:68px}.station{min-height:76px}.lane{align-items:center}
 .train{display:inline-grid;justify-items:center;gap:1px;line-height:1.1;border:0;background:transparent;padding:3px;min-width:42px}
-.kind{padding:2px 5px;font-size:10px;font-weight:bold;color:white;border-radius:4px}
-.face{width:34px;height:35px;object-fit:contain}.number{font-size:10px;font-weight:700;color:#244f57}
+.service-local          { --badge-color: #111111; }
+.service-limited-express{ --badge-color: #bf2027; --train-color: #d32d36; }
+.service-rapid-express  { --badge-color: #773ab0; --train-color: #8542b8; }
+.service-express        { --badge-color: #b74d00; --train-color: #d76a0b; }
+.service-section-express{ --badge-color: #147444; --train-color: #16864f; }
+.service-semi-express   { --badge-color: #205eb1; --train-color: #38a8dc; }
+.service-other          { --badge-color: #586472; --train-color: #586472; }
+.kind{padding:2px 5px;font-size:10px;font-weight:bold;color:white;background:var(--badge-color);border-radius:4px}
+/* 列車の絵は種別の色で塗った記号（普通は黒のまま） */
+.face{
+  --pictogram: url("passenger-train.png");
+  display:block;width:34px;height:35px;
+  background:var(--pictogram) center / contain no-repeat;
+}
+@supports (mask-image: url("passenger-train.png")) or (-webkit-mask-image: url("passenger-train.png")) {
+  .face:not(.service-local){
+    background:var(--train-color);
+    -webkit-mask:var(--pictogram) center / contain no-repeat;
+    mask:var(--pictogram) center / contain no-repeat;
+  }
+}
+.number{font-size:10px;font-weight:700;color:#244f57}
 .delay{font-size:10px}.name{text-align:start}
 #schedule table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px;font-variant-numeric:tabular-nums}
 #schedule th,#schedule td{text-align:left;padding:7px 4px;border-bottom:1px solid #dae6e4}
