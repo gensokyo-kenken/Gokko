@@ -16,6 +16,8 @@ public sealed class LineMap
     private readonly Dictionary<string, int> _sectionZone = new();
     private readonly Dictionary<string, int> _circuitZone = new();
 
+    private readonly HashSet<string> _passengerCircuits = new(StringComparer.Ordinal);
+
     internal static readonly JsonDocumentOptions JsonOptions = new()
     {
         AllowTrailingCommas = true,
@@ -67,6 +69,17 @@ public sealed class LineMap
             }
         }
 
+        map._passengerCircuits.UnionWith(map._circuitZone.Keys);
+        if (root.TryGetProperty("passengerExcludedCircuits", out var excluded))
+        {
+            foreach (var item in excluded.EnumerateArray())
+            {
+                var circuit = Str(item).Trim();
+                if (!map._passengerCircuits.Remove(circuit))
+                    throw new InvalidDataException($"passengerExcludedCircuits の回路「{circuit}」は未割当か重複しています");
+            }
+        }
+
         // unassigned（割り当てなしの回路）は、位置の判定には使わないので読み込まない。
         return map;
     }
@@ -81,6 +94,14 @@ public sealed class LineMap
         }
 
         return zones.ToList();
+    }
+
+    /// <summary>編成が本線・旅客ホーム側に少しでも在線しているか。旅客案内だけで使う。</summary>
+    public bool HasPassengerCircuit(List<string> occupied)
+    {
+        foreach (var circuit in occupied)
+            if (_passengerCircuits.Contains(circuit)) return true;
+        return false;
     }
 
     /// <summary>路線の駅の並び（下り＝館浜方向の順）。</summary>
