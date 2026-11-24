@@ -156,6 +156,9 @@ public sealed class AiTrains : BackgroundService
         if (dir == null) return (false, $"{number}: 列車番号の形が違います");
         cars = Math.Clamp(cars <= 0 ? 6 : cars, 1, 10);
         var now = _clock.Now;
+        // 自動進路構成が要求している進路の回路（ゲームにはまだ開いていない進路も。RouteEngine のロックを取るので、自分のロックの外で集める）。
+        // 引き継ぐ在線・切り離した車両は、元の列車の進路の上に出るので見ない
+        var reserved = takesOver == null && !number.StartsWith("解") ? _routes.ReservedCircuits() : new HashSet<string>();
 
         lock (_lock)
         {
@@ -186,6 +189,9 @@ public sealed class AiTrains : BackgroundService
             foreach (var p in others)
             foreach (var key in p.GameRoutes)
                 if (_rail.Routes.TryGetValue(key, out var rd)) occupied.UnionWith(rd.Circuits);
+            // 遅れて入ってくる列車の場内のように、要求したがまだゲームに開いていない進路の番線にも出さない
+            // （出すと出現待ちになり、入ってくる列車が番線に入れない）
+            occupied.UnionWith(reserved);
             var options = new List<int>();
             if (forceTrack is { } ft) options.Add(ft);
             else if (start.Track is { } dt) options.Add(dt);
