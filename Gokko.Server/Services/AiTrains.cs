@@ -456,6 +456,23 @@ public sealed class AiTrains : BackgroundService
                 if (_rail.Turns.TurnOf(t.Dia) is { Kind: "折返", How: "入換", Number: { Length: > 0 } sn } && _rail.DiaOf(sn) != null)
                 {
                     if (IsUserTrain(sn)) { HandOver(t, sn); return; }
+
+                    // 着いた番線から引上げの入換がなく、次の列番の始発の入換がその番線から出る（江ノ原信号場10番線など）:
+                    // 引き上げずに、この番線で列番を変える。入換は次の列番の始発の入換として、自動進路構成が入換時刻に開ける
+                    if (_routes.TurnsInPlace(t.Dia))
+                    {
+                        if (!ready)
+                        {
+                            t.Status = $"{stopNow.Name} {stopNow.Track}番線に到着（{sn} に列番を変えます）";
+                            UpdateInfo(t);
+                            return;
+                        }
+                        t.ShuntStation = stopNow;
+                        ShuntReverse(t, inPlace: true);
+                        UpdateInfo(t);
+                        return;
+                    }
+
                     if (!t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; } // 入換要求（ダイヤ運転中は自動）
                     if (t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
                     {
@@ -468,7 +485,7 @@ public sealed class AiTrains : BackgroundService
                         return;
                     }
 
-                    // 自動進路構成が扱う駅がもうない（入換の進路を開けない。江ノ原信号場10番線に下りで着いたときの 10→13 など）まま、
+                    // 自動進路構成が扱う駅がもうない（入換の進路を開けない）まま、
                     // 次の列番の発車1分前になったら、この列車は消す（次の列番は、その時刻にダイヤの番線へ出す）
                     if (t.PlanDetail == null && nowGame is { } ng1 && _rail.DiaOf(sn)?.Stops.FirstOrDefault(s => s.StationId == stopNow.StationId) is { } ns
                         && Time(ns.Dep ?? ns.Arr) is { } nsDep && ng1 >= nsDep - TimeSpan.FromSeconds(60))
@@ -616,8 +633,9 @@ public sealed class AiTrains : BackgroundService
     /// <summary>
     /// 入換（引上げ）で引上線の奥に止まったら、折り返しの列番（ダイヤの「折返」）になる。向きを変え、道筋は今いる軌道回路から作り直す。
     /// ホームへの入換の進路は、自動進路構成が新しい列番の始発の入換として、時刻に合わせて開ける（開いたら、その進路で番線に入る）。
+    /// inPlace は、引き上げずに着いた番線で列番を変えるとき（<see cref="RouteEngine.TurnsInPlace"/>）。
     /// </summary>
-    private void ShuntReverse(Train t)
+    private void ShuntReverse(Train t, bool inPlace = false)
     {
         var here = t.ShuntStation ?? t.Plan[t.DwellIndex];
         var turn = _rail.Turns.TurnOf(t.Dia);
@@ -663,6 +681,12 @@ public sealed class AiTrains : BackgroundService
         t.Info.GameRoutes.Clear();
         t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
         t.Info.LastCenter = null;
+        if (inPlace)
+        {
+            t.Status = $"{here.Name} {here.Track}番線で列番変更（{old} → {number}）。入換待ち";
+            _log.Note($"にぎやかし: {old} は {here.Name} {here.Track}番線で列番を変えて {number} になりました");
+            return;
+        }
         t.Status = $"引上線で折り返し（{old} → {number}）。番線への入換待ち";
         _log.Note($"にぎやかし: {old} は {here.Name} の引上線で折り返して {number} になりました");
     }

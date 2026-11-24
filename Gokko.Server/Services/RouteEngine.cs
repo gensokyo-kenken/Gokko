@@ -1122,6 +1122,22 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
+    /// 折返が「入換」でも、着いた番線から引上げの入換（shuntOut）がなく、次の列番の始発の入換がその番線から出るなら、
+    /// 着いた番線でそのまま列番を変える（江ノ原信号場の10番線に下りで着いて、次の列番が 10→13 の入換で出区する列車など）。
+    /// 入換は、次の列番の始発の入換として、入換時刻に合わせて開ける。
+    /// </summary>
+    public bool TurnsInPlace(DiaTrain dia)
+    {
+        if (_data.Turns.TurnOf(dia) is not { Kind: "折返", How: "入換", Number: { Length: > 0 } next } || _data.DiaOf(next) is not { } nd) return false;
+        var end = dia.Stops.LastOrDefault();
+        if (end?.StationId is not { } sid || end.Track is not { } track || !_data.Stations.TryGetValue(sid, out var st)) return false;
+        if (nd.Stops.FirstOrDefault() is not { } first || first.StationId != sid) return false;
+        if (TrainInfo(dia.Number)?.Dir is not { } dir || TrainInfo(nd.Number)?.Dir is not { } nextDir) return false;
+        if (st.Routes[dir].ShuntOuts.Any(o => o.From == track)) return false;
+        return st.Routes[nextDir].Shunts.Any(s => s.From == track && (first.Track is not { } to || s.To == to));
+    }
+
+    /// <summary>
     /// 列番から種別と向きを読む（列車番号の付け方: 接頭辞 + 始発時刻2桁 + 運番下2桁 + 社局 + 種別 + 接尾辞）。
     /// ・呼び分けの「#2」など、接尾辞（X・Y・Z）は除く
     /// ・向き: 数字の最後の桁（奇数＝下り、偶数＝上り）
@@ -4235,7 +4251,7 @@ public sealed partial class RouteEngine
                 renumber = dia.Next is { } nx ? new { number = nx.Number, station = _data.Line.StationName(nx.StationId) } : null,
                 // 後運用（差し替えていれば changed、時刻表の後運用が original）
                 turn = _data.Turns.TurnOf(dia) is { } tn
-                    ? new { kind = tn.Kind, number = tn.Number, time = tn.Time, how = tn.How, changed = _data.Turns.IsChanged(dia.Number), original = dia.Turn?.Number }
+                    ? new { kind = tn.Kind, number = tn.Number, time = tn.Time, how = tn.How, inPlace = TurnsInPlace(dia) ? dia.Stops[^1].Track : null, changed = _data.Turns.IsChanged(dia.Number), original = dia.Turn?.Number }
                     : null,
                 stops,
                 duty,
