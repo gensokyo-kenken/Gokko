@@ -784,7 +784,7 @@ public static class AdminEndpoints
     {
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
         // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
-        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List() }));
+        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List(), carsProblems = ai.CarsProblems }));
         g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
         {
             ai.SetEnabled(req.On);
@@ -793,7 +793,7 @@ public static class AdminEndpoints
         g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { ok = false, message = "列車番号を入れてください" });
-            var (ok, message) = ai.Add(req.Train, req.Cars ?? 6, req.Station?.Trim());
+            var (ok, message) = ai.Add(req.Train, req.Cars ?? 0, req.Station?.Trim());
             return ok ? Results.Ok(new { ok, message }) : Results.BadRequest(new { ok, message });
         });
         g.MapPost("/ai-trains/remove", (AiTrainRequest req, AiTrains ai) =>

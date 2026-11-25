@@ -1547,14 +1547,15 @@
         <label><input type="radio" name="${name}" value="off"> ナシ</label>
         <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
       </div>
-      <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は6両）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
+      <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は運行ごとの両数）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
       <div class="row">
         <input data-ai="train" placeholder="列番（例: 1651）" size="12">
-        <input data-ai="cars" type="number" value="6" min="1" max="10" style="width:4em"><span>両</span>
+        <input data-ai="cars" type="number" min="1" max="10" placeholder="運行" title="空なら運行ごとの両数（表にない運行は6両）" style="width:4em"><span>両</span>
         <input data-ai="station" placeholder="出す駅（空なら次に発車する駅）" size="22">
         <button data-ai="add" class="primary">手で出す</button>
         <button data-ai="clear">全部消す</button>
       </div>
+      <div data-ai="carsProblems" class="muted"></div>
       <div data-ai="list"></div>`;
     const q = (k) => el.querySelector(`[data-ai="${k}"]`);
     let last = "";
@@ -1563,6 +1564,8 @@
       try {
         const d = await api("GET", "/ai-trains");
         for (const r of el.querySelectorAll(`input[name="${name}"]`)) r.checked = (r.value === "on") === !!d.enabled;
+        const probs = d.carsProblems || [];
+        q("carsProblems").innerHTML = probs.length ? `<b>両数の表（Data/UnyoCars.csv）のおかしな所:</b> ${probs.map(esc).join("　")}` : "";
         const list = d.trains || [];
         const html = list.length === 0 ? `<div class="muted">走っていません</div>`
           : `<table>${list.map((t) => `<tr><td><b>${esc(t.train)}</b>${t.auto ? ` <span class="muted">自動</span>` : ""}</td><td class="muted">${t.cars}両</td>`
@@ -1587,7 +1590,7 @@
     q("add").onclick = async () => {
       const train = q("train").value.trim();
       if (!train) return;
-      await call("POST", "/ai-trains/add", { train, cars: Number(q("cars").value) || 6, station: q("station").value.trim() || null });
+      await call("POST", "/ai-trains/add", { train, cars: Number(q("cars").value) || 0, station: q("station").value.trim() || null });
       q("train").value = "";
     };
     q("train").addEventListener("keydown", (ev) => { if (ev.key === "Enter") q("add").click(); });

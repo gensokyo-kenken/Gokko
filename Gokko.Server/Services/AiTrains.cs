@@ -69,7 +69,7 @@ public sealed class AiTrains : BackgroundService
     private readonly List<Dictionary<string, int>> _trackRuns = new(); // _signalRuns と同じ並び。その走りで止まった駅の番線
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
-    private readonly Dictionary<int, int> _carsByUnyo = new(); // 運行番号ごとの両数（ない運行は6両）
+    private readonly UnyoCars _unyoCars; // 運行番号ごとの両数（Data/UnyoCars.csv。ない運行は6両）
     private Dictionary<string, Dictionary<string, string>> _couplePartners = new(); // 連結: 列車ID → 駅ID → 番線で待つ増結車（RouteEngine から周期ごとに写す）
     private static readonly TimeSpan CoupleStopB = TimeSpan.FromSeconds(5); // 連結: 停B で止まっている時間
     private readonly List<(string Child, int Cars, string Station, int Track, string Parent)> _pendingSplits = new(); // 解放: これから出す車両
@@ -107,6 +107,8 @@ public sealed class AiTrains : BackgroundService
         _adj = LoadAdjacency(Path.Combine(dataDir, "TrackCircuits.json"));
         _routesBySignal = rail.Routes.Values.Where(r => r.Signal.Length > 0).GroupBy(r => r.Signal).ToDictionary(g => g.Key, g => g.ToList());
         LoadDistances(Path.Combine(dataDir, "AiTrains.json"));
+        _unyoCars = UnyoCars.Load(dataDir);
+        foreach (var p in _unyoCars.Problems) { _logger?.LogWarning("両数の表: {Problem}", p); _log.Note($"両数の表: {p}"); }
         players.VirtualTrains = Snapshot;
         players.GhostDeleted += OnGhostDeleted;
     }
@@ -154,7 +156,7 @@ public sealed class AiTrains : BackgroundService
         if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
         var dir = _routes.DirOfTrain(number);
         if (dir == null) return (false, $"{number}: 列車番号の形が違います");
-        cars = Math.Clamp(cars <= 0 ? 6 : cars, 1, 10);
+        cars = Math.Clamp(cars <= 0 ? CarsOf(number) : cars, 1, 10);
         var now = _clock.Now;
         // 自動進路構成が要求している進路の回路（ゲームにはまだ開いていない進路も。RouteEngine のロックを取るので、自分のロックの外で集める）。
         // 引き継ぐ在線・切り離した車両は、元の列車の進路の上に出るので見ない
@@ -1606,9 +1608,11 @@ public sealed class AiTrains : BackgroundService
     // 距離の表
     // =========================================================================================
 
-    /// <summary>自動で出す列車の両数。ダイヤの運行番号から AiTrains.json の carsByUnyo で引く（ない運行は6両）。</summary>
-    private int CarsOf(string number) =>
-        _rail.DiaOf(number)?.Unyo is { } u && _carsByUnyo.TryGetValue(u, out var c) ? c : 6;
+    /// <summary>自動で出す列車の両数。ダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。</summary>
+    private int CarsOf(string number) => _unyoCars.Of(_rail.DiaOf(number)?.Unyo);
+
+    /// <summary>両数の表を読んだときのおかしな所（管理画面に出す）。</summary>
+    public IReadOnlyList<string> CarsProblems => _unyoCars.Problems;
 
     private double LengthOf(string circuit) =>
         _circuitLengths.TryGetValue(circuit, out var l) ? l : circuit.StartsWith("TH") ? DefaultStationCircuit : DefaultLineCircuit;
@@ -1659,9 +1663,6 @@ public sealed class AiTrains : BackgroundService
                         s.GetProperty("track").GetInt32(), s.GetProperty("signal").GetString()!,
                         s.TryGetProperty("before", out var b) ? b.GetDouble() : 0, s.TryGetProperty("after", out var a) ? a.GetDouble() : null,
                         s.TryGetProperty("couple", out var cp) ? cp.GetDouble() : null, s.TryGetProperty("stopB", out var sb) ? sb.GetDouble() : null));
-            if (root.TryGetProperty("carsByUnyo", out var carsBy))
-                foreach (var c in carsBy.EnumerateObject())
-                    if (int.TryParse(c.Name, out var unyo) && c.Value.TryGetInt32(out var n)) _carsByUnyo[unyo] = n;
             if (root.TryGetProperty("circuitLengths", out var lens))
                 foreach (var c in lens.EnumerateObject())
                     _circuitLengths[c.Name] = c.Value.GetDouble();
