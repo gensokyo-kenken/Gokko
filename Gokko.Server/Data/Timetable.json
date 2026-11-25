@@ -11278,7 +11278,7 @@
       ]
     },
     {
-      "number": "試9091", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 290,
+      "number": "試9091", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 390,
       "turn": { "kind": "折返", "number": "試9190", "time": "11:12", "how": "発", "text": "試9190 11:12発 試運転 日野森行" },
       "stops": [
         { "st": "TH66S", "name": "江原検", "stop": "停", "arr": null, "dep": "10:52:00", "track": 11, "note": "灰色" },
@@ -11289,7 +11289,7 @@
       ]
     },
     {
-      "number": "試9190", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 290,
+      "number": "試9190", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 390,
       "turn": { "kind": "折返", "number": "試9191", "time": "11:59", "how": "発", "text": "試9191 11:59発 試運転 駒野行" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "11:12:00", "track": 1, "note": "灰色" },
@@ -11305,7 +11305,7 @@
       ]
     },
     {
-      "number": "試9191", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 290,
+      "number": "試9191", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 390,
       "turn": { "kind": "折返", "number": "試9290", "time": "12:33", "how": "発", "text": "試9290 12:33発 試運転 江原検行" },
       "stops": [
         { "st": "TH61", "name": "日野森", "stop": "停", "arr": null, "dep": "11:59:00", "track": 1, "note": "灰色;×特手②48通;×普東②54着;(待)特館③56通" },
@@ -11321,7 +11321,7 @@
       ]
     },
     {
-      "number": "試9193", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 292,
+      "number": "試9193", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 392,
       "turn": { "kind": "折返", "number": "試9292", "time": "12:12", "how": "発", "text": "試9292 12:12発 試運転 日野森行" },
       "stops": [
         { "st": "TH66S", "name": "江原検", "stop": "停", "arr": null, "dep": "11:52:00", "track": 12, "note": "灰色" },
@@ -11332,7 +11332,7 @@
       ]
     },
     {
-      "number": "試9290", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 290,
+      "number": "試9290", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 390,
       "turn": { "kind": "引継", "number": "構内運転士へ", "time": null, "how": null, "text": "構内運転士へ" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "12:33:00", "track": 1, "note": "灰色;(待)特手②31通" },
@@ -11343,7 +11343,7 @@
       ]
     },
     {
-      "number": "試9292", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 292,
+      "number": "試9292", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 392,
       "turn": { "kind": "折返", "number": "試9293", "time": "12:59", "how": "発", "text": "試9293 12:59発 試運転 駒野行" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "12:12:00", "track": 1, "note": "灰色" },
@@ -11359,7 +11359,7 @@
       ]
     },
     {
-      "number": "試9293", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 292,
+      "number": "試9293", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 392,
       "turn": { "kind": "折返", "number": "試9392", "time": "13:33", "how": "発", "text": "試9392 13:33発 試運転 江原検行" },
       "stops": [
         { "st": "TH61", "name": "日野森", "stop": "停", "arr": null, "dep": "12:59:00", "track": 1, "note": "灰色;×特手②48通;×普東②54着;(待)特館③56通" },
@@ -11375,7 +11375,7 @@
       ]
     },
     {
-      "number": "試9295", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 294,
+      "number": "試9295", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 394,
       "turn": { "kind": "折返", "number": "試9394", "time": "13:12", "how": "発", "text": "試9394 13:12発 試運転 日野森行" },
       "stops": [
         { "st": "TH66S", "name": "江原検", "stop": "停", "arr": null, "dep": "12:52:00", "track": 12, "note": "灰色" },
@@ -11386,7 +11386,7 @@
       ]
     },
     {
-      "number": "試9392", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 292,
+      "number": "試9392", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 392,
       "turn": { "kind": "引継", "number": "構内運転士へ", "time": null, "how": null, "text": "構内運転士へ" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "13:33:00", "track": 1, "note": "灰色;(待)特手②31通" },
@@ -11397,7 +11397,7 @@
       ]
     },
     {
-      "number": "試9394", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 294,
+      "number": "試9394", "type": "試運転", "label": "試運転", "dest": "日野森", "unyo": 394,
       "turn": { "kind": "折返", "number": "試9395", "time": "13:59", "how": "発", "text": "試9395 13:59発 試運転 駒野行" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "13:12:00", "track": 1, "note": "灰色" },
@@ -11413,7 +11413,7 @@
       ]
     },
     {
-      "number": "試9395", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 294,
+      "number": "試9395", "type": "試運転", "label": "試運転", "dest": "駒野", "unyo": 394,
       "turn": { "kind": "折返", "number": "試9494", "time": "14:33", "how": "発", "text": "試9494 14:33発 試運転 江原検行" },
       "stops": [
         { "st": "TH61", "name": "日野森", "stop": "停", "arr": null, "dep": "13:59:00", "track": 1, "note": "灰色;×特手②48通;×普東②54着;(待)特館③56通" },
@@ -11429,7 +11429,7 @@
       ]
     },
     {
-      "number": "試9494", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 294,
+      "number": "試9494", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 394,
       "turn": { "kind": "引継", "number": "構内運転士へ", "time": null, "how": null, "text": "構内運転士へ" },
       "stops": [
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:33:00", "track": 1, "note": "灰色;(待)特手②29通" },

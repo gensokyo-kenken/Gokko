@@ -499,7 +499,7 @@
 
   // ---- 列番を運行番号と発駅の発車時刻から自動で入れる（Gokko.Common/Unyo.cs の列番の付け方の逆） ----
   // 列番 = 頭の字（回送は「回」、それ以外は「臨」）＋ 始発の時 ＋ 運行番号の下2桁（下りは＋1）＋ 運行番号の S・T ＋ 種別の記号。
-  // 運行番号が100番台なら数字に＋3000、200番台なら＋6000。手で列番を直したら、それ以後は自動では変えない
+  // 運行番号が100番台なら数字に＋3000、200番台なら＋6000、300番台なら＋9000（時は1の位だけ）。手で列番を直したら、それ以後は自動では変えない
   const autoNums = new WeakMap(); // 列車 → 自動で入れた列番
   function makeNumber(t) {
     if (t.turnHow === "連結") return null; // 増結車は「連＋連結する列車の列番」
@@ -509,7 +509,8 @@
     const u = +m[1];
     if (u % 2 === 1) return null; // 運行番号は偶数（下りは＋1した奇数、上りは偶数の列番になる）
     const low = (u % 100) + (d === "下り" ? 1 : 0);
-    const n = (u >= 200 ? 6000 : u >= 100 ? 3000 : 0) + Math.floor((dep % 86400) / 3600) * 100 + low;
+    const hour = Math.floor((dep % 86400) / 3600);
+    const n = u >= 300 ? 9000 + (hour % 10) * 100 + low : (u >= 200 ? 6000 : u >= 100 ? 3000 : 0) + hour * 100 + low;
     const letter = /^[ST]/.test(m[2]) ? m[2][0] : "";
     const type = base.types.find((x) => x.type === t.type);
     return t.type === "回送" ? `回${n}${letter}` : `臨${n}${letter}${type ? type.suffix : ""}`;
