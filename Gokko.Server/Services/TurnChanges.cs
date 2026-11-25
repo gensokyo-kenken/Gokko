@@ -37,12 +37,12 @@ public sealed class TurnChanges(RailData rail)
     }
 
     /// <summary>運行番号（差し替えたあとは、つないだ列車の運行番号を受け継ぐ）。</summary>
-    public int? UnyoOf(DiaTrain d)
+    public string? UnyoOf(DiaTrain d)
     {
         lock (_lock) return _over.Count == 0 ? d.Unyo : Unyo(d.Number, 0);
     }
 
-    private int? Unyo(string number, int depth)
+    private string? Unyo(string number, int depth)
     {
         var d = rail.Dia.GetValueOrDefault(number);
         if (d == null) return null;

@@ -140,7 +140,7 @@
 
       <fieldset id="trainBox" hidden><legend>列車の時刻</legend>
         <div class="row">
-          運行番号: <input id="tUnyo" type="text" size="4" inputmode="numeric">
+          運行番号: <input id="tUnyo" type="text" size="4" placeholder="24S">
           列番: <input id="tNumber" type="text" size="10">
           種別: <select id="tType"></select>
           種別表記: <select id="tLabel"></select>
@@ -279,8 +279,12 @@
 
   $("gName").oninput = () => { cur.name = $("gName").value; dirty = true; };
 
+  // 運行番号（"24"・"24S"。24 と 24S は別の運行）の並べ方: 数字の順、同じ数字ならアルファベットなし→あり。空は最後
+  const unyoKey = (u) => [u ? parseInt(u, 10) : Infinity, String(u || "")];
+  const unyoCmp = (a, b) => { const x = unyoKey(a), y = unyoKey(b); return (x[0] - y[0]) || (x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0); };
+
   function drawTrains() {
-    const list = cur.trains.map((t, i) => ({ t, i })).sort((a, b) => (a.t.unyo - b.t.unyo) || ((sec(a.t.stops[0]?.dep) || 0) - (sec(b.t.stops[0]?.dep) || 0)));
+    const list = cur.trains.map((t, i) => ({ t, i })).sort((a, b) => unyoCmp(a.t.unyo, b.t.unyo) || ((sec(a.t.stops[0]?.dep) || 0) - (sec(b.t.stops[0]?.dep) || 0)));
     let lastUnyo = null;
     const rows = list.map(({ t, i }) => {
       const f = t.stops[0], l = t.stops[t.stops.length - 1];
@@ -305,7 +309,7 @@
 
   function newTrain() {
     const prev = cur.trains[curTrain];
-    return { unyo: prev ? prev.unyo : (base.freeUnyo || 0), number: "", type: "普通", label: "", dest: "", stops: [] };
+    return { unyo: prev ? prev.unyo : (base.freeUnyo || ""), number: "", type: "普通", label: "", dest: "", stops: [] };
   }
   $("addTrain").onclick = () => { cur.trains.push(newTrain()); curTrain = cur.trains.length - 1; dirty = true; drawEditor(); $("tNumber").focus(); };
   $("dupTrain").onclick = () => {
@@ -391,7 +395,12 @@
       drawTrains();
     };
   };
-  field("tUnyo", "unyo", (v) => parseInt(v.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), 10) || 0);
+  // 運行番号は「24」「24S」の形（全角・小文字・「運行」付きも直す）。形でなければ空
+  field("tUnyo", "unyo", (v) => {
+    const s = v.replace(/[０-９Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).toUpperCase().replace(/\s|運行/g, "");
+    const m = /^(\d+)([A-Z]*)$/.exec(s);
+    return m ? `${parseInt(m[1], 10)}${m[2]}` : "";
+  });
   field("tNumber", "number", (v) => v.trim());
   field("tType", "type");
   field("tLabel", "label");
@@ -700,8 +709,8 @@
     try {
       base = await api("GET", "/base");
       for (const s of base.stations) stById[s.id] = s;
-      const used = new Set(base.unyoUsed);
-      base.freeUnyo = [...Array(99).keys()].map((i) => 99 - i).find((n) => !used.has(n)) || 0; // 所定で使っていない運行番号（大きい方から）
+      const used = new Set(base.unyoUsed.map(String));
+      base.freeUnyo = String([...Array(99).keys()].map((i) => 99 - i).find((n) => !used.has(String(n))) || ""); // 所定で使っていない運行番号（大きい方から）
       $("meRole").textContent = base.me.approver ? "（運転課課長代理）" : "";
       await loadGroups();
       loadPlan();

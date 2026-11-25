@@ -7,13 +7,14 @@ namespace Gokko.Server.Services;
 ///
 /// CSV はスプレッドシートから書き出したものをそのまま置く。1行目の見出しから「運行番号」「両数」の列を探し、
 /// ほかの列は読まない。表にない運行は6両。両数が空・0・11以上・数字でないときも6両にして、Problems に残す。
+/// 運行番号は "24"・"24S" のように書く（24 と 24S は別の運行）。全角・小文字・「24S運行」も読む。
 /// </summary>
 public sealed class UnyoCars
 {
     public const string FileName = "UnyoCars.csv";
     public const int Default = 6;
 
-    private readonly Dictionary<int, int> _cars;
+    private readonly Dictionary<string, int> _cars;
 
     /// <summary>読んだときに見つかったおかしな所（管理画面と記録に出す）。</summary>
     public IReadOnlyList<string> Problems { get; }
@@ -21,19 +22,23 @@ public sealed class UnyoCars
     /// <summary>表に書いてある運行の数。</summary>
     public int Count => _cars.Count;
 
-    private UnyoCars(Dictionary<int, int> cars, List<string> problems)
+    private UnyoCars(Dictionary<string, int> cars, List<string> problems)
     {
         _cars = cars;
         Problems = problems;
     }
 
     /// <summary>その運行の両数（表にない運行・運行番号がない列車は6両）。</summary>
-    public int Of(int? unyo) => unyo is { } u && _cars.TryGetValue(u, out var c) ? c : Default;
+    public int Of(string? unyo) => unyo != null && _cars.TryGetValue(unyo, out var c) ? c : Default;
 
-    public static UnyoCars Load(string dataDir)
+    /// <summary>表に書いてある運行番号。</summary>
+    public IEnumerable<string> Unyos => _cars.Keys;
+
+    /// <param name="known">時刻表にある運行番号（渡せば、時刻表にない運行番号の行を Problems に残す）。</param>
+    public static UnyoCars Load(string dataDir, IReadOnlyCollection<string>? known = null)
     {
         var path = Path.Combine(dataDir, FileName);
-        var cars = new Dictionary<int, int>();
+        var cars = new Dictionary<string, int>();
         var problems = new List<string>();
         if (!File.Exists(path))
         {
@@ -70,11 +75,12 @@ public sealed class UnyoCars
             string Cell(int c) => c < r.Count ? r[c].Trim() : "";
             var unyoText = Cell(unyoCol);
             if (unyoText.Length == 0 && r.All(x => x.Trim().Length == 0)) continue; // 空の行
-            if (!int.TryParse(unyoText, out var unyo))
+            if (Gokko.Common.Unyo.Normalize(unyoText) is not { } unyo)
             {
-                problems.Add($"{i + 1}行目: 運行番号「{unyoText}」が数字ではありません（読みません）");
+                problems.Add($"{i + 1}行目: 運行番号「{unyoText}」が運行番号の形（24・24S など）ではありません（読みません）");
                 continue;
             }
+            if (known != null && !known.Contains(unyo)) problems.Add($"運行{unyo}: 時刻表にない運行番号です（24 と 24S は別の運行です）");
 
             var carsText = Cell(carsCol);
             var n = Default;
