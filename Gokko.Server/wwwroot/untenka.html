@@ -39,7 +39,8 @@
   .tab { padding: 3px 12px; border: 1px solid #919b9c; border-bottom: none; background: linear-gradient(#fff, #ecebe5); border-radius: 3px 3px 0 0; cursor: default; }
   .tab.on { background: #fcfcfe; border-top: 2px solid #ffc83c; padding-bottom: 5px; position: relative; top: -2px; }
   .sheet { border: 1px solid #919b9c; background: #fcfcfe; padding: 10px; min-height: 380px; }
-  fieldset { border: none; box-shadow: inset 1px 1px #808080, inset -1px -1px #fff, 1px 1px #fff, -1px -1px #808080; padding: 6px 10px 10px; margin: 4px 0 12px; min-width: 0; }
+  /* 枠は溝の線（見出しの所は線を切る）。影で描くと見出しに線が重なる */
+  fieldset { border: 2px groove #f4f4f4; padding: 6px 10px 10px; margin: 4px 0 12px; min-width: 0; }
   legend { color: #000; padding: 0 3px; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
   .note { color: #202020; margin: 2px 0 6px; }
@@ -53,11 +54,12 @@
   tr.sel td, tr.sel:hover td { background: #000080; color: #fff; }
   tr.pass td { color: #606060; }
   .mono { font-family: "MS Gothic", "Courier New", monospace; }
-  .muted { color: #808080; }
+  .muted { color: #4a4a4a; }
   .ng { color: #c00000; }
   .warn { color: #8a5a00; }
   .st { display: inline-block; padding: 0 4px; border: 1px solid; font-size: 11px; }
-  .st-下書き { color: #444; border-color: #999; }
+  .st-下書き { color: #333; border-color: #808080; background: #e8e8e8; }
+  tr.sel .st { outline: 1px solid #fff; }
   .st-申請中 { color: #00468c; border-color: #00468c; background: #e3ecf8; }
   .st-承認 { color: #006000; border-color: #006000; background: #e4f4e4; }
   .st-差戻し { color: #a00000; border-color: #a00000; background: #fbe6e6; }
