@@ -1599,7 +1599,7 @@
         const d = await api("GET", "/ai-trains");
         for (const r of el.querySelectorAll(`input[name="${name}"]`)) r.checked = (r.value === "on") === !!d.enabled;
         const probs = d.carsProblems || [];
-        q("carsProblems").innerHTML = probs.length ? `<b>両数の表（Data/UnyoCars.csv）のおかしな所:</b> ${probs.map(esc).join("　")}` : "";
+        q("carsProblems").innerHTML = probs.length ? `<b>両数の表（Data/UnyoCars.csv・TrainCars.csv）のおかしな所:</b> ${probs.map(esc).join("　")}` : "";
         showTrials(d.trials || [], d.trialsOn || []);
         const list = d.trains || [];
         const html = list.length === 0 ? `<div class="muted">走っていません</div>`

@@ -1766,8 +1766,8 @@ public sealed class AiTrains : BackgroundService
     // 距離の表
     // =========================================================================================
 
-    /// <summary>自動で出す列車の両数。ダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。</summary>
-    private int CarsOf(string number) => _unyoCars.Of(_rail.DiaOf(number)?.Unyo);
+    /// <summary>自動で出す列車の両数。列番の表（Data/TrainCars.csv）にあればそれ、なければダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。</summary>
+    private int CarsOf(string number) => _unyoCars.Of(number, _rail.DiaOf(number)?.Unyo);
 
     /// <summary>両数の表を読んだときのおかしな所（管理画面に出す）。</summary>
     public IReadOnlyList<string> CarsProblems => _unyoCars.Problems;
