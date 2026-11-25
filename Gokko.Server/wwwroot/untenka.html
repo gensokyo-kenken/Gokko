@@ -58,7 +58,8 @@
   .st-承認 { color: #006000; border-color: #006000; background: #e4f4e4; }
   .st-差戻し { color: #a00000; border-color: #a00000; background: #fbe6e6; }
   .applied { color: #fff; background: #c00000; padding: 0 4px; font-size: 11px; }
-  .split { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 10px; align-items: start; }
+  .split { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 10px; align-items: start; }
+  .split > div { min-width: 0; } /* ダイヤグラムが広くても、列の中で横に流す */
   @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
   .t-in { width: 66px; font-family: "MS Gothic", "Courier New", monospace; }
   .msgs { margin: 6px 0 0; padding: 0; list-style: none; }
@@ -129,6 +130,12 @@
           <button id="delTrain">列車を削除</button>
           <button id="check">確認</button>
         </div>
+      </fieldset>
+
+      <fieldset id="diaBox"><legend>ダイヤグラム</legend>
+        <div class="note">このグループの列車を太く、所定の列車を薄く描きます。入れた列車に関係する列車（追い越す・追い越される、単線で交換する、続行で間隔が詰まる、同じ番線を同じ時間に使う）は濃く描き、下に一覧を出します。</div>
+        <div class="list" id="dia" style="max-height:none; overflow-x:auto"></div>
+        <ul class="msgs" id="relations"></ul>
       </fieldset>
 
       <fieldset id="trainBox" hidden><legend>列車の時刻</legend>
@@ -286,6 +293,7 @@
     }).join("");
     $("trains").innerHTML = cur.trains.length ? `<table><thead><tr><th>列番</th><th>種別</th><th>発</th><th></th><th>着</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="note" style="padding:4px">列車がありません。${editable() ? "［列車を追加］で入れます。" : ""}</div>`;
+    scheduleDia();
   }
 
   $("trains").onclick = (ev) => {
@@ -482,6 +490,151 @@
   };
 
   // =========================================================================================
+  // ダイヤグラム（このグループの列車を太く、所定の列車を薄く、関係する列車を濃く）。計算はこの画面だけでする
+  // =========================================================================================
+  const TYPE_COLORS = { "特急": "#d62828", "快急": "#b04fd0", "急行": "#f08a00", "区急": "#18a33a", "準急": "#1e6fd9", "普通": "#000080", "回送": "#808080" };
+  let plan = null; // 所定の列車（/plan）
+  let singles = new Set();
+  let diaTimer = 0;
+
+  // 列車の点（ゾーン・時刻）と、駅ごとの着・発・停車・番線
+  function shape(stops) {
+    const pts = [], st = new Map();
+    for (const s of stops) {
+      const a = sec(s.arr), d = sec(s.dep);
+      if (a == null && d == null) continue;
+      if (a != null) pts.push({ z: s.y, t: a });
+      if (d != null && d !== a) pts.push({ z: s.y, t: d });
+      st.set(s.y, { arr: a ?? d, dep: d ?? a, stop: s.stop === "停", track: s.track ?? null });
+    }
+    return { pts, st };
+  }
+  const zoneOf = (id) => stById[id]?.zone;
+  const nameAt = (z) => base.stations.find((s) => s.zone === z)?.name || "";
+
+  // その列車がゾーン z を通る時刻（駅で止まるなら first: 着、そうでなければ発）。通らなければ null
+  function timeAt(sh, z, first) {
+    const p = sh.pts;
+    let hit = null;
+    for (let i = 0; i < p.length; i++) {
+      if (p[i].z === z) { if (first) return p[i].t; hit = p[i].t; continue; }
+      if (i + 1 < p.length && (p[i].z - z) * (p[i + 1].z - z) < 0) {
+        const t = p[i].t + (p[i + 1].t - p[i].t) * (z - p[i].z) / (p[i + 1].z - p[i].z);
+        return t;
+      }
+    }
+    return hit;
+  }
+
+  function relations(me, others) {
+    const out = [];
+    const dirMe = Math.sign(me.sh.pts[me.sh.pts.length - 1].z - me.sh.pts[0].z);
+    const zs = [...me.sh.st.keys()];
+    for (const o of others) {
+      if (o.sh.pts.length < 2) continue;
+      const oT0 = o.sh.pts[0].t, oT1 = o.sh.pts[o.sh.pts.length - 1].t;
+      if (oT1 < me.sh.pts[0].t - 600 || oT0 > me.sh.pts[me.sh.pts.length - 1].t + 600) continue;
+      const dirO = Math.sign(o.sh.pts[o.sh.pts.length - 1].z - o.sh.pts[0].z);
+      const why = [];
+      if (dirO === dirMe) {
+        // 同じ向き: 駅ごとの発の前後が入れ替われば追い越し。入れ替わらず間隔が詰まれば続行
+        let prev = null, minGap = Infinity;
+        for (const z of zs) {
+          const m = me.sh.st.get(z), ot = timeAt(o.sh, z, false);
+          if (ot == null) continue;
+          const d = ot - m.dep;
+          minGap = Math.min(minGap, Math.abs(d));
+          if (prev != null && Math.sign(d) !== Math.sign(prev.d) && d !== 0) {
+            const os = o.sh.st.get(z);
+            const oDwell = os ? os.dep - os.arr : 0, mDwell = m.dep - m.arr;
+            why.push(oDwell >= mDwell ? `${nameAt(z)}で${o.name}が退避（${me.name}が追い越す）` : `${nameAt(z)}で${me.name}が${o.name}の通過待ち`);
+          }
+          prev = { z, d };
+        }
+        if (!why.length && minGap < 150) why.push(`続行（間隔 ${Math.round(minGap)}秒）`);
+      } else {
+        // 逆の向き: 単線区間を同じ時間に走れば交換
+        for (let i = 0; i + 1 < zs.length; i++) {
+          const za = zs[i], zb = zs[i + 1];
+          if (!singles.has(`${Math.min(za, zb)}-${Math.max(za, zb)}`)) continue;
+          const mIn = me.sh.st.get(za).dep, mOut = me.sh.st.get(zb).arr;
+          const oIn = timeAt(o.sh, zb, false), oOut = timeAt(o.sh, za, true);
+          if (oIn == null || oOut == null) continue;
+          if (Math.max(mIn, oIn) < Math.min(mOut, oOut)) why.push(`${nameAt(za)}〜${nameAt(zb)}（単線）で交換`);
+        }
+      }
+      // 同じ番線を同じ時間に使う
+      for (const z of zs) {
+        const m = me.sh.st.get(z), os = o.sh.st.get(z);
+        if (!os || m.track == null || os.track !== m.track || !(m.stop || os.stop)) continue;
+        if (Math.max(m.arr - 30, os.arr - 30) < Math.min(m.dep + 30, os.dep + 30)) why.push(`${nameAt(z)} ${m.track}番線を同じ時間に使う`);
+      }
+      if (why.length) out.push({ o, why: [...new Set(why)] });
+    }
+    return out;
+  }
+
+  function scheduleDia() { clearTimeout(diaTimer); diaTimer = setTimeout(drawDia, 150); }
+
+  function drawDia() {
+    if (!cur || !plan || !base) return;
+    // このグループの列車（入力の途中のものも）
+    const mine = cur.trains.map((t, i) => ({
+      i, name: t.number || "（列番なし）", type: t.type,
+      sh: shape(t.stops.filter((s) => zoneOf(s.st) != null).map((s) => ({ y: zoneOf(s.st), stop: s.stop, arr: s.arr, dep: s.dep, track: s.track })))
+    })).filter((m) => m.sh.pts.length >= 2);
+    if (!mine.length) { $("dia").innerHTML = `<div class="note" style="padding:4px">時刻を入れた列車がまだありません。</div>`; $("relations").innerHTML = ""; return; }
+    let t0 = Math.min(...mine.map((m) => m.sh.pts[0].t)), t1 = Math.max(...mine.map((m) => m.sh.pts[m.sh.pts.length - 1].t));
+    t0 = Math.floor((t0 - 15 * 60) / 600) * 600; t1 = Math.ceil((t1 + 15 * 60) / 600) * 600;
+    if (t1 - t0 < 3600) t1 = t0 + 3600;
+    const others = plan.filter((p) => p.sh.pts.length >= 2 && p.sh.pts[p.sh.pts.length - 1].t >= t0 && p.sh.pts[0].t <= t1);
+    // 関係する列車（このグループのほかの列車も相手にする）
+    const rel = new Map(); const lines = [];
+    for (const m of mine) {
+      const res = relations(m, [...others, ...mine.filter((x) => x !== m)]);
+      for (const r of res) { rel.set(r.o.name, true); for (const w of r.why) lines.push({ me: m.name, o: r.o, w }); }
+    }
+    // 配置
+    const minPx = 6, stPx = 22, left = 72, top = 22;
+    const zmin = base.stations[0].zone, zmax = base.stations[base.stations.length - 1].zone;
+    const X = (t) => left + (t - t0) / 60 * minPx, Y = (z) => top + (z - zmin) / 2 * stPx;
+    const W = X(t1) + 10, H = Y(zmax) + 14;
+    const parts = [];
+    for (let t = t0; t <= t1; t += 600) {
+      const hour = t % 3600 === 0;
+      parts.push(`<line x1="${X(t)}" y1="${top - 4}" x2="${X(t)}" y2="${H - 10}" stroke="${hour ? "#a0a0a0" : "#e0e0e0"}"/>`);
+      parts.push(`<text x="${X(t) + 2}" y="${top - 8}" font-size="10" fill="#444">${fmt(t).slice(0, 5)}</text>`);
+    }
+    for (const s of base.stations) {
+      parts.push(`<line x1="${left}" y1="${Y(s.zone)}" x2="${W}" y2="${Y(s.zone)}" stroke="${s.control ? "#c8c8c8" : "#ececec"}"/>`);
+      parts.push(`<text x="4" y="${Y(s.zone) + 3}" font-size="10" fill="${s.control ? "#000" : "#888"}">${esc(s.name)}</text>`);
+    }
+    const poly = (sh, color, width, title, extra = "") => `<polyline fill="none" stroke="${color}" stroke-width="${width}" ${extra} points="${sh.pts.map((p) => `${X(p.t).toFixed(1)},${Y(p.z).toFixed(1)}`).join(" ")}"><title>${esc(title)}</title></polyline>`;
+    for (const o of others) if (!rel.has(o.name)) parts.push(poly(o.sh, "#d0d0d0", 1, `${o.name} ${o.type}`));
+    for (const o of others) if (rel.has(o.name)) parts.push(poly(o.sh, TYPE_COLORS[o.type] || "#333", 1.6, `${o.name} ${o.type}（関係する列車）`, 'stroke-dasharray="5 2"'));
+    for (const m of mine) parts.push(poly(m.sh, TYPE_COLORS[m.type] || "#000", m.i === curTrain ? 4 : 2.6, `${m.name} ${m.type}`));
+    // 列番の札（入れた列車と関係する列車）
+    for (const p of [...others.filter((o) => rel.has(o.name)), ...mine]) {
+      const a = p.sh.pts[0];
+      parts.push(`<text x="${X(a.t) + 2}" y="${Y(a.z) - 3}" font-size="10" font-weight="${p.i != null ? "bold" : "normal"}" fill="${TYPE_COLORS[p.type] || "#000"}">${esc(p.name)}</text>`);
+    }
+    $("dia").innerHTML = `<svg width="${W}" height="${H}" style="display:block; font-family:'MS UI Gothic','Meiryo UI',sans-serif">${parts.join("")}</svg>`;
+    $("relations").innerHTML = lines.length
+      ? lines.map((l) => `<li><b class="mono">${esc(l.me)}</b> × <span class="mono" style="color:${TYPE_COLORS[l.o.type] || "#000"}">${esc(l.o.name)}</span>（${esc(l.o.type)}）: ${esc(l.w)}</li>`).join("")
+      : `<li class="muted">関係する列車はありません</li>`;
+  }
+
+  async function loadPlan() {
+    if (plan) return;
+    try {
+      const j = await api("GET", "/plan");
+      singles = new Set(j.singles.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, sh: shape(t.stops) }));
+      scheduleDia();
+    } catch (e) { $("dia").textContent = e.message; }
+  }
+
+  // =========================================================================================
   // 保存・申請・承認
   // =========================================================================================
   function showMsgs(errors, warnings, ok) {
@@ -551,6 +704,7 @@
       base.freeUnyo = [...Array(99).keys()].map((i) => 99 - i).find((n) => !used.has(n)) || 0; // 所定で使っていない運行番号（大きい方から）
       $("meRole").textContent = base.me.approver ? "（運転課課長代理）" : "";
       await loadGroups();
+      loadPlan();
     } catch (e) { status(e.message); }
   }
 

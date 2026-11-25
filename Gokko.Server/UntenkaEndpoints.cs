@@ -72,6 +72,21 @@ public static class UntenkaEndpoints
             });
         });
 
+        // ダイヤグラムに薄く引く、所定の時刻表の線（所定のダイヤは変わらないので、最初に1回だけ作って使い回す）。
+        // y はゾーン、時刻は "HH:mm:ss"。singles は単線区間（ゾーンの組）
+        object? planCache = null;
+        g.MapGet("/plan", (RailData rail) => Results.Ok(planCache ??= new
+        {
+            singles = rail.SingleTrackSections.Select(p => new[] { rail.Line.ZoneOfStation(p.Item1), rail.Line.ZoneOfStation(p.Item2) }).Where(z => z[0] >= 0 && z[1] >= 0).ToList(),
+            trains = rail.BaseDia.Values.Select(t => new
+            {
+                train = t.Number,
+                type = t.Type,
+                stops = t.Stops.Where(s => s.StationId != null && rail.Line.ZoneOfStation(s.StationId) >= 0 && (s.Arr != null || s.Dep != null))
+                    .Select(s => new { y = rail.Line.ZoneOfStation(s.StationId!), stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+            }).Where(t => t.stops.Count >= 2).ToList()
+        }));
+
         g.MapGet("/groups", (TempTrains temp) => Results.Ok(new { groups = temp.Groups().OrderBy(x => x.Id.Length).ThenBy(x => x.Id) }));
 
         g.MapPost("/check", (CheckRequest req, TempTrains temp) =>
