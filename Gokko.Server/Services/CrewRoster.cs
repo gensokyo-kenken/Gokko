@@ -50,6 +50,11 @@ public sealed class CrewRoster
     private List<CrewApplication> _applications = new(); // Discord で申請した新しい人
     private List<ExtraAssign> _extras = new(); // 臨変（すでにほかの人が持っている行路を、あとから重ねて持った人）
     private readonly Dictionary<string, (DateTime Utc, string Train)> _seen = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _lastAction = new(); // 社員番号 → 最後に操作した時刻（UTC。保存しない。再起動したら起動した時刻から数える）
+    private readonly DateTime _startUtc = DateTime.UtcNow;
+
+    /// <summary>司令員が何も操作しないまま、この時間がたったら自動で退勤させる（退勤忘れ）。</summary>
+    public static readonly TimeSpan DispatcherIdleLimit = TimeSpan.FromMinutes(30);
     private readonly Dictionary<string, (int Count, DateTime Until)> _failures = new(StringComparer.OrdinalIgnoreCase);
 
     public sealed class CrewUser
@@ -923,6 +928,7 @@ public sealed class CrewRoster
             }
             else st = "";
 
+            _lastAction[u.Id] = DateTime.UtcNow;
             if (att.TryGetValue(u.Id, out var cur) && cur.Station == st) return null;
             att[u.Id] = new RoleAttend { Utc = cur?.Utc ?? DateTime.UtcNow, Station = st };
             Save();
@@ -934,9 +940,55 @@ public sealed class CrewRoster
     public List<(string Role, List<(string Id, string Name, DateTime Utc, string Station)> People)> RoleAttendees()
     {
         lock (_lock)
+        {
+            ExpireIdleDispatchers();
             return RoleNames.Select(r => (r, _roleAttend.TryGetValue(r, out var att)
                 ? att.OrderBy(x => x.Value.Utc).Select(x => (x.Key, Find(x.Key)?.Name ?? "", x.Value.Utc, x.Value.Station)).ToList()
                 : new List<(string, string, DateTime, string)>())).ToList();
+        }
+    }
+
+    /// <summary>操作した（司令員の自動退勤の数え直し）。画面の GET・クライアントの定期の報告は数えない（呼ぶ側で除く）。</summary>
+    public void Touch(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        lock (_lock) _lastAction[id] = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// 司令員が出勤しているか。出勤していなければ、詰まりはサーバーが自動でほどく（接続待ちを切るなど）。
+    /// 出勤していても、DispatcherIdleLimit のあいだ何も操作がなければ、ここで自動で退勤させる。
+    /// </summary>
+    public bool DispatcherOnDuty()
+    {
+        lock (_lock)
+        {
+            ExpireIdleDispatchers();
+            return _roleAttend.TryGetValue(DispatcherRole, out var att) && att.Count > 0;
+        }
+    }
+
+    /// <summary>自動で退勤させた司令員（社員番号）を知らせる。ロックの外で呼ぶ。</summary>
+    public event Action<string>? DispatcherAutoLeft;
+
+    /// <summary>出勤・最後の操作・サーバーの起動のうち遅いほうから DispatcherIdleLimit たった司令員を退勤させる（_lock の中で呼ぶ）。</summary>
+    private void ExpireIdleDispatchers()
+    {
+        if (!_roleAttend.TryGetValue(DispatcherRole, out var att) || att.Count == 0) return;
+        var now = DateTime.UtcNow;
+        var gone = att.Where(x =>
+        {
+            var last = new[] { x.Value.Utc, _startUtc, _lastAction.GetValueOrDefault(x.Key) }.Max();
+            return now - last >= DispatcherIdleLimit;
+        }).Select(x => x.Key).ToList();
+        if (gone.Count == 0) return;
+        foreach (var id in gone)
+        {
+            att.Remove(id);
+            _log?.LogInformation("司令員 ID:{Id} を自動で退勤させました（{Minutes}分操作なし）", id, (int)DispatcherIdleLimit.TotalMinutes);
+        }
+        Save();
+        if (DispatcherAutoLeft is { } h) ThreadPool.QueueUserWorkItem(_ => { foreach (var id in gone) h(id); });
     }
 
     /// <summary>行路の割り当てと臨変をすべて外す（運行番号から行路を作り直したとき）。外した数を返す。出勤はそのまま。</summary>
