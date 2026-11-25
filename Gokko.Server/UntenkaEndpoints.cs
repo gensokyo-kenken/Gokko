@@ -101,6 +101,8 @@ public static class UntenkaEndpoints
         g.MapGet("/plan", (RailData rail, TempTrains temp) => Results.Ok(planCache ??= new
         {
             singles = rail.SingleTrackSections.Select(p => new[] { rail.Line.ZoneOfStation(p.Item1), rail.Line.ZoneOfStation(p.Item2) }).Where(z => z[0] >= 0 && z[1] >= 0).ToList(),
+            // 駅間の最速タイム（駅 ID の組 → 秒。所定の時刻表でいちばん短い運転時間）。◆をずらすとき、これより短くしない
+            minRuns = temp.MinRuns.Select(x => new { from = x.Key.From, to = x.Key.To, sec = x.Value }).ToList(),
             trains = rail.BaseDia.Values.Select(t => new
             {
                 train = t.Number,

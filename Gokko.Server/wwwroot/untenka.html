@@ -152,6 +152,7 @@
           <button id="dgSplit" title="番線ごとの段に分けて描きます。◆を縦にずらすと番線を変えられます">詳細表示</button>
           <button id="dgIn" class="small" title="拡大">拡大</button>
           <button id="dgOut" class="small" title="縮小">縮小</button>
+          <span id="dgSteps"></span>
           <button id="dgGo" class="small" title="このグループの列車の所まで動かす">このグループへ</button>
           <label title="所定の試運転の線を出す（ふだんは出さない）"><input type="checkbox" id="dgTrial"> 試運転を表示</label>
         </div>
@@ -741,6 +742,7 @@
   const DC = { ...TYPE_COLORS, "普通": "#e6e8eb", "回送": "#a0a0a0" }; // ダイヤグラムの線の色（濃いグレーの地に合わせる）
   let plan = null; // 所定の列車（/plan）
   let singles = new Set();
+  let minRuns = new Map(); // 駅間の最速タイム（"駅ID>駅ID" → 秒）
   let diaTimer = 0;
 
   // 列車の点（ゾーン・時刻）と、駅ごとの着・発・停車・番線
@@ -1125,9 +1127,10 @@
   function shiftRange(t, si, k, only) {
     const st = t.stops, s = st[si], last = si === st.length - 1;
     const p = st[si - 1], n = st[si + 1];
-    // 駅と駅の間は少なくとも SNAP 秒（走る時間が0の、縦の線にならないように）
-    const prevT = p ? Math.max(sec(p.arr) ?? -Infinity, sec(p.dep) ?? -Infinity) + SNAP : null;
-    const nextT = n ? (sec(n.arr) ?? sec(n.dep)) - SNAP : null;
+    // 駅と駅の間は、所定の最速タイム（なければ SNAP 秒）より短くしない（走る時間が0の縦の線や、ありえない速さにならないように）
+    const runMin = (a, b) => Math.max(SNAP, (a && b && minRuns.get(`${a.st}>${b.st}`)) || 0);
+    const prevT = p ? Math.max(sec(p.arr) ?? -Infinity, sec(p.dep) ?? -Infinity) + runMin(p, s) : null;
+    const nextT = n ? (sec(n.arr) ?? sec(n.dep)) - runMin(s, n) : null;
     const arr = sec(s.arr), dep = sec(s.dep);
     if (k === "a") {
       const b = arr ?? dep;
@@ -1251,16 +1254,36 @@
     zoom(ev.deltaY < 0 ? 1.25 : 0.8, ev.clientX);
   }, { passive: false });
   function zoom(f, clientX) {
+    // 運転整理用のダイヤグラムと同じく、1分の幅をまとめて変える。見ている時刻（まん中）がずれないようにする
+    setDv("minPx", dv.minPx * f, clientX);
+  }
+  // 大きさの設定（1分の幅・駅の間隔・番線の段）を変える。1分の幅は、見ている時刻がずれないようにスクロールを合わせる
+  const STEP_LIMITS = { minPx: [2, 60], stationPx: [10, 120], trackPx: [8, 40] };
+  function setDv(key, v, clientX) {
     const L = lastL; if (!L) return;
     const rect = diaEl.getBoundingClientRect(), cx = (clientX ?? rect.left + rect.width / 2) - rect.left;
     const tc = L.t(diaEl.scrollLeft + cx);
-    dv.minPx = Math.max(2, Math.min(40, dv.minPx * f));
-    saveDv(); drawDia();
+    dv[key] = Math.round(Math.max(STEP_LIMITS[key][0], Math.min(STEP_LIMITS[key][1], v)) * 10) / 10;
+    saveDv(); drawDia(); drawSteps();
     diaEl.scrollLeft = lastL.x(tc) - cx;
   }
+  function drawSteps() {
+    const step = (k, label, unit) => `<span title="${label}" style="margin-left:6px; white-space:nowrap">${label} <button class="small" data-step="${k}" data-dir="-1">−</button> <b>${Math.round(dv[k])}</b>${unit} <button class="small" data-step="${k}" data-dir="1">＋</button></span>`;
+    $("dgSteps").innerHTML = step("minPx", "1分の幅", "px") + step("stationPx", "駅の間隔", "px") + (dv.split ? step("trackPx", "番線の段", "px") : "")
+      + ` <button class="small" data-step-reset="1" title="大きさを最初に戻す">元に戻す</button>`;
+  }
+  $("dgSteps").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    if (b.dataset.stepReset) { dv.stationPx = 24; dv.trackPx = 13; setDv("minPx", 6); return; }
+    const k = b.dataset.step, d = +b.dataset.dir;
+    const by = k === "minPx" ? (dv.minPx >= 10 ? 2 : 1) : 2;
+    setDv(k, dv[k] + d * by);
+  });
   $("dgIn").onclick = () => zoom(1.25);
   $("dgOut").onclick = () => zoom(0.8);
-  $("dgSplit").onclick = () => { dv.split = !dv.split; saveDv(); $("dgSplit").classList.toggle("on", dv.split); drawDia(); };
+  $("dgSplit").onclick = () => { dv.split = !dv.split; saveDv(); $("dgSplit").classList.toggle("on", dv.split); drawDia(); drawSteps(); };
+  drawSteps();
   $("dgSplit").classList.toggle("on", dv.split);
   $("dgDraw").onclick = () => (drawing ? stopDrawing("") : startDrawing());
   $("dgGo").onclick = () => { scrolledFor = null; drawDia(); };
@@ -1272,6 +1295,7 @@
     try {
       const j = await api("GET", "/plan");
       singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
+      minRuns = new Map((j.minRuns || []).map((x) => [`${x.from}>${x.to}`, x.sec]));
       plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, trial: !!t.trial, sh: shape(t.stops) }));
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
