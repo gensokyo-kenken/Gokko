@@ -353,6 +353,38 @@ public sealed class TempTrains
     /// <summary>駅の並びのゾーン（路線の外の駅も）。並びにない駅は null。</summary>
     public int? ZoneOf(string? id) { _ = Stations; return id != null && _extById!.TryGetValue(id, out var s) ? s.Zone : null; }
 
+    private Dictionary<(string From, string To), double>? _minRuns;
+
+    /// <summary>
+    /// 駅間の最速タイム（秒）: 所定の時刻表で、隣り合う駅（駅の並びの順）の間を走るのにかかったいちばん短い時間
+    /// （前の駅を出て〔通過して〕から、次の駅に着く〔通過する〕まで）と、標準運転時分のいちばん短いもの。向きごと。所定の時刻表は変わらないので、1回だけ作る
+    /// </summary>
+    public IReadOnlyDictionary<(string From, string To), double> MinRuns
+    {
+        get
+        {
+            if (_minRuns != null) return _minRuns;
+            var m = new Dictionary<(string, string), double>();
+            foreach (var d in _rail.BaseDia.Values)
+            {
+                var pts = d.Stops.Where(s => s.StationId != null && ZoneOf(s.StationId) != null).ToList();
+                for (var i = 1; i < pts.Count; i++)
+                {
+                    if (DaySec(pts[i - 1].Dep ?? pts[i - 1].Arr) is not { } ta || DaySec(pts[i].Arr ?? pts[i].Dep) is not { } tb || tb <= ta) continue;
+                    var key = (pts[i - 1].StationId!, pts[i].StationId!);
+                    if (!m.TryGetValue(key, out var cur) || tb - ta < cur) m[key] = tb - ta;
+                }
+            }
+            // 標準運転時分（RunTimes.json）のほうが短い区間は、そちら（所定の時刻表には余裕があるため。どの種別・停車／通過でもいちばん短いもの）
+            foreach (var r in _rail.RunTimes)
+            {
+                if (StationIdByName(r.From) is not { } f || StationIdByName(r.To) is not { } to || r.Seconds <= 0) continue;
+                if (!m.TryGetValue((f, to), out var cur) || r.Seconds < cur) m[(f, to)] = r.Seconds;
+            }
+            return _minRuns = m;
+        }
+    }
+
     public string StationName(string id) { _ = Stations; return _extById!.TryGetValue(id, out var s) ? s.Name : _rail.Line.StationName(id); }
 
     /// <summary>駅名 → 駅 ID（路線の外の駅も）。</summary>
@@ -488,6 +520,14 @@ public sealed class TempTrains
                     errors.Add($"{n} {name}: {(td == Dir.Down ? "下り" : "上り")}は{tk}番線に入れません");
             }
 
+            // 駅間の最速タイム（所定の時刻表でいちばん短い運転時間）より短い駅間は知らせる
+            for (var i = 1; i < t.Stops.Count; i++)
+            {
+                var a = t.Stops[i - 1]; var b = t.Stops[i];
+                if (DaySec(a.Dep ?? a.Arr) is not { } ta || DaySec(b.Arr ?? b.Dep) is not { } tb || !MinRuns.TryGetValue((a.St, b.St), out var min)) continue;
+                if (tb - ta < min) warnings.Add($"{n} {StationName(a.St)}→{StationName(b.St)}: {tb - ta:0}秒は、所定の最速（{min:0}秒）より短いです");
+            }
+
             // 解放（列番が「解」＋元の列車の列番。時刻表の 解2076C と同じ）: 発駅で元の列車から切り離して出る。
             // 元の列車がこのグループにあれば、その駅に停車し、同じ番線で、元の列車が着いたあとに出るか
             if (n.StartsWith("解") && trains.FirstOrDefault(x => x.Number == n[1..]) is { } src)
@@ -558,7 +598,16 @@ public sealed class TempTrains
                         if (trainDir is { } td2 && _rail.Stations.TryGetValue(end.St, out var es) && es.RouteControl)
                         {
                             var outs = es.Routes[td2].ShuntOuts.Where(o => o.From == end.Track).Select(o => o.Label).Distinct().ToList();
-                            if (outs.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線がありません");
+                            // 引上線がなければ、着いた番線から後運用の発車の番線へ、そのまま入換で移る（駒野 1番線 → 5番線など。後運用の始発の入換）
+                            var nd = td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            var moves = es.Routes[nd].Shunts.Where(s => s.From == end.Track).Select(s => s.To).Distinct().Order().ToList();
+                            if (outs.Count == 0)
+                            {
+                                if (moves.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線・番線がありません");
+                                else if (t.TurnVia.Length > 0) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
+                                else if (next.Stops[0].Track is not { } mt || !moves.Contains(mt))
+                                    errors.Add($"{n}: {endName} {end.Track}番線からは {string.Join("・", moves.Select(x => x + "番線"))}へ入換できます。{next.Number} の発車の番線をそのどれかにしてください");
+                            }
                             else if (t.TurnVia.Length > 0 && !outs.Contains(t.TurnVia)) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
                             // 入換した線から、後運用の発車の番線へ入れるか（知らせるだけ）
                             var via = t.TurnVia.Length > 0 ? t.TurnVia : outs.FirstOrDefault();

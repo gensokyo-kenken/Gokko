@@ -43,7 +43,9 @@
         "depart": [
           { "track": 3, "routes": ["6L", "2L"] },
           { "track": 5, "routes": ["3L"] }, { "track": 6, "routes": ["4L"] }
-        ]
+        ],
+        // 始発の入換: 1番線から4・5・6番線へ（上りで1番線に着いた列車が、番線を移って下りとして館浜へ出るとき。5・6番線からは 3L・4L で出発）
+        "shunt": [ { "from": 1, "to": 4, "routes": ["15L4"] }, { "from": 1, "to": 5, "routes": ["15LD5"] }, { "from": 1, "to": 6, "routes": ["15LD6"] } ]
       },
       "up": {
         "arrive": [
