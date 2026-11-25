@@ -619,7 +619,7 @@
     for (const s of stations) {
       if (prev && singles.has(keyZ(prev.zone, s.zone))) y += dv.split ? 2 * dv.trackPx : Math.round(dv.stationPx * 0.5); // 単線の駅間は少し空ける
       prev = s;
-      const tracks = dv.split && s.control ? s.tracks : [];
+      const tracks = dv.split && s.tracks.length ? s.tracks : []; // 番線のある駅（路線の外の駅も、時刻表に番線があれば）は段に分ける
       const rows = {};
       tracks.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
       const bottom = tracks.length ? y + (tracks.length - 1) * dv.trackPx : y;
