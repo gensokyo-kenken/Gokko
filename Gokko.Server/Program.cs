@@ -37,6 +37,7 @@ builder.Services.AddSingleton<RunTimeModel>();
 builder.Services.AddSingleton<SignalCalculator>();
 builder.Services.AddSingleton<CentralControl>();
 builder.Services.AddSingleton<TokuhatsuRinji>(); // 特発臨（運転整理のために司令員がその場で立てる臨時列車。メモリだけ）
+builder.Services.AddSingleton<EventStops>(); // 催物用臨停設定（司令用管理画面。再起動で消える）
 builder.Services.AddSingleton<ConnectionTable>(); // 接続待ちの組（ダイヤの「(接)」から）
 builder.Services.AddSingleton<RouteEngine>();
 builder.Services.AddSingleton<ProtectionRadio>();
@@ -54,6 +55,7 @@ builder.Services.AddSingleton(sp => new AiTrains(dataDir, rail, sp.GetRequiredSe
     sp.GetRequiredService<RouteEngine>(), sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<IncidentManager>(),
     sp.GetRequiredService<CrewRoster>(), sp.GetRequiredService<DutyRosters>(), sp.GetRequiredService<CrewRelay>(), sp.GetRequiredService<ProtectionRadio>(),
     sp.GetRequiredService<DispatcherProtection>(), sp.GetService<ILogger<AiTrains>>())); // にぎやかしの列車（サーバーだけで走る。Data/AiTrains.json）
+builder.Services.AddSingleton(sp => new TempTrains(dataDir, rail, sp.GetService<ILogger<TempTrains>>())); // 催物用の臨時列車（Data/TempTrains.json。運転課で作り、司令用管理画面で適用）
 builder.Services.AddSingleton<ServerLoad>(); // サーバーの負荷（管理画面・logs/load-*.log）
 builder.Services.AddSingleton<ResponseCache>(); // 何人もの画面が読みに来る API の答えを、少しのあいだ使い回す（ダイヤグラム）
 builder.Services.AddSingleton<StateBroadcaster>();
@@ -75,6 +77,7 @@ builder.Services.AddSignalR(o =>
     o.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
     o.MaximumReceiveMessageSize = 64 * 1024;
     o.AddFilter<HubTiming>(); // ハブの呼び出しごとの時間（サーバーの負荷）
+    o.AddFilter<DispatcherActivityHubFilter>(); // 司令員の操作を覚える（30分操作がなければ自動で退勤）
 });
 
 var app = builder.Build();
@@ -91,7 +94,13 @@ var central = app.Services.GetRequiredService<CentralControl>();
 var incidentLog = app.Services.GetRequiredService<IncidentManager>();
 central.Changed += message => incidentLog.Note(message);
 rail.Turns.Changed += message => incidentLog.Note(message);
+app.Services.GetRequiredService<EventStops>().Changed += message => incidentLog.Note(message);
 app.Services.GetRequiredService<PlayerRegistry>().Changed += message => incidentLog.Note(message);
+// 催物用の臨時列車: 起動したときに、適用していたものを重ね直す。取り消したら、走っている自動運転の列車も消す
+var aiTrains = app.Services.GetRequiredService<AiTrains>();
+app.Services.GetRequiredService<TempTrains>().Removed += numbers => aiTrains.RemoveNumbers(numbers);
+var crewRoster = app.Services.GetRequiredService<CrewRoster>();
+crewRoster.DispatcherAutoLeft += id => incidentLog.Note($"司令員 ID:{id} を自動で退勤させました（{(int)CrewRoster.DispatcherIdleLimit.TotalMinutes}分操作なし）");
 if (string.IsNullOrEmpty(options.AdminKey))
     app.Logger.LogWarning("Gokko:AdminKey が未設定です。管理画面は使えません");
 if (string.IsNullOrEmpty(options.DiaPassword))
@@ -105,6 +114,9 @@ if (string.IsNullOrEmpty(options.Password))
 
 // 画面の API ごとの時間（サーバーの負荷）。操作のあとは、使い回している答えを捨てる
 app.UseLoadTiming(app.Services.GetRequiredService<ServerLoad>(), app.Services.GetRequiredService<ResponseCache>());
+
+// 司令員の操作（画面の GET 以外）を覚える。30分操作がなければ自動で退勤（CrewRoster.DispatcherIdleLimit）
+app.UseDispatcherActivity(crewRoster);
 
 // 管理画面・ダイヤグラムの画面は、差し替えたらすぐ反映されるように、毎回確かめさせる（古い diapanel.js が残らないように）
 app.UseStaticFiles(new StaticFileOptions

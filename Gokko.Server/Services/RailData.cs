@@ -329,6 +329,31 @@ public sealed class RailData
 
     public DiaTrain? DiaOf(string train) => Dia.GetValueOrDefault(NormalizeTrain(train));
 
+    // ---- 試運転（所定の臨時列車）: 普段は走らせず、司令が選んだ運行番号だけ走らせる。選択は再起動で「なし」に戻る ----
+    private volatile HashSet<int> _trialsOn = new();
+
+    /// <summary>試運転か（列番が「試」で始まる。時刻表の種別は試運転）。</summary>
+    public static bool IsTrial(DiaTrain d) => d.Number.StartsWith("試");
+
+    /// <summary>試運転の運行番号（時刻表の並び）。</summary>
+    public List<int> TrialUnyos() => Dia.Values.Where(d => IsTrial(d) && d.Unyo != null).Select(d => d.Unyo!.Value).Distinct().Order().ToList();
+
+    /// <summary>走らせる試運転の運行番号。</summary>
+    public IReadOnlyCollection<int> TrialsOn => _trialsOn;
+
+    /// <summary>試運転の選択を変えると増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
+    public int TrialVersion { get; private set; }
+
+    public void SetTrialsOn(IEnumerable<int> unyos)
+    {
+        var known = TrialUnyos().ToHashSet();
+        _trialsOn = unyos.Where(known.Contains).ToHashSet();
+        TrialVersion++;
+    }
+
+    /// <summary>走らない試運転か（選ばれていない運行番号の試運転）。自動運転の列車として出さず、ダイヤグラムの計画の線も引かない。</summary>
+    public bool IsIdleTrial(DiaTrain d) => IsTrial(d) && !(d.Unyo is { } u && _trialsOn.Contains(u));
+
     private TurnChanges? _turns;
 
     /// <summary>後運用の差し替え（ダイヤ運転中に司令が変えたもの）。「終点のあと」と運行番号は、これを通して読む。</summary>

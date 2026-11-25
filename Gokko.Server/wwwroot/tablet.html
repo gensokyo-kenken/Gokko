@@ -97,6 +97,7 @@
   .staff-tt td.h { text-align: center; font-family: var(--num); font-weight: 800; font-size: 17px; width: 7%; }
   .staff-tt td.m, .staff-tt td.s { text-align: center; font-family: var(--num); font-size: 18px; font-weight: 800; width: 9%; }
   .staff-tt td.s { font-size: 16px; }
+  .staff-tt td.special, .staff-tt tr.dep.stopping td.m.special { font-size: 14px; font-weight: 800; white-space: nowrap; }
   .staff-tt tr.arr td.m { text-align: right; }
   .staff-tt tr.dep.stopping td.m { font-size: 26px; font-weight: 800; }
   .staff-tt td.note { font-size: 13px; line-height: 1.2; }
@@ -302,7 +303,10 @@
       const stCls = `st ${stopping ? "stop" : "pass"} ${s.control ? "" : "off"}`;
       const trk = s.track ? `<b class="trk">${circled(s.track)}</b>` : "";
       // 記事は「;」区切り。1つずつは折り返さず、記事と記事の間で折り返す（実績の欄の幅を残すため）
-      const memo = s.note ? `<small>${s.note.split(";").map((x) => `<span style="white-space:nowrap">${esc(x)}</span>`).join("　")}</small>` : "";
+      // 臨停: 時刻表では通過の駅の臨時停車（催物用臨停設定・列車別設定）。発時刻は通過時刻。記事の頭に「臨時停車」と書く
+      const special = s.stop === "臨停";
+      const notes = [...(special && (s.dep || s.arr) ? ["臨時停車"] : []), ...(s.note ? s.note.split(";") : [])];
+      const memo = notes.length ? `<small>${notes.map((x) => `<span style="white-space:nowrap">${esc(x)}</span>`).join("　")}</small>` : "";
       const lines = [];
       if (stopping && s.arr && s.dep && s.arr !== s.dep) {
         lines.push({ kind: "arr", t: s.arr, act: s.actArr }, { kind: "dep", t: s.dep, act: s.actDep });
@@ -315,13 +319,15 @@
         const showHour = hour && hour !== lastHour;
         if (hour) lastHour = hour;
         const late = ln.act && ln.t && sec(ln.act) - sec(ln.t) >= 60;
+        // 通過時刻のない駅の臨時停車は、時・分・秒の欄に「（空）｜臨時｜停車」
+        const blank = special && !ln.t;
         const act = actual ? `<td class="act ${late ? "late" : ""}">${ln.act ? esc(ln.act.slice(3)) : (isNow && j === 0 ? "<b style='color:#111;font-size:10px'>次</b>" : "")}</td>` : "";
         const first = j === 0;
         const span = lines.length;
         rows.push(`<tr class="${cls}${ln.kind}${stopping ? " stopping" : ""}">
           ${first ? `<td class="${stCls}" rowspan="${span}">${name}</td>` : ""}
           <td class="h">${showHour ? esc(Number(hour)) : ""}</td>
-          <td class="m">${esc(p[1] || "")}</td><td class="s">${esc(p[2] || "")}</td>
+          ${blank ? `<td class="m special">臨時</td><td class="s special">停車</td>` : `<td class="m">${esc(p[1] || "")}</td><td class="s">${esc(p[2] || "")}</td>`}
           <td class="note">${span === 1 ? trk + memo : first ? trk : memo}</td>${act}</tr>`);
       });
     });
