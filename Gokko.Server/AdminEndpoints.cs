@@ -794,7 +794,7 @@ public static class AdminEndpoints
             trains = ai.List(),
             trials = ai.Trials(),       // 試運転の運行番号ごとの列車（プルダウンの項目）
             trialsOn = rail.TrialsOn,   // 走らせる試運転の運行番号（空なら「なし」）
-            carsProblems = ai.CarsProblems, // 両数の表（Data/UnyoCars.csv）のおかしな所
+            carsProblems = ai.CarsProblems, // 両数の表（Data/UnyoCars.csv・TrainCars.csv）のおかしな所
         }));
         g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
         {
