@@ -297,6 +297,20 @@ public sealed class AiTrains : BackgroundService
         return true;
     }
 
+    /// <summary>ダイヤから外した列番（臨時列車の取消）の列車を消す。また出せるように、出した印も外す。</summary>
+    public void RemoveNumbers(IReadOnlyCollection<string> numbers)
+    {
+        var set = numbers.Select(RailData.NormalizeTrain).ToHashSet();
+        List<string> gone;
+        lock (_lock)
+        {
+            gone = _trains.Where(x => set.Contains(x.Value.Number)).Select(x => x.Key).ToList();
+            foreach (var id in gone) _trains.Remove(id);
+            _spawned.ExceptWith(set);
+        }
+        if (gone.Count > 0) _log.Note($"にぎやかし: 臨時列車の取消で {gone.Count}本を消しました");
+    }
+
     public void RemoveAll()
     {
         lock (_lock) _trains.Clear();

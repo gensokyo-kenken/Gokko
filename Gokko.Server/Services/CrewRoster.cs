@@ -28,7 +28,11 @@ public sealed class CrewRoster
     public const string DispatcherRole = "司令員";
     /// <summary>「信号扱い」は、信号制御盤の鍵（解放の鍵など）を刺して回せる。てこ・ボタンは、盤を開いてログインした人なら誰でも扱える。</summary>
     public const string RelayKeyRole = "信号扱い";
-    public static readonly string[] RoleNames = [DispatcherRole, RelayKeyRole];
+    /// <summary>「運転課課長代理」は、運転課の画面で、催物用の臨時列車の申請を承認できる。</summary>
+    public const string PlanningRole = "運転課課長代理";
+    public static readonly string[] RoleNames = [DispatcherRole, RelayKeyRole, PlanningRole];
+    /// <summary>出勤する役職（勤怠管理の「出勤者」に出す）。</summary>
+    private static readonly string[] AttendRoleNames = [DispatcherRole, RelayKeyRole];
 
     /// <summary>所属（乗務区）。社員番号には関係しない。</summary>
     public static readonly string[] Depots = ["道列", "駒列"];
@@ -911,7 +915,7 @@ public sealed class CrewRoster
         lock (_lock)
         {
             if (Find(id) is not { } u) return "その人はいません";
-            if (role == null || !RoleNames.Contains(role)) return "その役職はありません";
+            if (role == null || !AttendRoleNames.Contains(role)) return "その役職はありません";
             if (!_roleAttend.TryGetValue(role, out var att)) _roleAttend[role] = att = new();
             if (!on)
             {
@@ -942,7 +946,7 @@ public sealed class CrewRoster
         lock (_lock)
         {
             ExpireIdleDispatchers();
-            return RoleNames.Select(r => (r, _roleAttend.TryGetValue(r, out var att)
+            return AttendRoleNames.Select(r => (r, _roleAttend.TryGetValue(r, out var att)
                 ? att.OrderBy(x => x.Value.Utc).Select(x => (x.Key, Find(x.Key)?.Name ?? "", x.Value.Utc, x.Value.Station)).ToList()
                 : new List<(string, string, DateTime, string)>())).ToList();
         }

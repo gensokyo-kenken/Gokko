@@ -4037,16 +4037,17 @@ public sealed partial class RouteEngine
 
     /// <summary>発車案内の1本。EventDia があれば、時刻表では通過の駅（その時刻表の EventIndex 番目）: 催物用臨停設定で臨時停車になるときだけ出す。</summary>
     private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds, DiaTrain? EventDia = null, int EventIndex = -1);
-    private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+    private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表が変わったとき（臨時列車の適用・取消）だけ作り直す
+    private object? _departuresDia; // _departuresByStation を作ったときのダイヤの表
 
     private static readonly string[] PassengerKindOrder = ["特急", "快急", "急行", "区急", "準急", "普通"];
-    private ILookup<string, string>? _passengerKinds; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+    private ILookup<string, string>? _passengerKinds; // 所定の時刻表から一度だけ作る
 
     /// <summary>
     /// 駅に「普段」止まる種別（駅 → 種別）: その駅を走るその種別の列車のうち、1割以上が止まるもの。
     /// 浜園の特急のように、臨時停車のときだけ止まるものは入らない（発車案内では「臨時停車」と出す）。
     /// </summary>
-    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.Dia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
+    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.BaseDia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
         .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
         .GroupBy(x => (x.Id, x.Kind))
         .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
@@ -4087,7 +4088,11 @@ public sealed partial class RouteEngine
     {
         lock (_lock)
         {
-            _departuresByStation ??= BuildPassengerDepartures();
+            if (_departuresByStation == null || !ReferenceEquals(_departuresDia, _data.Dia))
+            {
+                _departuresDia = _data.Dia;
+                _departuresByStation = BuildPassengerDepartures();
+            }
             var now = NowSec();
             var advisories = _central.PassengerAdvisoryTrains();
             var zone = _data.Line.ZoneOfStation(id);
