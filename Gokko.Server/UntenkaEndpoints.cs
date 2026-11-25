@@ -30,7 +30,6 @@ public static class UntenkaEndpoints
         g.MapGet("/base", (HttpContext ctx, CrewRoster crew, RailData rail, TempTrains temp) =>
         {
             var id = Me(ctx, crew);
-            var line = rail.Line;
             var downInc = temp.DownIncreasing();
             // 駅ごとの番線: 所定のダイヤで使っている番線と、向き・停車/通過ごとにいちばん多い番線
             var uses = new List<(string St, string Key, int Track)>();
@@ -42,15 +41,17 @@ public static class UntenkaEndpoints
                         uses.Add((s.StationId, (info.Dir == Dir.Down ? "下" : "上") + (s.Stop == "通" ? "通" : "停"), tr));
             }
             var byStation = uses.ToLookup(u => u.St);
-            var stations = line.StationIds.Where(s => line.ZoneOfStation(s) >= 0).Select(s => new
+            // 駅は、路線の外（大路〜三郷の手前など、時刻表に載っている駅）も含めた並び
+            var stations = temp.Stations.Select(st => new
             {
-                id = s,
-                name = line.StationName(s),
-                zone = line.ZoneOfStation(s),
-                control = rail.Stations.TryGetValue(s, out var def) && def.RouteControl,
-                tracks = byStation[s].Select(u => u.Track).Concat(def?.TrackCircuit.Keys ?? Enumerable.Empty<int>()).Distinct().Order().ToList(),
-                def = byStation[s].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key)
-            }).OrderBy(s => s.zone).ToList();
+                id = st.Id,
+                name = st.Name,
+                zone = st.Zone,
+                control = st.Control,
+                tracks = byStation[st.Id].Select(u => u.Track)
+                    .Concat(rail.Stations.TryGetValue(st.Id, out var def) ? def.TrackCircuit.Keys : Enumerable.Empty<int>()).Distinct().Order().ToList(),
+                def = byStation[st.Id].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key)
+            }).ToList();
             var types = TempTrains.Types.Select(t => new
             {
                 type = t.Type,
@@ -60,7 +61,7 @@ public static class UntenkaEndpoints
             });
             var runTimes = rail.RunTimes.Select(r => new
             {
-                type = r.Type, dir = r.Dir == Dir.Down ? "下り" : "上り", from = line.StationIdByName(r.From), to = line.StationIdByName(r.To),
+                type = r.Type, dir = r.Dir == Dir.Down ? "下り" : "上り", from = temp.StationIdByName(r.From), to = temp.StationIdByName(r.To),
                 fromStop = r.FromStops, toStop = r.ToStops, seconds = r.Seconds
             }).Where(r => r.from != null && r.to != null);
             return Results.Ok(new
@@ -75,7 +76,7 @@ public static class UntenkaEndpoints
         // ダイヤグラムに薄く引く、所定の時刻表の線（所定のダイヤは変わらないので、最初に1回だけ作って使い回す）。
         // y はゾーン、時刻は "HH:mm:ss"。singles は単線区間（ゾーンの組）
         object? planCache = null;
-        g.MapGet("/plan", (RailData rail) => Results.Ok(planCache ??= new
+        g.MapGet("/plan", (RailData rail, TempTrains temp) => Results.Ok(planCache ??= new
         {
             singles = rail.SingleTrackSections.Select(p => new[] { rail.Line.ZoneOfStation(p.Item1), rail.Line.ZoneOfStation(p.Item2) }).Where(z => z[0] >= 0 && z[1] >= 0).ToList(),
             trains = rail.BaseDia.Values.Select(t => new
@@ -83,8 +84,9 @@ public static class UntenkaEndpoints
                 train = t.Number,
                 type = t.Type,
                 turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
-                stops = t.Stops.Where(s => s.StationId != null && rail.Line.ZoneOfStation(s.StationId) >= 0 && (s.Arr != null || s.Dep != null))
-                    .Select(s => new { y = rail.Line.ZoneOfStation(s.StationId!), stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+                // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
+                stops = t.Stops.Where(s => temp.ZoneOf(s.StationId) != null && (s.Arr != null || s.Dep != null))
+                    .Select(s => new { y = temp.ZoneOf(s.StationId)!.Value, stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
         }));
 

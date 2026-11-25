@@ -280,7 +280,66 @@ public sealed class TempTrains
         return skipped.Count > 0 ? $"所定のダイヤにある列番は足せませんでした: {string.Join("、", skipped)}" : null;
     }
 
-    public string StationName(string id) => _rail.Line.StationName(id);
+    // =========================================================================================
+    // 駅の並び: 路線の駅（ゾーン）に、時刻表に載っている路線の外の駅（大路〜三郷の手前など）を足したもの。
+    // 路線の外の駅には、時刻表の列車の駅の並びから、路線の端の外側へ続くゾーン（2ずつ）を振る。進路は扱わない
+    // =========================================================================================
+
+    public sealed record ExtStation(string Id, string Name, int Zone, bool Control);
+
+    private List<ExtStation>? _ext;
+    private Dictionary<string, ExtStation>? _extById;
+
+    /// <summary>駅の並び（ゾーンの順）。所定の時刻表から1回だけ作る。</summary>
+    public IReadOnlyList<ExtStation> Stations
+    {
+        get
+        {
+            if (_ext != null) return _ext;
+            var line = _rail.Line;
+            var list = line.StationIds.Where(id => line.ZoneOfStation(id) >= 0)
+                .Select(id => new ExtStation(id, line.StationName(id), line.ZoneOfStation(id), _rail.Stations.TryGetValue(id, out var d) && d.RouteControl)).ToList();
+            if (list.Count > 0)
+            {
+                int zmin = list.Min(s => s.Zone), zmax = list.Max(s => s.Zone);
+                string minId = list.First(s => s.Zone == zmin).Id, maxId = list.First(s => s.Zone == zmax).Id;
+                var names = new Dictionary<string, string>();
+                List<string> before = new(), after = new();
+                foreach (var dia in _rail.BaseDia.Values)
+                {
+                    var ids = dia.Stops.Where(s => s.StationId != null).Select(s => s.StationId!).ToList();
+                    foreach (var s in dia.Stops) if (s.StationId is { } sid && line.ZoneOfStation(sid) < 0) names.TryAdd(sid, s.Name);
+                    // 路線の端の駅から外へ、路線の外の駅が続く所（いちばん長く続く列車の並び）
+                    foreach (var (edge, isBefore) in new[] { (minId, true), (maxId, false) })
+                    {
+                        var i = ids.IndexOf(edge);
+                        if (i < 0) continue;
+                        foreach (var step in new[] { -1, 1 })
+                        {
+                            var seq = new List<string>();
+                            for (var j = i + step; j >= 0 && j < ids.Count && line.ZoneOfStation(ids[j]) < 0; j += step) seq.Add(ids[j]);
+                            ref var best = ref isBefore ? ref before : ref after;
+                            if (seq.Count > best.Count) best = seq;
+                        }
+                    }
+                }
+                for (var k = 0; k < before.Count; k++)
+                    if (list.All(s => s.Id != before[k])) list.Add(new ExtStation(before[k], names.GetValueOrDefault(before[k], before[k]), zmin - 2 * (k + 1), false));
+                for (var k = 0; k < after.Count; k++)
+                    if (list.All(s => s.Id != after[k])) list.Add(new ExtStation(after[k], names.GetValueOrDefault(after[k], after[k]), zmax + 2 * (k + 1), false));
+            }
+            _extById = list.ToDictionary(s => s.Id);
+            return _ext = list.OrderBy(s => s.Zone).ToList();
+        }
+    }
+
+    /// <summary>駅の並びのゾーン（路線の外の駅も）。並びにない駅は null。</summary>
+    public int? ZoneOf(string? id) { _ = Stations; return id != null && _extById!.TryGetValue(id, out var s) ? s.Zone : null; }
+
+    public string StationName(string id) { _ = Stations; return _extById!.TryGetValue(id, out var s) ? s.Name : _rail.Line.StationName(id); }
+
+    /// <summary>駅名 → 駅 ID（路線の外の駅も）。</summary>
+    public string? StationIdByName(string name) => _rail.Line.StationIdByName(name) ?? Stations.FirstOrDefault(s => s.Name == name)?.Id;
 
     /// <summary>適用中の列番（司令用管理画面の一覧）。</summary>
     public HashSet<string> AppliedNumbers()
@@ -353,7 +412,6 @@ public sealed class TempTrains
     {
         var errors = new List<string>();
         var warnings = new List<string>();
-        var line = _rail.Line;
         var downUp = DownIncreasing();
         var seen = new HashSet<string>();
         var types = Types.Select(x => x.Type).ToHashSet();
@@ -369,8 +427,9 @@ public sealed class TempTrains
             if (t.Stops.Count < 2) { errors.Add($"{n}: 駅を2つ以上入れてください"); continue; }
 
             // 駅は路線の駅で、向きに沿って並んでいること
-            var zones = t.Stops.Select(s => line.ZoneOfStation(s.St)).ToList();
-            if (zones.Any(z => z < 0)) { errors.Add($"{n}: 路線にない駅があります"); continue; }
+            var zs0 = t.Stops.Select(s => ZoneOf(s.St)).ToList();
+            if (zs0.Any(z => z == null)) { errors.Add($"{n}: 路線にない駅があります"); continue; }
+            var zones = zs0.Select(z => z!.Value).ToList();
             var inc = zones[^1] > zones[0];
             for (var i = 1; i < zones.Count; i++)
                 if ((zones[i] > zones[i - 1]) != inc || zones[i] == zones[i - 1]) { errors.Add($"{n}: 駅の並びが逆になっている所があります"); break; }
@@ -383,7 +442,7 @@ public sealed class TempTrains
             for (var i = 0; i < t.Stops.Count; i++)
             {
                 var s = t.Stops[i];
-                var name = line.StationName(s.St);
+                var name = StationName(s.St);
                 var first = i == 0;
                 var last = i == t.Stops.Count - 1;
                 if (s.Arr != null && DaySec(s.Arr) == null || s.Dep != null && DaySec(s.Dep) == null) { errors.Add($"{n} {name}: 時刻の形が違います（例 10:05 か 10:05:30）"); continue; }
@@ -441,11 +500,11 @@ public sealed class TempTrains
                 var d = new DiaTrain
                 {
                     Number = t.Number, Type = t.Type, TypeLabel = t.Label.Length > 0 ? t.Label : t.Type,
-                    Dest = t.Dest.Length > 0 ? t.Dest : _rail.Line.StationName(t.Stops[^1].St), Unyo = t.Unyo
+                    Dest = t.Dest.Length > 0 ? t.Dest : StationName(t.Stops[^1].St), Unyo = t.Unyo
                 };
                 foreach (var s in t.Stops)
                 {
-                    d.Stops.Add(new DiaStop(_rail.Line.StationName(s.St), s.St, s.Stop, NormTime(s.Arr), NormTime(s.Dep), s.Track));
+                    d.Stops.Add(new DiaStop(StationName(s.St), s.St, s.Stop, NormTime(s.Arr), NormTime(s.Dep), s.Track));
                     d.Stations[s.St] = (s.Stop == "停" ? "停車" : "通過", s.Track);
                 }
                 var last = t.Stops[^1].St;
