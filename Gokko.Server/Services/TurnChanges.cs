@@ -7,6 +7,8 @@ namespace Gokko.Server.Services;
 /// A と X の「終点のあと」（<see cref="DiaTurn"/>）をそのまま入れ替える。C の前の列車がなければ、A を C につなぐだけ。
 /// 運行番号も運用ごと入れ替わる（差し替えた先の列車とその先は、つないだ列車の運行番号になる）。
 /// 時刻表（Timetable.json）は書き換えず、メモリに持つだけ（サーバーを再起動すると消える）。取消で元に戻す。
+/// 直接折返（<see cref="SetDirect"/>）: 折返が「入換」の列車を、引上げずに着いた番線でそのまま折り返させる（大道寺で 2番線 → Y線 → 4番線の代わりに 3番線で）。
+/// 後運用の列番はそのままで、折返の仕方だけ「発」にする。番線の指定（着く列車と後運用の列車をその番線に）は呼ぶ側が集中扱いで入れる。
 /// </summary>
 public sealed class TurnChanges(RailData rail)
 {
@@ -18,7 +20,16 @@ public sealed class TurnChanges(RailData rail)
     private Dictionary<string, string>? _pred;
     private Dictionary<string, string>? _nextPred;
 
-    private sealed record Change(string A, string? X, DiaTurn? PrevA, DiaTurn? PrevX, DiaTurn? NewA, DiaTurn? NewX);
+    private sealed record Change(string A, string? X, DiaTurn? PrevA, DiaTurn? PrevX, DiaTurn? NewA, DiaTurn? NewX, DirectTurn? Direct = null);
+
+    /// <summary>
+    /// 直接折返: 列車 Train が駅 Station の Track 番線に着き、そこで後運用 Next になって出る。
+    /// Moved は、その間に Track 番線を使うはずだった列車で、後運用のもとの番線（大道寺なら 4番線）へ移すもの（列番, 番線）。
+    /// </summary>
+    public sealed record DirectTurn(string Train, string Station, int Track, string Next, IReadOnlyList<(string Train, int Track)> Moved);
+
+    // 直接折返にしている列車（列番 → 指定）
+    private readonly Dictionary<string, DirectTurn> _direct = new();
 
     /// <summary>差し替えるたびに増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
     public int Version { get; private set; }
@@ -137,7 +148,9 @@ public sealed class TurnChanges(RailData rail)
                 original = d.Turn?.Number,
                 changed,
                 cancelable = _changes.Any(c => c.A == d.Number || c.X == d.Number),
-                candidates
+                candidates,
+                direct = _direct.TryGetValue(d.Number, out var dt) ? dt.Track : (int?)null,
+                directTracks = _direct.ContainsKey(d.Number) ? new List<int>() : DirectTracks(d, t)
             };
         }
     }
@@ -170,6 +183,8 @@ public sealed class TurnChanges(RailData rail)
 
             var xNo = Pred().GetValueOrDefault(c.Number);
             var x = xNo != null ? rail.Dia.GetValueOrDefault(xNo) : null;
+            if (_direct.ContainsKey(a.Number)) return $"{a.Number} は直接折返にしています。先に取り消してください";
+            if (x != null && _direct.ContainsKey(x.Number)) return $"{x.Number} は直接折返にしています。先に取り消してください";
             var curX = x == null ? null : _over.TryGetValue(x.Number, out var ox) ? ox : x.Turn;
             var newA = x != null ? curX : new DiaTurn("折返", c.Number, c.Stops[0].Dep ?? c.Stops[0].Arr, "発");
             var newX = curA;
@@ -187,8 +202,12 @@ public sealed class TurnChanges(RailData rail)
     }
 
     /// <summary>列車 train が関わる、いちばん新しい差し替えを取り消す。取り消すものがなければ理由を返す。</summary>
-    public string? Cancel(string train)
+    public string? Cancel(string train) => Cancel(train, out _);
+
+    /// <summary>取り消したのが直接折返なら undone にその指定を返す（呼ぶ側が番線の指定を外す）。</summary>
+    public string? Cancel(string train, out DirectTurn? undone)
     {
+        undone = null;
         string message;
         lock (_lock)
         {
@@ -200,8 +219,15 @@ public sealed class TurnChanges(RailData rail)
             if (rail.Dia.TryGetValue(ch.A, out var a)) Put(a, ch.PrevA);
             if (ch.X != null && rail.Dia.TryGetValue(ch.X, out var x)) Put(x, ch.PrevX);
             Version++;
-            message = $"後運用の差し替えを取消: {ch.A} の後運用を {ch.PrevA?.Number ?? "なし"} に戻す"
-                + (ch.X != null ? $"（{ch.X} は {ch.PrevX?.Number ?? "なし"}）" : "");
+            if (ch.Direct is { } dt)
+            {
+                _direct.Remove(ch.A);
+                undone = dt;
+                message = $"直接折返を取消: {ch.A} は {dt.Next} に入換で折り返す（{dt.Track}番線の指定を外す）";
+            }
+            else
+                message = $"後運用の差し替えを取消: {ch.A} の後運用を {ch.PrevA?.Number ?? "なし"} に戻す"
+                    + (ch.X != null ? $"（{ch.X} は {ch.PrevX?.Number ?? "なし"}）" : "");
         }
 
         Changed?.Invoke(message);
@@ -217,10 +243,111 @@ public sealed class TurnChanges(RailData rail)
             if (n == 0 && _over.Count == 0) return 0;
             _changes.Clear();
             _over.Clear();
+            _direct.Clear();
             _pred = null;
             Version++;
             return n;
         }
+    }
+
+    /// <summary>
+    /// 直接折返できる番線: 折返が「入換」で、後運用がこの列車の終点から出るとき、
+    /// 終点にこの列車の向きで着けて、後運用の向きで出発できる番線（大道寺の上りの終着なら 3番線）。
+    /// </summary>
+    private List<int> DirectTracks(DiaTrain d, DiaTurn? t)
+    {
+        if (t is not { Kind: "折返", How: "入換", Number: { Length: > 0 } n } || rail.DiaOf(n) is not { } nd) return new();
+        if (Terminal(d) is not { } term || Origin(nd) != term || !rail.Stations.TryGetValue(term, out var st)) return new();
+        if (RouteEngine.TrainInfo(d.Number)?.Dir is not { } dir || RouteEngine.TrainInfo(nd.Number)?.Dir is not { } ndir) return new();
+        return st.Routes[dir].Arrive.Keys.Where(k => st.Routes[ndir].Depart.ContainsKey(k)).OrderBy(k => k).ToList();
+    }
+
+    /// <summary>
+    /// 列車 train を、終点の track 番線で直接折り返させる（折返の仕方を「入換」から「発」に。後運用の列番は変えない）。
+    /// うまくいけば指定を返し、うまくいかなければ error に理由を入れる。
+    /// </summary>
+    public DirectTurn? SetDirect(string train, int track, out string? error) => SetDirect(train, track, null, null, out error);
+
+    /// <param name="delaySec">着く列車の遅れ（秒）。3番線をふさぐ時間の見込みに使う。</param>
+    /// <param name="keep">番線をもう指定してある列車（移さない）。引数は列番と駅ID。</param>
+    public DirectTurn? SetDirect(string train, int track, double? delaySec, Func<string, string, bool>? keep, out string? error)
+    {
+        string message;
+        DirectTurn result;
+        lock (_lock)
+        {
+            error = null;
+            var a = rail.DiaOf(train);
+            if (a == null) { error = $"{train} は時刻表にありません"; return null; }
+            if (_direct.ContainsKey(a.Number)) { error = $"{a.Number} はもう直接折返にしています"; return null; }
+            var cur = _over.TryGetValue(a.Number, out var o) ? o : a.Turn;
+            if (cur is not { Kind: "折返", How: "入換", Number: { Length: > 0 } next } || rail.DiaOf(next) is not { } nd)
+            { error = $"{a.Number} は入換で折り返す列車ではありません"; return null; }
+            if (!DirectTracks(a, cur).Contains(track)) { error = $"{a.Number} は {track}番線で直接折り返せません"; return null; }
+
+            var dep = nd.Stops[0].Dep ?? nd.Stops[0].Arr;
+            var newA = new DiaTurn("折返", nd.Number, dep, "発");
+            var moved = MovedTrains(a, nd, track, delaySec ?? 0, keep);
+            result = new DirectTurn(a.Number, Terminal(a)!, track, nd.Number, moved);
+            Put(a, newA);
+            _direct[a.Number] = result;
+            _changes.Add(new Change(a.Number, null, cur, null, newA, null, result));
+            Version++;
+            var stName = rail.Stations.TryGetValue(result.Station, out var sd) ? sd.Name : result.Station;
+            message = $"直接折返: {a.Number} は {stName} {track}番線に着き、そのまま {nd.Number} で折り返す（入換なし）"
+                + (moved.Count > 0 ? "。" + string.Join("・", moved.Select(m => $"{m.Train} は {m.Track}番線へ")) : "");
+        }
+
+        Changed?.Invoke(message);
+        return result;
+    }
+
+    /// <summary>
+    /// 直接折返で track 番線をふさぐ間（着く列車の着〔遅れを足す〕から、後運用の発車まで）に、その番線を使うはずだった列車を、
+    /// 後運用のもとの番線（入換で入るはずだった番線。大道寺なら 4番線）へ移す。もとの番線はその間あくので、入れ替えになる。
+    /// 移す先に、着けない・出発できない、またはほかの列車がいる列車は移さない（司令員が番線を決める）。
+    /// </summary>
+    private List<(string Train, int Track)> MovedTrains(DiaTrain a, DiaTrain nd, int track, double delaySec, Func<string, string, bool>? keep)
+    {
+        var result = new List<(string, int)>();
+        var sid = Terminal(a)!;
+        if (!rail.Stations.TryGetValue(sid, out var st) || nd.Stops[0].Track is not { } orig || orig == track) return result;
+        if (Sec(a.Stops[^1].Arr ?? a.Stops[^1].Dep) is not { } arr) return result;
+        var from = arr + Math.Max(0, delaySec);
+        var to = Math.Max(Sec(nd.Stops[0].Dep ?? nd.Stops[0].Arr) ?? from, from + 120);
+
+        // 駅にいる間（着〜発）の見込み。始発は発車の5分前から、終着は折返の時刻（なければ着いて5分）まで
+        (double From, double To)? Span(DiaTrain d, DiaStop s)
+        {
+            var sArr = Sec(s.Arr);
+            var sDep = Sec(s.Dep);
+            if (sArr == null && sDep == null) return null;
+            if (s == d.Stops[^1]) return (sArr ?? sDep!.Value, Sec(TurnOf(d)?.Time) is { } tt && tt > (sArr ?? 0) ? tt : (sArr ?? sDep!.Value) + 300);
+            if (s == d.Stops[0]) return (sDep!.Value - 300, sDep.Value);
+            return (sArr ?? sDep!.Value, sDep ?? sArr!.Value);
+        }
+
+        bool Overlaps((double From, double To) x, double f, double t) => x.From < t && x.To > f;
+
+        var users = new List<(DiaTrain D, DiaStop S, (double From, double To) Span)>();
+        foreach (var d in rail.Dia.Values)
+        {
+            if (d.Number == a.Number || d.Number == nd.Number) continue;
+            foreach (var s in d.Stops)
+                if (s.StationId == sid && s.Track is { } && Span(d, s) is { } sp) users.Add((d, s, sp));
+        }
+
+        foreach (var (d, s, sp) in users.Where(u => u.S.Track == track && Overlaps(u.Span, from, to)).ToList())
+        {
+            if (keep?.Invoke(d.Number, sid) == true || RouteEngine.TrainInfo(d.Number)?.Dir is not { } dir) continue;
+            var routes = st.Routes[dir];
+            var canArrive = s == d.Stops[0] || routes.Arrive.ContainsKey(orig);
+            var canDepart = s == d.Stops[^1] || routes.Depart.ContainsKey(orig);
+            if (!canArrive || !canDepart) continue;
+            if (users.Any(u => u.D != d && u.S.Track == orig && Overlaps(u.Span, sp.From, sp.To))) continue;
+            result.Add((d.Number, orig));
+        }
+        return result;
     }
 
     private void Put(DiaTrain d, DiaTurn? t)

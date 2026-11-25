@@ -25,7 +25,7 @@ public static class AdminEndpoints
 
     /// <param name="Train">後運用を差し替える列車。</param>
     /// <param name="Next">新しい後運用の列番。null なら、その列車が関わるいちばん新しい差し替えを取り消す。</param>
-    public sealed record TurnRequest(string Train, string? Next);
+    public sealed record TurnRequest(string Train, string? Next, int? Direct = null);
 
     /// <param name="Id">社員番号。</param>
     public sealed record CrewLoginRequest(string? Id, string? Password, string? Passphrase = null, bool? Client = null);
@@ -984,11 +984,36 @@ public static class AdminEndpoints
             return Results.Ok(new { ok = true });
         });
 
-        // 後運用の差し替え（next が null なら取消）。もともと next に折り返すはずだった列車は、train のもとの後運用を受け持つ
-        g.MapPost("/route/turn", (TurnRequest req, RailData rail) =>
+        // 後運用の差し替え（next が null なら取消）。もともと next に折り返すはずだった列車は、train のもとの後運用を受け持つ。
+        // direct（番線）を付けると直接折返: 入換で折り返す列車を、終点のその番線に着けて、そのまま後運用で出す（大道寺の 3番線）。
+        // 着く列車と後運用の列車の両方に、その駅の番線を集中扱いで指定する。取消で指定も外す
+        // その間に同じ番線を使うはずだった列車は、後運用のもとの番線（大道寺なら 4番線）へ移す
+        g.MapPost("/route/turn", (TurnRequest req, RailData rail, CentralControl central, RouteEngine engine) =>
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { message = "列車を指定してください" });
-            var error = string.IsNullOrWhiteSpace(req.Next) ? rail.Turns.Cancel(req.Train) : rail.Turns.Set(req.Train, req.Next);
+            string? error;
+            if (req.Direct is { } track)
+            {
+                if (rail.Turns.SetDirect(req.Train, track, engine.DelayOf(RailData.NormalizeTrain(req.Train)),
+                        (t, st) => central.TrackOverride(t, st) != null, out error) is { } d)
+                {
+                    central.SetTrack(d.Train, d.Station, d.Track);
+                    central.SetTrack(d.Next, d.Station, d.Track);
+                    foreach (var (mt, mk) in d.Moved) central.SetTrack(mt, d.Station, mk);
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(req.Next))
+            {
+                error = rail.Turns.Cancel(req.Train, out var undone);
+                if (undone is { } u)
+                {
+                    if (central.TrackOverride(u.Train, u.Station) == u.Track) central.SetTrack(u.Train, u.Station, null);
+                    if (central.TrackOverride(u.Next, u.Station) == u.Track) central.SetTrack(u.Next, u.Station, null);
+                    foreach (var (mt, mk) in u.Moved)
+                        if (central.TrackOverride(mt, u.Station) == mk) central.SetTrack(mt, u.Station, null);
+                }
+            }
+            else error = rail.Turns.Set(req.Train, req.Next);
             return error != null ? Results.BadRequest(new { message = error }) : Results.Ok(new { ok = true });
         });
 

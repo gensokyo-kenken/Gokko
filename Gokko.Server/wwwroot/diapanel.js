@@ -117,8 +117,15 @@
     const opts = `<option value="">差し替える列車を選ぶ</option>` + cands.map((c) =>
       `<option value="${esc(c.train)}" ${c.train === pick ? "selected" : ""}>${esc(c.train)} ${esc((c.time || "").slice(0, 5))}発 ${esc(c.type || "")}${
         c.unyo != null ? `・${c.unyo}運行` : ""}${c.prev ? `（いまは ${esc(c.prev)} の後運用）` : ""}</option>`).join("");
+    // 直接折返: 入換で折り返す列車を、終点の番線（大道寺の 3番線）に着けて、入換せずにそのまま後運用で出す（遅れを取り戻すとき）
+    const direct = t.direct != null
+      ? `<div class="row" style="margin:4px 0 0"><span style="color:#e07000">${t.direct}番線で直接折返（入換なし）</span></div>`
+      : (t.directTracks || []).length
+        ? `<div class="row" style="margin:4px 0 0">${t.directTracks.map((k) =>
+            `<button data-turn-direct="${k}" title="終点の ${k}番線に着けて、入換せずにそのまま ${esc(t.number || "")} で折り返す。着く列車と ${esc(t.number || "")} の番線を ${k}番線に指定します（取消で元に戻す）">${k}番線で直接折返</button>`).join("")}</div>`
+        : "";
     return `<div>後運用 ${now}${unyo != null ? ` <span class="muted">（${unyo}運行）</span>` : ""}${
-        t.changed ? ` <span style="color:#e07000">差し替え中（元 ${esc(t.original || "なし")}）</span>` : ""}</div>
+        t.changed && t.direct == null ? ` <span style="color:#e07000">差し替え中（元 ${esc(t.original || "なし")}）</span>` : ""}</div>${direct}
       <div class="row" style="margin:4px 0 0">${cands.length
         ? `<select data-turn-pick="1">${opts}</select><button data-turn-set="1" class="primary" ${pick ? "" : "disabled"}>差し替え</button>`
         : `<span class="muted">終点から出る列車で、差し替えられるものはありません</span>`}
@@ -311,6 +318,7 @@
     // 後運用の差し替え・取消
     if (btn.dataset.turnSet && p.turnPick) { const next = p.turnPick; p.turnPick = ""; await popupRun("POST", "/route/turn", { train: p.train, next }); return; }
     if (btn.dataset.turnCancel) { p.turnPick = ""; await popupRun("POST", "/route/turn", { train: p.train, next: null }); return; }
+    if (btn.dataset.turnDirect) { p.turnPick = ""; await popupRun("POST", "/route/turn", { train: p.train, next: null, direct: Number(btn.dataset.turnDirect) }); return; }
     const m = c.m;
     if (!m) return;
     const body = { train: p.train, station: m.stationId };
@@ -526,6 +534,7 @@
       if (!b || !pick) return;
       if (b.dataset.turnSet && turnPick) { const next = turnPick; turnPick = ""; el.dataset.key = ""; await act("POST", "/route/turn", { train: pick, next }); }
       else if (b.dataset.turnCancel) { turnPick = ""; el.dataset.key = ""; await act("POST", "/route/turn", { train: pick, next: null }); }
+      else if (b.dataset.turnDirect) { turnPick = ""; el.dataset.key = ""; await act("POST", "/route/turn", { train: pick, next: null, direct: Number(b.dataset.turnDirect) }); }
       else if (b.dataset.hold) await act("POST", "/route/hold", { train: pick, station: b.dataset.station, hold: b.dataset.on !== "1", kind: b.dataset.hold });
       else if (b.dataset.force) await act("POST", "/route/force", { train: pick, station: b.dataset.force });
     });

@@ -903,8 +903,11 @@ public sealed class AiTrains : BackgroundService
         if (_routes.DirOfTrain(number) is not { } dir || !_rail.Stations.TryGetValue(here.StationId, out var st)) return false;
         var i = nd.Stops.FindIndex(s => s.StationId == here.StationId);
         if (i < 0 || i == nd.Stops.Count - 1) return false;
-        var track = here.Track is { } ht && st.TrackCircuit.ContainsKey(ht) ? ht
-            : st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? -1;
+        // 番線は、いまいる番線の回路から（直接折返などで、ダイヤと違う番線に着いていることがある。大道寺は 2番線の代わりに 3番線）。
+        // 回路から分からなければダイヤの番線
+        var dt = here.Track is { } ht && st.TrackCircuit.ContainsKey(ht) ? ht : (int?)null;
+        var track = dt is { } d0 && t.Info.TrackCircuits.Contains(st.TrackCircuit[d0]) ? d0
+            : st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? dt ?? -1;
         if (!st.TrackCircuit.TryGetValue(track, out var platform)) return false;
 
         var old = t.Number;
