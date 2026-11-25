@@ -415,6 +415,7 @@
   function viaKey(label) {
     const n = /^(\d+)番線/.exec(label || "");
     if (n) return +n[1];
+    if (/^本線/.test(label || "")) return "main"; // 「本線（新大路方）」など: 本線の段（段がなければ駅の真ん中）
     const m = /([A-Z])線/.exec(label || "");
     return m ? `via:${m[1]}` : null;
   }
@@ -849,7 +850,7 @@
       // 番線を使わずに通れる本線のある駅（江ノ原信号場など）は、いちばん上に「本線」の段（番線のない通過はここ）
       const main = tracks.length && s.rules && Object.values(s.rules).some((r) => r.through);
       // 入換で入る線（大道寺の Y線・E線・X線など）も段にする（番線の名前の線は番線の段）
-      const vias = [...new Set(Object.values(s.rules || {}).flatMap((r) => r.shuntOuts.map((o) => viaKey(o.label))).filter((k) => typeof k === "string"))].sort();
+      const vias = [...new Set(Object.values(s.rules || {}).flatMap((r) => r.shuntOuts.map((o) => viaKey(o.label))).filter((k) => typeof k === "string" && k !== "main"))].sort();
       const keys = [...(main ? ["main"] : []), ...tracks, ...(tracks.length ? vias : [])];
       keys.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
       const bottom = keys.length ? y + (keys.length - 1) * dv.trackPx : y;
@@ -927,7 +928,12 @@
       const a = p.sh.pts[0];
       out.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 3}" font-size="9" fill="${color}">${esc(p.name)}</text>`);
       const nx = p.turn && byNo.get(p.turn);
-      if (nx && nx.sh.pts.length) out.push(link(L, p.sh.pts[p.sh.pts.length - 1], nx.sh.pts[0], color, 1.1));
+      if (nx && nx.sh.pts.length) {
+        // 入換して折り返す列車は、入換先の段（5番線・Y線・E線など）を通る
+        const b = nx.sh.pts[0], via = p.shunt && p.shunt.via;
+        const shunt = p.shunt && { t: sec(p.shunt.time) ?? b.t - 120, track: via ? viaKey(via) : b.track, label: via || (b.track != null ? `${b.track}番線` : "") };
+        out.push(link(L, p.sh.pts[p.sh.pts.length - 1], b, color, 1.1, shunt));
+      }
     }
     P.push(`<g clip-path="url(#dgClip)" pointer-events="none" opacity="0.32">${faint.join("")}</g>`);
     P.push(`<g clip-path="url(#dgClip)" pointer-events="none" opacity="0.9">${strong.join("")}</g>`);
@@ -947,7 +953,6 @@
       let shunt = null;
       if (how === "入換") {
         const via = m.t.turnVia || shuntOutsOf(m.t)[0] || "";
-        const vt = /^(\d+)番線/.exec(via);
         // 引上線がなければ（駒野 1番線 → 5番線など）、後運用の発車の番線へそのまま移る
         shunt = via ? { t: sec(m.t.turnTime) ?? b.t - 120, track: viaKey(via), label: via }
           : { t: sec(m.t.turnTime) ?? b.t - 120, track: b.track, label: b.track != null ? `${b.track}番線` : "" };
@@ -1028,9 +1033,17 @@
     const ya = L.y(a.z, a.track), yb = L.y(b.z, b.track);
     let pts;
     if (shunt) {
-      const ts = Math.max(a.t, Math.min(b.t, shunt.t)), yv = shunt.track != null ? L.y(a.z, shunt.track) : ya;
-      const t2 = Math.min(b.t, ts + 60), t3 = Math.max(t2, b.t - 60);
-      pts = [[a.t, ya], [ts, ya], [t2, yv], [t3, yv], [b.t, yb]];
+      // 入換先の段（5番線・Y線など）に、入換を始めてから出ていくまで横に引く。入換先から出る列車（そのまま番線を移る入換）は、そこから出る
+      const yv = shunt.track != null ? L.y(a.z, shunt.track) : ya;
+      const ts = Math.max(a.t, Math.min(b.t, shunt.t)), span = b.t - ts;
+      if (yv === yb) {
+        const t2 = ts + Math.min(60, span);
+        pts = [[a.t, ya], [ts, ya], [t2, yv], [b.t, yb]];
+      } else {
+        // 引上線へ入って戻る: 入る・出るに1分ずつ（間が短ければ3つに分けて、入換先の段に必ず線が残るように）
+        const mv = Math.min(60, span / 3);
+        pts = [[a.t, ya], [ts, ya], [ts + mv, yv], [b.t - mv, yv], [b.t, yb]];
+      }
     } else pts = [[a.t, ya], [Math.max(a.t, b.t - 60), ya], [b.t, yb]];
     return `<polyline points="${pts.map(([t, y]) => `${L.x(t).toFixed(1)},${y.toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="${width}"${shunt ? ` stroke-dasharray="6 2"` : ""}><title>${shunt ? `入換（${esc(shunt.label || "")}）` : "折返"}</title></polyline>`;
   }
@@ -1298,7 +1311,7 @@
       const j = await api("GET", "/plan");
       singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
       minRuns = new Map((j.minRuns || []).map((x) => [`${x.from}>${x.to}`, x.sec]));
-      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, trial: !!t.trial, sh: shape(t.stops) }));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, shunt: t.shunt, trial: !!t.trial, sh: shape(t.stops) }));
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
   }
