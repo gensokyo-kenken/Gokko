@@ -6,7 +6,8 @@ namespace Gokko.Common;
 /// 運行番号（列車番号の付け方から逆算する）。
 /// 列番 = [回・臨・試] ＋ 始発駅の時刻（時） ＋ 下2桁 ＋ [種別の記号 A・K・B・C など]。
 /// 上り（赤山町方面）は運行番号の下2桁そのまま、下り（館浜方面）は下2桁＋1。
-/// 運行番号が100番台なら数字に＋3000、200番台なら＋6000する。
+/// 運行番号が100番台なら数字に＋3000、200番台なら＋6000、300番台なら＋9000する。
+/// 300番台は時の桁が1つしか入らないので、時の1の位だけを書く（試9091 → 10時台・下2桁91 → 390 運行）。
 /// 例: 3643K → 142 運行（3643−3000＝643 → 6時台・下2桁43 → 下りなので42 → 100番台）。折り返しの 3842B も 142 運行。
 /// 1182C → 1283C → 1282C → 1383C は、どれも 82 運行。
 /// 運行番号にはアルファベットが付くものがある（24S など）。数字が同じでも別の運行。
@@ -31,7 +32,8 @@ public static partial class Unyo
         var m = NumberPart().Match(train.Normalize(System.Text.NormalizationForm.FormKC).Trim().ToUpperInvariant());
         if (!m.Success || !int.TryParse(m.Groups[1].Value, out var n)) return null;
         var offset = 0;
-        if (n >= 6000) { offset = 200; n -= 6000; }
+        if (n >= 9000) { offset = 300; n -= 9000; }
+        else if (n >= 6000) { offset = 200; n -= 6000; }
         else if (n >= 3000) { offset = 100; n -= 3000; }
         var low = n % 100;
         var suffix = m.Groups[2].Value;
@@ -39,12 +41,13 @@ public static partial class Unyo
         return $"{offset + low - low % 2}{letter}";
     }
 
-    /// <summary>列番の時（始発駅の時刻の時）。数字が読めなければ null。</summary>
+    /// <summary>列番の時（始発駅の時刻の時）。数字が読めなければ null。300番台は時の1の位しかないので null。</summary>
     public static int? HourOf(string? train)
     {
         if (string.IsNullOrWhiteSpace(train)) return null;
         var m = NumberPart().Match(train.Normalize(System.Text.NormalizationForm.FormKC).Trim());
         if (!m.Success || !int.TryParse(m.Groups[1].Value, out var n)) return null;
+        if (n >= 9000) return null;
         if (n >= 6000) n -= 6000;
         else if (n >= 3000) n -= 3000;
         return n / 100;
