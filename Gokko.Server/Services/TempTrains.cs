@@ -638,6 +638,7 @@ public sealed class TempTrains
                 };
                 foreach (var s in t.Stops)
                 {
+                    // 注記（Note）は付けない: スタフの駅の欄に「併B」などの停止位置目標が出ないように（新野崎には併A・併B の停止位置目標がない）
                     d.Stops.Add(new DiaStop(StationName(s.St), s.St, s.Stop, NormTime(s.Arr), NormTime(s.Dep), s.Track));
                     d.Stations[s.St] = (s.Stop == "停" ? "停車" : "通過", s.Track);
                 }

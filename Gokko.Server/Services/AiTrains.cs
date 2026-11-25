@@ -770,12 +770,12 @@ public sealed class AiTrains : BackgroundService
         var atEnd = next != null && (stopX == null || stopX > t.PathEnd - 2) && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
         if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
         {
-            // 連結: 停B で一度止まり（完全に止まってから）、連結位置まで進む
-            if (t.CoupleStage < 2 && CouplePartnerAt(t, next) != null && CouplePos(t, next) != null)
+            // 連結: 停B（停止位置目標のない駅は、連結位置の 4m 手前）で一度止まり（完全に止まってから）、連結位置まで進む
+            if (t.CoupleStage < 2 && CouplePartnerAt(t, next) != null && CouplePos(t, next) is { } cpos)
             {
                 if (t.CoupleStage == 0) (t.CoupleStage, t.CoupleStopUtc) = (1, utcNow);
                 else if ((utcNow - t.CoupleStopUtc).TotalSeconds * _clock.Speed >= CoupleStopB.TotalSeconds) t.CoupleStage = 2;
-                t.Status = $"{next.Name} 停B で停止（連結の前）";
+                t.Status = cpos.Marker ? $"{next.Name} 停B で停止（連結の前）" : $"{next.Name} 連結位置の4m手前で一旦停止（駅係員の合図で連結）";
                 Release(t);
                 UpdateInfo(t);
                 return;
@@ -1262,7 +1262,7 @@ public sealed class AiTrains : BackgroundService
         const double Margin = 5;
         if (spec != null && BoundaryOf(t, spec.Signal) is { } b)
         {
-            // 連結: 番線に増結車がいれば、停B（4両停目の4m手前）、そのあと連結位置（増結車の後ろ）
+            // 連結: 番線に増結車がいれば、停B（停止位置目標のない駅は連結位置の4m手前）、そのあと連結位置（増結車の後ろ）
             if (CouplePartnerAt(t, p) != null && CouplePos(t, p) is { } cp)
                 return t.CoupleStage >= 2 ? b - cp.Couple : b - cp.StopB;
             var x = spec.After is { } after ? b + after : b - spec.Before;
@@ -1301,18 +1301,20 @@ public sealed class AiTrains : BackgroundService
         _couplePartners.TryGetValue(t.Id, out var m) && m.TryGetValue(p.StationId, out var partner) ? partner : null;
 
     /// <summary>
-    /// 連結位置と停B（信号機の手前 m）。AiTrains.json の stops に couple があればそれ。書いていなければ（臨時増結の新野崎など）、
-    /// その番線の停止位置から増結車の長さぶん手前（大道寺の測った値と同じ考え方）、停B はさらに 9.3m 手前。停止位置の表がなければ null
+    /// 連結位置と、その前に一旦止まる位置（信号機の手前 m）。AiTrains.json の stops に couple があればそれ（大道寺: 併B・停B の停止位置目標がある）。
+    /// 書いていなければ（臨時増結の新野崎など。併A・併B の停止位置目標はなく、駅係員の停止位置合図に合わせて止まる）、
+    /// その番線の停止位置から増結車の長さぶん手前を連結位置とし（大道寺の測った値と同じ考え方）、その 4m 手前で一旦止まる。停止位置の表がなければ null。
+    /// Marker は、停止位置目標（停B）がある駅か
     /// </summary>
-    private (double Couple, double StopB)? CouplePos(Train t, PlanStop p)
+    private (double Couple, double StopB, bool Marker)? CouplePos(Train t, PlanStop p)
     {
         var spec = _stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == (p.Track ?? -1));
         if (spec == null) return null;
-        if (spec.CoupleBefore is { } cb) return (cb, spec.StopBBefore ?? cb);
+        if (spec.CoupleBefore is { } cb) return (cb, spec.StopBBefore ?? cb, true);
         if (spec.After != null || CouplePartnerAt(t, p) is not { } partner) return null;
         var cars = _trains.Values.FirstOrDefault(x => x.Number == partner)?.Cars ?? CarsOf(partner);
         var c = spec.Before + cars * CarLength;
-        return (c, c + 9.3);
+        return (c, c + 4, false);
     }
 
     /// <summary>
