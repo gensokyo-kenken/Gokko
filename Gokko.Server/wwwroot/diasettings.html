@@ -95,6 +95,10 @@
   <section class="wide">
     <div id="blockSignals"></div>
   </section>
+  <section class="wide" id="tempTrainSection">
+    <h2>催物用臨時列車設定</h2>
+    <div id="tempTrains" class="muted">読み込み中…</div>
+  </section>
   <section>
     <h2>ロープレ時刻</h2>
     <div class="row"><span id="gameTime" class="clock">--:--:--</span><span id="clockState" class="muted"></span></div>
@@ -325,6 +329,55 @@
   refresh();
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
   setInterval(poll, 1000);
+})();
+</script>
+<script>
+// 催物用臨時列車設定: 運転課で承認されたグループを選んで適用・取消する（/api/dia/temptrains）。
+// 適用すると所定の時刻表に重ねて、ダイヤグラムに出し、自動運転の列車として走らせる（ユーザーが乗る列車は出さない）。所定の時刻表は変えない
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const short = (t) => (t ? String(t).replace(/:00$/, "") : "");
+  async function api(method, body) {
+    let key = "";
+    try { key = localStorage.getItem("gokkoDiaKey") || ""; } catch (e) {}
+    const token = GokkoCrew.token();
+    const res = await fetch("/api/dia/temptrains", {
+      method, headers: { "X-Dia-Key": key, ...(token ? { "X-Crew-Token": token } : {}), "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined, cache: "no-store"
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || j.detail || ("HTTP " + res.status));
+    return j;
+  }
+  let last = "";
+  async function load() {
+    try {
+      const j = await api("GET");
+      const html = j.groups.length === 0
+        ? `<div class="muted">承認された臨時列車はありません（運転課の画面で作って申請し、運転課課長代理が承認したものが出ます）</div>`
+        : j.groups.map((g) => `<div style="margin-bottom:10px">
+            <div class="row" style="margin-bottom:4px"><b>${esc(g.name)}</b> <span class="muted">${g.trains.length}本・作成 ${esc(g.owner)}・承認 ID:${esc(g.approvedBy)}</span>
+              ${g.applied ? `<b class="ok">適用中</b> <button data-tt="${esc(g.id)}" data-tt-act="cancel" class="danger">取消</button>`
+                          : `<button data-tt="${esc(g.id)}" data-tt-act="apply" class="primary">適用</button>`}</div>
+            <table style="font-size:12px">${g.trains.map((t) => `<tr><td class="muted">運行${esc(t.unyo)}</td><td><b>${esc(t.number)}</b></td><td>${esc(t.type)}</td>
+              <td>${esc(t.from)} ${esc(short(t.dep))}発</td><td>→ ${esc(t.to)} ${esc(short(t.arr))}着</td><td class="muted">${esc(t.dest)}行</td></tr>`).join("")}</table></div>`).join("")
+          + `<div class="muted">適用すると、所定の時刻表に重ねてダイヤグラムに出し、自動運転の列車として走らせます（ユーザーが乗る列車は出しません）。取消で外し、走っている自動運転の列車も消します。</div>`;
+      if (html !== last) { $("tempTrains").innerHTML = html; last = html; }
+      $("tempTrains").className = "";
+    } catch (e) { $("tempTrains").textContent = e.message; $("tempTrains").className = "muted"; last = ""; }
+  }
+  $("tempTrains").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-tt]");
+    if (!b) return;
+    const apply = b.dataset.ttAct === "apply";
+    if (!confirm(apply ? "このグループの臨時列車を適用しますか？" : "このグループの臨時列車を取り消しますか？（走っている自動運転の列車も消します）")) return;
+    b.disabled = true;
+    try { await api("POST", { id: b.dataset.tt, action: b.dataset.ttAct }); } catch (e) { alert(e.message); }
+    await load();
+  });
+  load();
+  setInterval(load, 10000); // 承認は急ぎではないので、10秒ごと
 })();
 </script>
 </body>

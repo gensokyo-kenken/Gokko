@@ -278,8 +278,38 @@ public sealed class RailData
     /// <summary>単線区間に接する駅か（行き違いのために、空いている番線へ入れる駅）。</summary>
     public bool TouchesSingleTrack(string station) => SingleTrackSections.Any(p => p.Item1 == station || p.Item2 == station);
 
-    /// <summary>ダイヤ。列車番号（正規化したもの）→ 列車。</summary>
-    public Dictionary<string, DiaTrain> Dia { get; } = new();
+    // 所定のダイヤ（Timetable.json から読んだもの。起動したあとは変えない）
+    private readonly Dictionary<string, DiaTrain> _baseDia = new();
+    private volatile Dictionary<string, DiaTrain>? _dia;
+
+    /// <summary>
+    /// ダイヤ。列車番号（正規化したもの）→ 列車。読み込みが済んだあとは書き換えない（読むだけ）。
+    /// 催物用の臨時列車を適用している間は、所定のダイヤに臨時列車を足した別の表になる（<see cref="SetExtraTrains"/>）。
+    /// </summary>
+    public Dictionary<string, DiaTrain> Dia => _dia ?? _baseDia;
+
+    /// <summary>所定のダイヤ（臨時列車を足していないもの）。</summary>
+    public IReadOnlyDictionary<string, DiaTrain> BaseDia => _baseDia;
+
+    /// <summary>
+    /// 所定のダイヤに重ねる列車（催物用の臨時列車）を差し替える。空なら所定のダイヤに戻す。
+    /// 所定のダイヤは変えず、足した表を新しく作って参照を切り替えるだけなので、読んでいる途中の処理はそのまま古い表を読み終える。
+    /// 所定のダイヤにある列番は足さない（足せなかった列番を返す）。
+    /// </summary>
+    public List<string> SetExtraTrains(IReadOnlyCollection<DiaTrain> extra)
+    {
+        var skipped = new List<string>();
+        if (extra.Count == 0) _dia = null;
+        else
+        {
+            var d = new Dictionary<string, DiaTrain>(_baseDia);
+            foreach (var t in extra)
+                if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
+            _dia = d;
+        }
+        Turns.DiaChanged();
+        return skipped;
+    }
 
     public static string NormalizeTrain(string? s) => (s ?? "").Normalize(NormalizationForm.FormKC).Trim().ToUpperInvariant();
 

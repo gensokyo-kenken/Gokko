@@ -142,6 +142,16 @@ public sealed class TurnChanges(RailData rail)
         }
     }
 
+    /// <summary>ダイヤに列車を足した・外した（臨時列車の適用・取消）。折返のつなぎを作り直し、計画の線を読み直させる。</summary>
+    public void DiaChanged()
+    {
+        lock (_lock)
+        {
+            _origPred = _pred = _nextPred = null;
+            Version++;
+        }
+    }
+
     /// <summary>列車 train の後運用を next に差し替える。うまくいかなければ理由を返す。</summary>
     public string? Set(string train, string next)
     {

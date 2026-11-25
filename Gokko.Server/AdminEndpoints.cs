@@ -156,6 +156,7 @@ public static class AdminEndpoints
         MapDiagramControls(admin);
         MapDiagramControls(dia);
         dia.MapPost("/clock", SetClock);
+        app.MapUntenkaEndpoints(dia); // 運転課（催物用の臨時列車）。適用・取消は司令用管理画面から
 
         // 司令員（勤怠管理で役職「司令員」を振った乗務員）がログインして使う。ヘッダー X-Crew-Token にログインの合い札（タブレットと同じログイン）。
         // /api/dispatch は diagrammarker.html を単体で開いたとき（ダイヤグラムの操作もできる）

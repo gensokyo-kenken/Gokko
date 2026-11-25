@@ -173,6 +173,14 @@
     <span class="desc">走っている列車と計画の線を見る。運行の編集はしない</span>
   </a>
 
+  <a class="tile" href="untenka.html" id="untenkaTile" data-handoff hidden>
+    <span class="icon" style="background: #5a6e3a">
+      <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/><path d="M14 17l1.5 1.5L19 15"/></svg>
+    </span>
+    <span class="name">運転課</span>
+    <span class="desc">催物用の臨時列車を作って申請する。承認は運転課課長代理</span>
+  </a>
+
   <a class="tile" href="relaypanel.html" id="relayTile" data-handoff data-role="信号扱い" hidden>
     <span class="icon" style="background: var(--relay)">
       <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M8 12l2.5-2.5M14 10h4M14 14h4"/></svg>
@@ -243,7 +251,7 @@
     $("logout").hidden = true;
     $("loginBox").hidden = false;
     $("linkBox").hidden = true;
-    for (const t of ["relayTile", "kintaiTile", "diaTile", "qrTile"]) $(t).hidden = true;
+    for (const t of ["relayTile", "kintaiTile", "diaTile", "untenkaTile", "qrTile"]) $(t).hidden = true;
     // Discord が使えるサーバーなら［Discord でログイン］を出す。パスワードの期限を過ぎたら、パスワードの欄を隠す
     GokkoCrew.discordConfig().then((c) => {
       $("discordGo").hidden = !c.enabled;
@@ -281,6 +289,7 @@
       $("relayTile").hidden = !roles.includes("信号扱い");
       $("kintaiTile").hidden = !roles.includes("司令員");
       $("diaTile").hidden = !roles.includes("司令員");
+      $("untenkaTile").hidden = false;
       $("qrTile").hidden = false;
       showLink(me);
     } catch (e) { $("login").textContent = `ID:${id}（サーバーにつながりません）`; }
