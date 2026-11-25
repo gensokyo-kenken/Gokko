@@ -13,6 +13,9 @@ namespace Gokko.Client;
 /// </summary>
 public sealed class ClientConfig
 {
+    /// <summary>乗車率の入力単位。75 が 75% なら false、0.75 が 75% の環境では true。</summary>
+    public bool OccupancyRateIsRatio { get; set; }
+
     public string Password { get; set; } = "";
     public string TrainNumber { get; set; } = "";
 

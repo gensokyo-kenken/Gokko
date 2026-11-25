@@ -131,7 +131,7 @@ public sealed class TrainRadioConsole : Form
 
             _broadcast.Click += async (_, _) =>
             {
-                if (_state?.MyCall is { IsBroadcast: true } b) await CommandAsync(Protocol.EndRadioCall, b.Id);
+                if (_state?.MyCall is { } b && (b.IsBroadcast || b.BroadcastSession)) await CommandAsync(Protocol.EndRadioCall, b.Id);
                 else await CommandAsync(Protocol.StartRadioBroadcast);
             };
             _protectionSwitch.ToggleRequested += async () =>
@@ -369,11 +369,33 @@ public sealed class TrainRadioConsole : Form
         else if (_state?.OwnRequestPending == true) await CommandAsync(Protocol.CancelRadioCall);
     }
 
-    /// <summary>共通／個別キー（司令員）: 通話中なら今の通話を切り替え、待受なら次に応答するときの方式を選ぶ。一斉通告中は切り替えない。</summary>
+    /// <summary>共通／個別キー（司令員）: 通話中なら今の通話を切り替え、待受なら次に応答するときの方式を選ぶ。一斉通告では応答中の相手を選べる。</summary>
     private async Task ToggleModeAsync()
     {
         if (!_dispatcher || !_online) return;
-        if (_state?.MyCall is { IsBroadcast: true }) return;
+        if (_state?.MyCall is { IsBroadcast: true } broadcast)
+        {
+            if (broadcast.Responders.Count == 0)
+            {
+                _notice = "個別に切り替えるには列車からの応答が必要です";
+                _noticeUntil = DateTime.UtcNow.AddSeconds(5);
+            }
+            else if (broadcast.Responders.Count == 1)
+                await CommandAsync(Protocol.SelectRadioResponder, broadcast.Id, broadcast.Responders[0].Id);
+            else
+            {
+                var menu = new ContextMenuStrip();
+                foreach (var speaker in broadcast.Responders)
+                {
+                    var label = (speaker.Label + "　" + speaker.Name).TrimEnd();
+                    menu.Items.Add(label, null, async (_, _) =>
+                        await CommandAsync(Protocol.SelectRadioResponder, broadcast.Id, speaker.Id));
+                }
+                menu.Closed += (_, _) => BeginInvoke(new Action(menu.Dispose));
+                menu.Show(_mode, 0, _mode.Height);
+            }
+            return;
+        }
         if (_state?.MyCall is { } call) await CommandAsync(Protocol.ChangeRadioMode, call.Id, !call.IsPrivate);
         else _answerPrivate = !_answerPrivate;
     }
@@ -516,15 +538,15 @@ public sealed class TrainRadioConsole : Form
             _requests.Visible = requests.Count > 0;
             var busy = my != null || _state?.Outgoing != null;
             _call.Enabled = _online && !_commandBusy && !busy && requests.Count > 0;
-            var showPrivate = my is { IsBroadcast: false } ? my.IsPrivate : _answerPrivate;
+            var showPrivate = my?.IsPrivate ?? _answerPrivate;
             _mode.Text = showPrivate ? "個別" : "共通";
             _mode.Accent = showPrivate ? Color.FromArgb(194, 139, 66) : Color.FromArgb(219, 193, 69);
-            _mode.Enabled = _online && !_commandBusy && my is not { IsBroadcast: true };
+            _mode.Enabled = _online && !_commandBusy;
             _cancel.Text = my != null ? "終了" : "取消";
             _cancel.Enabled = _online && !_commandBusy && (my != null || _state?.Outgoing != null);
 
-            var broadcasting = my is { IsBroadcast: true };
-            var otherBroadcast = _state?.Audible.Any(c => c.IsBroadcast && c.Id != my?.Id) == true;
+            var broadcasting = my != null && (my.IsBroadcast || my.BroadcastSession);
+            var otherBroadcast = _state?.Audible.Any(c => (c.IsBroadcast || c.BroadcastSession) && c.Id != my?.Id) == true;
             _broadcast.Text = broadcasting ? "通告を終える" : "一斉通告";
             _broadcast.Accent = broadcasting ? Color.FromArgb(214, 82, 58) : Color.FromArgb(160, 172, 140);
             _broadcast.Enabled = _online && !_commandBusy && (broadcasting || (!busy && !otherBroadcast));
@@ -802,7 +824,8 @@ public sealed class TrainRadioConsole : Form
         if (!_requests.Visible)
             DrawText(g, my is { IsBroadcast: true } ? "全列車へ一斉通告中" : my != null ? "通話中" : _state?.Outgoing != null ? "個別呼出中" : "呼出なし",
                 mid, green, new(390, 135, 290, 40));
-        DrawText(g, my is { IsBroadcast: true } ? "送話中：もう一度押すと終わります"
+        DrawText(g, my is { BroadcastSession: true, IsPrivate: true } ? "個別通話中：切替キーで共通に戻ります"
+            : my is { IsBroadcast: true } ? "共通通告中：応答後に個別へ切替可能"
             : "全員にチャイムを鳴らして通告", small, Muted, new(390, 245, 290, 25));
         g.DrawLine(line, 390, 344, 680, 344);
         DrawText(g, "区間防護", mid, Beige, new(390, 357, 230, 28));

@@ -6,8 +6,28 @@
 
 .row{min-height:68px}.station{min-height:76px}.lane{align-items:center}
 .train{display:inline-grid;justify-items:center;gap:1px;line-height:1.1;border:0;background:transparent;padding:3px;min-width:42px}
-.kind{padding:2px 5px;font-size:10px;font-weight:bold;color:white;border-radius:4px}
-.face{width:34px;height:35px;object-fit:contain}.number{font-size:10px;font-weight:700;color:#244f57}
+.service-local          { --badge-color: #111111; }
+.service-limited-express{ --badge-color: #bf2027; --train-color: #d32d36; }
+.service-rapid-express  { --badge-color: #773ab0; --train-color: #8542b8; }
+.service-express        { --badge-color: #b74d00; --train-color: #d76a0b; }
+.service-section-express{ --badge-color: #147444; --train-color: #16864f; }
+.service-semi-express   { --badge-color: #205eb1; --train-color: #38a8dc; }
+.service-other          { --badge-color: #586472; --train-color: #586472; }
+.kind{padding:2px 5px;font-size:10px;font-weight:bold;color:white;background:var(--badge-color);border-radius:4px}
+/* 列車の絵は種別の色で塗った記号（普通は黒のまま） */
+.face{
+  --pictogram: url("passenger-train.png");
+  display:block;width:34px;height:35px;
+  background:var(--pictogram) center / contain no-repeat;
+}
+@supports (mask-image: url("passenger-train.png")) or (-webkit-mask-image: url("passenger-train.png")) {
+  .face:not(.service-local){
+    background:var(--train-color);
+    -webkit-mask:var(--pictogram) center / contain no-repeat;
+    mask:var(--pictogram) center / contain no-repeat;
+  }
+}
+.number{font-size:10px;font-weight:700;color:#244f57}
 .delay{font-size:10px}.name{text-align:start}
 #schedule table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px;font-variant-numeric:tabular-nums}
 #schedule th,#schedule td{text-align:left;padding:7px 4px;border-bottom:1px solid #dae6e4}
@@ -19,6 +39,11 @@ dialog{max-height:85vh;overflow:auto}
 .stop-kinds{grid-column:2;display:flex;flex-wrap:wrap;gap:3px}.stop-kinds .kind{padding:2px 3px;white-space:nowrap}
 .train-service{display:flex;align-items:center;justify-content:center;gap:3px}.train-service .delay{white-space:nowrap}
 .lane{padding-inline:4px}
+.crowding{--ink:#236b4b;--tint:#ebf7ef;display:flex;align-items:center;gap:12px;margin:14px 0;padding:12px 14px;border-radius:10px;background:var(--tint);color:var(--ink)}
+.crowding.moderate{--ink:#625126;--tint:#f6f2e5}.crowding.tight{--ink:#884413;--tint:#fff1e0}.crowding.packed{--ink:#972c32;--tint:#ffeded}.crowding.unknown{--ink:#506367;--tint:#f0f4f4}
+.crowd-face{font-size:30px;line-height:1}.moderate .crowd-face{filter:saturate(.65) brightness(.92)}
+.crowd-info{flex:1;min-width:0}.crowd-heading{display:flex;align-items:baseline;justify-content:space-between;gap:6px;font-size:12px;font-weight:600}
+.crowd-rate{font-size:21px;font-variant-numeric:tabular-nums}.crowd-message{margin-top:3px;font-size:14px;font-weight:650;line-height:1.55}
 .advisory-icon{display:inline-block;background:#ffdf88;color:#553400;border-radius:4px;padding:2px 4px;line-height:1;font-size:13px}
 .advisory-note{display:block;background:#fff1c9;color:#563800;border-left:3px solid #d79816;padding:8px 10px;margin:8px 0;font-size:14px;line-height:1.5}
 .menu-link{position:absolute;top:14px;right:16px;padding:5px 12px;border:1px solid #5f9a93;border-radius:8px;color:white;font-size:13px;text-decoration:none}

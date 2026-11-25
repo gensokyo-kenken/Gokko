@@ -52,6 +52,13 @@ public sealed class ProtectionRadio(GameData data, PlayerRegistry players, Incid
             if (_active.Remove(connectionId, out var tx)) log.Note($"防護無線: {tx.Train} の発報を解除（退出）");
     }
 
+    // AI側の運転ロックを取る前に、その周期で有効な受信範囲を集める。
+    internal void CopyActiveRangesTo(HashSet<(int First, int Last)> destination)
+    {
+        lock (_lock)
+            foreach (var range in _active.Values) destination.Add((range.First, range.Last));
+    }
+
     /// <summary>管理画面からの解除。</summary>
     public bool Clear(string connectionId)
     {

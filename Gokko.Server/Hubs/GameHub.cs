@@ -238,6 +238,10 @@ public sealed partial class GameHub(
     [HubMethodName(Protocol.CancelDispatcherCall)]
     public Task<TrainRadioResult> CancelDispatcherCall(long offerId) => RadioAsync(trainRadio.CancelOffer(Context.ConnectionId, offerId));
 
+    [HubMethodName(Protocol.SelectRadioResponder)]
+    public Task<TrainRadioResult> SelectRadioResponder(long callId, string responder) =>
+        RadioAsync(trainRadio.ChangeMode(Context.ConnectionId, callId, true, responder));
+
     [HubMethodName(Protocol.ChangeRadioMode)]
     public Task<TrainRadioResult> ChangeRadioMode(long callId, bool privateCall) => RadioAsync(trainRadio.ChangeMode(Context.ConnectionId, callId, privateCall));
 

@@ -3916,6 +3916,10 @@ public sealed partial class RouteEngine
         }
     }
 
+    /// <summary>列車位置案内に出す列車: 本線・旅客ホーム側の回路に少しでもいる。編成全体が側線・留置線に入ったら出さない。</summary>
+    private bool VisibleOnPassengerMap(TrainRun run) =>
+        run.HasPosition && _data.Line.HasPassengerCircuit(run.Player.TrackCircuits);
+
     /// <summary>
     /// 列車位置案内（passenger.html）で列車を押したとき: 行き先・編成（車両ごとの形式）と、お客様が乗り降りする駅の定刻着・到着見込み。
     /// 信号場は出さない。打ち切りの駅で終える。在線していない列車は null。
@@ -3924,7 +3928,7 @@ public sealed partial class RouteEngine
     {
         lock (_lock)
         {
-            var run = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Train == train && r.Type != "回送"); // 回送・試運転はお客様に出さない
+            var run = _runs.Values.FirstOrDefault(r => VisibleOnPassengerMap(r) && r.Train == train && r.Type != "回送"); // 回送・試運転はお客様に出さない
             if (run == null) return null;
             var rows = new List<object>();
             var dest = "";
@@ -3965,7 +3969,7 @@ public sealed partial class RouteEngine
                 // 行き先は時刻表の行き先。司令が途中で打ち切りにしたときだけ、打ち切りの駅
                 if (!dia.Stops.Any(s => s.StationId is { } sid && _central.StopOverride(train, sid) == "打ち切り") && dia.Dest.Length > 0) dest = dia.Dest;
             }
-            return new { train, dest, cars = run.Player.CarModels, stops = rows };
+            return new { train, dest, cars = run.Player.CarModels, averageOccupancy = run.Player.AverageOccupancy, stops = rows };
         }
     }
 
@@ -4088,7 +4092,7 @@ public sealed partial class RouteEngine
                     kinds = PassengerKindOrder.Where(kind => kinds[id].Contains(kind)).ToArray()
                 }).ToArray();
             var advisories = _central.PassengerAdvisoryTrains();
-            var trains = _runs.Values.Where(r => r.HasPosition && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
+            var trains = _runs.Values.Where(r => VisibleOnPassengerMap(r) && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
             {
                 train = r.Train, advisory = advisories.Contains(r.Train), kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
                 destination = r.Dia is { } d ? (d.Dest.Length > 0 ? d.Dest : d.Stops.LastOrDefault()?.Name) : null, // 時刻表の行き先

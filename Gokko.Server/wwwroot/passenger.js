@@ -14,15 +14,19 @@ function node(tag, className, text) {
   if (text != null) el.textContent = text;
   return el;
 }
-const kindColors = new Map([
-  ["特急", "#bf2027"], ["快急", "#773ab0"], ["快速急行", "#773ab0"],
-  ["急行", "#b74d00"], ["区急", "#147444"], ["区間急行", "#147444"],
-  ["準急", "#205eb1"], ["普通", "#111111"]
+const serviceClasses = new Map([
+  ["普通", "service-local"], ["特急", "service-limited-express"],
+  ["快急", "service-rapid-express"], ["快速急行", "service-rapid-express"],
+  ["急行", "service-express"],
+  ["区急", "service-section-express"], ["区間急行", "service-section-express"],
+  ["準急", "service-semi-express"]
 ]);
+// 種別の色（CSS の service-○○）。種別の札と列車の絵に使う
+function serviceClass(kind, label) {
+  return serviceClasses.get(kind) || serviceClasses.get(label) || "service-other";
+}
 function kindBadge(kind, label) {
-  const badge = node("span", "kind", label || kind || "列車");
-  badge.style.backgroundColor = kindColors.get(kind) || kindColors.get(label) || "#586472";
-  return badge;
+  return node("span", "kind " + serviceClass(kind, label), label || kind || "列車");
 }
 function trainLabel(number) {
   return String(number).replace(/列車$/, "") + "列車";
@@ -91,11 +95,44 @@ async function readBoard(station) {
     schedule.replaceChildren(area);
   } catch { if (selection === station) { schedule.replaceChildren(); show(station.name, "発車案内を取得できませんでした。"); } }
 }
+// 乗車率（編成の平均）。表示は10%きざみ
+const crowdLevels = [
+  { from: 111, style: "packed", face: "😵", message: "大混雑です。次の電車をご利用ください" },
+  { from: 81, style: "tight", face: "😣", message: "かなり窮屈です" },
+  { from: 51, style: "moderate", face: "🙂", message: "肩が触れ合う程度です" },
+  { from: 0, style: "light", face: "😀", message: "余裕があります" }
+];
+function crowdCard(percent) {
+  const level = Number.isFinite(percent) && crowdLevels.find(item => percent >= item.from);
+  const card = node("div", "crowding " + (level ? level.style : "unknown"));
+  const icon = node("span", "crowd-face", level ? level.face : "―");
+  icon.setAttribute("aria-hidden", "true");
+  const info = node("div", "crowd-info");
+  const heading = node("div", "crowd-heading");
+  heading.append(node("span", "", "乗車率"));
+  if (level) {
+    const displayPercent = Math.round(Math.ceil(percent) / 10) * 10;
+    heading.append(node("b", "crowd-rate", "約" + displayPercent + "%"));
+  }
+  info.append(heading, node("div", "crowd-message", level ? level.message : "混雑情報は未取得です"));
+  card.append(icon, info);
+  return card;
+}
+// 側線に入ったなどで、在線図から消えた列車
+function showTrainOffMap() {
+  selectedTrain = null;
+  schedule.replaceChildren();
+  show("列車情報", "この列車は現在、在線図に表示されていません。");
+}
 async function readTrain(t, position) {
   const request = ++detailRequest;
   const current = () => request === detailRequest && selectedTrain === t.train && panel.open;
   try {
     const res = await fetch("/api/passenger/train?train=" + encodeURIComponent(t.train), {cache:"no-store"});
+    if (res.status === 404) {
+      if (current()) showTrainOffMap();
+      return;
+    }
     if (!res.ok) throw Error();
     const data = await res.json();
     if (!current()) return;
@@ -111,7 +148,7 @@ async function readTrain(t, position) {
       for (const value of [stop.name, minuteTime(stop.scheduled), minuteTime(stop.expected)])
         row.append(node("td","",value));
     }
-    schedule.replaceChildren(node("strong","",formation),data.stops.length ? table : node("p","","この列車のスタフは未登録です。"));
+    schedule.replaceChildren(node("strong","",formation), crowdCard(data.averageOccupancy), data.stops.length ? table : node("p","","この列車のスタフは未登録です。"));
   } catch {
     if (current()) schedule.textContent = "列車の詳細を取得できませんでした。";
   }
@@ -153,9 +190,8 @@ function draw({stations, trains, updated, gameTime}) {
     const btn = node("button","train");
     const kind = t.type || "列車";
     const tag = kindBadge(t.kind, kind);
-    const face = node("img","face");
-    face.src = "passenger-train.png";
-    face.alt = "";
+    const face = node("span", "face " + serviceClass(t.kind, kind));
+    face.setAttribute("aria-hidden", "true");
     const down = t.direction === "下り";
     const number = node("span","number",(down ? "▼ " : "▲ ") + trainLabel(t.train));
     const service = node("span","train-service");
@@ -177,7 +213,7 @@ function draw({stations, trains, updated, gameTime}) {
   }
   if (selectedTrain && panel.open) {
     if (activeDetail) readTrain(...activeDetail);
-    else { selectedTrain = null; show("列車情報","この列車の在線情報は終了しました。"); schedule.replaceChildren(); }
+    else showTrainOffMap();
   }
   map.replaceChildren(fragment);
   document.querySelector("#range").textContent = stations.length ? stations[0].name + " — " + stations.at(-1).name : "";

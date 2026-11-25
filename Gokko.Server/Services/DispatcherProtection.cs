@@ -83,6 +83,13 @@ public sealed class DispatcherProtection(GameData data, TrainRadio trainRadio, I
             }
     }
 
+    // AI側の運転ロックを取る前に、その周期で有効な受信範囲を集める。
+    internal void CopyActiveRangesTo(HashSet<(int First, int Last)> destination)
+    {
+        lock (_gate)
+            foreach (var range in _ranges) destination.Add((range.First, range.Last));
+    }
+
     /// <summary>管理画面からの解除。</summary>
     public bool Clear(string label)
     {
