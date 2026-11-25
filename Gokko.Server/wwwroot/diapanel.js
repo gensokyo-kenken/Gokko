@@ -280,6 +280,7 @@
               ${btn(`data-pick=""`, false, "所定に戻す")}</div>`
             : `<div class="muted">${(m.options || []).length > 1 ? "列車がもうこの駅の進路に入っているので、変えられません" : "この駅で選べる番線はありません"}</div>`}</div>
         ${tr.turn ? `<div class="grp"><div class="ttl">後運用（遅れたときに、終点から別の運用につなぐ。運行番号ごと入れ替わります）</div>${turnHtml(tr.turn, tr.unyo, p.turnPick)}</div>` : ""}
+        ${stopNow === "打ち切り" && window.GokkoRinji ? GokkoRinji.popupHtml(p, tr, m, () => updatePopup(p.diagram, true)) : ""}
         <div class="grp"><div class="ttl">停車・通過（いまは${esc(m.stopType || "")}${stopNow ? `・${esc(stopNow)}の指定中` : ""}）</div>
           <div class="row" style="margin:0">${stopBtns}</div></div>
         ${m.draggable || m.departAt ? `<div class="grp"><div class="ttl">発車時刻（この30秒前まで出発を開通させません。図の◆を横にずらしても決められます）</div>
@@ -301,6 +302,7 @@
     const btn = ev.target.closest("button");
     if (!p || !btn) return;
     if (btn.dataset.close) { closePopup(); return; }
+    if (window.GokkoRinji && await GokkoRinji.popupEvent(ev, p, rinjiCtx(p))) return; // 特発臨（tokuhatsu-rinji.js）
     const c = p.ctx || {};
     // 出発順序・走行順の▲▼と決定（並べ替えは、決定するまでウィンドウの中だけ）
     const ctx = { ord: c.ord, sec: c.sec, seq: p.seq, sseq: p.sseq, act: popupRun,
@@ -324,9 +326,17 @@
     else if (btn.dataset.departOff) await popupRun("POST", "/route/open-at", { ...body, time: null });
   }
 
+  // 特発臨の欄（◆の窓で「打ち切り」を選んだとき）に渡すもの
+  const rinjiCtx = (p) => ({
+    win: p.win,
+    redraw: () => { if (popup === p) updatePopup(p.diagram, true); },
+    refresh: async () => { await p.act("GET", "/diagram"); if (popup === p) updatePopup(p.diagram, true); }
+  });
+
   async function onPopupChange(ev) {
     const p = popup;
     if (!p) return;
+    if (window.GokkoRinji && await GokkoRinji.popupEvent(ev, p, rinjiCtx(p))) return; // 特発臨（tokuhatsu-rinji.js）
     if (await handleTrackChange(ev, { done: () => {}, act: popupRun })) return;
     const tp = ev.target.closest("select[data-turn-pick]");
     if (tp) { p.turnPick = tp.value; tp.blur(); updatePopup(p.diagram, true); return; }
