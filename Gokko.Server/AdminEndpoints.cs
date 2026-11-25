@@ -801,6 +801,7 @@ public static class AdminEndpoints
             trains = ai.List(),
             trials = ai.Trials(),       // 試運転の運行番号ごとの列車（プルダウンの項目）
             trialsOn = rail.TrialsOn,   // 走らせる試運転の運行番号（空なら「なし」）
+            carsProblems = ai.CarsProblems, // 両数の表（Data/UnyoCars.csv・TrainCars.csv）のおかしな所
         }));
         g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
         {
@@ -816,7 +817,7 @@ public static class AdminEndpoints
         g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { ok = false, message = "列車番号を入れてください" });
-            var (ok, message) = ai.Add(req.Train, req.Cars ?? 6, req.Station?.Trim());
+            var (ok, message) = ai.Add(req.Train, req.Cars ?? 0, req.Station?.Trim());
             return ok ? Results.Ok(new { ok, message }) : Results.BadRequest(new { ok, message });
         });
         g.MapPost("/ai-trains/remove", (AiTrainRequest req, AiTrains ai) =>
