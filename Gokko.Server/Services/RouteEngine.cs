@@ -2774,8 +2774,12 @@ public sealed partial class RouteEngine
     // ・ダイヤに「解」＋この列車の列番の列車があれば、その最初の駅で切り離す（解2076C は大道寺2番線、解874 は大道寺3番線）
     // ・ユーザーの列車は、番線に入りきって完全に止まったら切り離す。切り離した車両は自動運転列車として同じ番線に出す（AiTrains）
     // ・自動運転列車は、AiTrains が駅に着いたときに切り離す
+    // ・元の列車がその駅から先へ進む（2076C は日野森へ）なら、切り離した車両は元の列車が番線から出たあと、その跡地に出す
+    //   （同じ回路に2本重ねると、在線の表示などで元の列車の位置に切り離した車両の列番が出てしまう）。
+    //   元の列車がその駅で終わって折り返す（874 → 975）なら、切り離した車両が先に出るので、すぐ出す
 
     private readonly List<(string Child, string Parent, string Station, int Track)> _splits = new();
+    private readonly List<((string Child, string Parent, string Station, int Track) Split, string Conn, string Circuit)> _splitsAfterLeave = new();
 
     private void UpdateSplit(TrainRun run, StationRun st, DateTime now)
     {
@@ -2788,8 +2792,10 @@ public sealed partial class RouteEngine
         else st.SplitStoppedUtc = null;
         if (st.SplitStoppedUtc is not { } s0 || now - s0 < CoupleStopCheck) return;
         st.Split = true;
-        _splits.Add((child.Number, run.Train, st.St.Name, track));
-        _log.Note($"解放: {run.Train} から {child.Number} を切り離します（{st.St.Name} {track}番線）");
+        var split = (child.Number, run.Train, st.St.Name, track);
+        if (st.Terminal) _splits.Add(split);
+        else _splitsAfterLeave.Add((split, run.ConnId, tc));
+        _log.Note($"解放: {run.Train} から {child.Number} を切り離します（{st.St.Name} {track}番線" + (st.Terminal ? "）" : "。元の列車が出てから出します）"));
     }
 
     /// <summary>切り離した車両の側の列車なら、その「解」のダイヤ（解874 自身、または 解874 から折り返した 回933）。元の列車の側なら null。</summary>
@@ -2826,6 +2832,12 @@ public sealed partial class RouteEngine
     {
         lock (_lock)
         {
+            // 元の列車が番線から出た（または運転をやめた）ものを、出す側へ回す
+            foreach (var w in _splitsAfterLeave.Where(w => !_runs.TryGetValue(w.Conn, out var r) || !r.Player.TrackCircuits.Contains(w.Circuit)).ToList())
+            {
+                _splitsAfterLeave.Remove(w);
+                _splits.Add(w.Split);
+            }
             var list = _splits.ToList();
             _splits.Clear();
             return list;
