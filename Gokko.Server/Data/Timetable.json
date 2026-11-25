@@ -3150,7 +3150,7 @@
       ]
     },
     {
-      "number": "1653S", "type": "普通", "label": "普通", "dest": "名田", "unyo": 52,
+      "number": "1653S", "type": "普通", "label": "普通", "dest": "名田", "unyo": "52S",
       "next": { "number": "回1853S", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "18:42:00", "track": 4 },
@@ -3163,7 +3163,7 @@
       ]
     },
     {
-      "number": "回1853S", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": 52,
+      "number": "回1853S", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": "52S",
       "turn": { "kind": "折返", "number": "回1952S", "time": "19:11", "how": "発", "text": "回1952S 19:11発 回送 名田行" },
       "stops": [
         { "st": "TH52", "name": "名田", "stop": "運停", "arr": "18:54:25", "dep": "18:55:45", "track": 2, "note": "灰色;(連)区道②07発;(連)特館②20発" },
@@ -3545,7 +3545,7 @@
       ]
     },
     {
-      "number": "1753S", "type": "普通", "label": "普通", "dest": "名田", "unyo": 52,
+      "number": "1753S", "type": "普通", "label": "普通", "dest": "名田", "unyo": "52S",
       "turn": { "kind": "折返", "number": "1952S", "time": "19:11", "how": "発", "text": "1952S 19:11発 普通 大手橋行" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "18:42:00", "track": 4 },
@@ -4589,7 +4589,7 @@
       ]
     },
     {
-      "number": "1952S", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": 52,
+      "number": "1952S", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": "52S",
       "turn": { "kind": "引継", "number": "1952S", "time": null, "how": null, "text": "1952S 普通 大手橋行" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "19:11:00", "track": 2, "note": "灰色;×区道①08着" },
@@ -7065,7 +7065,7 @@
       ]
     },
     {
-      "number": "4717T", "type": "普通", "label": "普通", "dest": "名田", "unyo": 116,
+      "number": "4717T", "type": "普通", "label": "普通", "dest": "名田", "unyo": "116T",
       "next": { "number": "回4917T", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "19:42:00", "track": 3 },
@@ -7078,7 +7078,7 @@
       ]
     },
     {
-      "number": "回4917T", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": 116,
+      "number": "回4917T", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": "116T",
       "turn": { "kind": "折返", "number": "回5016T", "time": "20:11", "how": "発", "text": "回5016T 20:11発 回送 名田行" },
       "stops": [
         { "st": "TH52", "name": "名田", "stop": "運停", "arr": "19:54:25", "dep": "19:55:45", "track": 2, "note": "灰色;(連)区道②07発;(連)特館②20発" },
@@ -7133,7 +7133,7 @@
       ]
     },
     {
-      "number": "4817T", "type": "普通", "label": "普通", "dest": "名田", "unyo": 116,
+      "number": "4817T", "type": "普通", "label": "普通", "dest": "名田", "unyo": "116T",
       "turn": { "kind": "折返", "number": "5016T", "time": "20:11", "how": "発", "text": "5016T 20:11発 普通 大手橋行" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "19:42:00", "track": 3 },
@@ -7147,7 +7147,7 @@
       ]
     },
     {
-      "number": "4823T", "type": "普通", "label": "普通", "dest": "名田", "unyo": 122,
+      "number": "4823T", "type": "普通", "label": "普通", "dest": "名田", "unyo": "122T",
       "next": { "number": "回5023T", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "20:42:00", "track": 3 },
@@ -7160,7 +7160,7 @@
       ]
     },
     {
-      "number": "回5023T", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": 122,
+      "number": "回5023T", "type": "回送", "label": "回送", "dest": "下吉沢", "unyo": "122T",
       "turn": { "kind": "折返", "number": "回5122", "time": "21:09", "how": "発", "text": "回5122 21:09発 回送 名田行" },
       "stops": [
         { "st": "TH52", "name": "名田", "stop": "運停", "arr": "20:54:35", "dep": "20:59:00", "track": 2, "note": "灰色;×普東①58着;(連)区野②06発" },
@@ -7205,7 +7205,7 @@
       ]
     },
     {
-      "number": "4923T", "type": "普通", "label": "普通", "dest": "名田", "unyo": 122,
+      "number": "4923T", "type": "普通", "label": "普通", "dest": "名田", "unyo": "122T",
       "turn": { "kind": "折返", "number": "5122", "time": "21:09", "how": "発", "text": "5122 21:09発 普通 大手橋行" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "20:42:00", "track": 3 },
@@ -7298,7 +7298,7 @@
       ]
     },
     {
-      "number": "5016T", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": 116,
+      "number": "5016T", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": "116T",
       "turn": { "kind": "引継", "number": "5016T", "time": null, "how": null, "text": "5016T 普通 大手橋行" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "20:11:00", "track": 2, "note": "灰色;×区道②08着" },
@@ -7312,7 +7312,7 @@
       ]
     },
     {
-      "number": "503SB", "type": "急行", "label": "急行", "dest": "名田", "unyo": 2,
+      "number": "503SB", "type": "急行", "label": "急行", "dest": "名田", "unyo": "2S",
       "next": { "number": "回703S", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "07:25:00", "track": 4 },
@@ -7325,7 +7325,7 @@
       ]
     },
     {
-      "number": "回703S", "type": "回送", "label": "回送", "dest": "上吉沢", "unyo": 2,
+      "number": "回703S", "type": "回送", "label": "回送", "dest": "上吉沢", "unyo": "2S",
       "turn": { "kind": "折返", "number": "回802S", "time": "08:09", "how": "発", "text": "回802S 08:09発 回送 名田行" },
       "stops": [
         { "st": "TH52", "name": "名田", "stop": "運停", "arr": "07:38:55", "dep": "07:40:55", "track": 2, "note": "灰色;×回名①38着;(連)特館②50発;(連)快館②52発" },
@@ -7362,7 +7362,7 @@
       ]
     },
     {
-      "number": "5122", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": 122,
+      "number": "5122", "type": "普通", "label": "普通", "dest": "大手橋", "unyo": "122T",
       "turn": { "kind": "引継", "number": "5122", "time": null, "how": null, "text": "5122 普通 大手橋行" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "21:09:00", "track": 2, "note": "灰色;×区野②07着" },
@@ -8382,7 +8382,7 @@
       ]
     },
     {
-      "number": "703SB", "type": "急行", "label": "急行", "dest": "名田", "unyo": 2,
+      "number": "703SB", "type": "急行", "label": "急行", "dest": "名田", "unyo": "2S",
       "turn": { "kind": "折返", "number": "802SD", "time": "08:09", "how": "発", "text": "802SD 08:09発 区急 大手橋行" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "07:25:00", "track": 4 },
@@ -8510,7 +8510,7 @@
       ]
     },
     {
-      "number": "725SD", "type": "区急", "label": "区急", "dest": "名田", "unyo": 24,
+      "number": "725SD", "type": "区急", "label": "区急", "dest": "名田", "unyo": "24S",
       "next": { "number": "回925S", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "09:00:30", "track": 4 },
@@ -8523,7 +8523,7 @@
       ]
     },
     {
-      "number": "回925S", "type": "回送", "label": "回送", "dest": "上吉沢", "unyo": 24,
+      "number": "回925S", "type": "回送", "label": "回送", "dest": "上吉沢", "unyo": "24S",
       "turn": { "kind": "折返", "number": "回924S", "time": "09:28", "how": "発", "text": "回924S 09:28発 回送 名田行" },
       "stops": [
         { "st": "TH52", "name": "名田", "stop": "運停", "arr": "09:11:00", "dep": "09:12:30", "track": 2, "note": "灰色;×回名①12着;(連)特館②18発;(連)普道①22発" },
@@ -8972,7 +8972,7 @@
       ]
     },
     {
-      "number": "802SD", "type": "区急", "label": "区急", "dest": "大手橋", "unyo": 2,
+      "number": "802SD", "type": "区急", "label": "区急", "dest": "大手橋", "unyo": "2S",
       "turn": { "kind": "引継", "number": "802SD", "time": null, "how": null, "text": "802SD 区急 大手橋行" },
       "stops": [
         { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "08:09:00", "track": 1, "note": "灰色" },
@@ -9689,7 +9689,7 @@
       ]
     },
     {
-      "number": "924SC", "type": "準急", "label": "準急", "dest": "大手橋", "unyo": 24,
+      "number": "924SC", "type": "準急", "label": "準急", "dest": "大手橋", "unyo": "24S",
       "turn": { "kind": "引継", "number": "924SC", "time": null, "how": null, "text": "924SC 準急 大手橋行" },
       "stops": [
         { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "09:28:30", "track": 1, "note": "灰色;×特館②21通;×普道②28着" },
@@ -10664,7 +10664,7 @@
       ]
     },
     {
-      "number": "回1952S", "type": "回送", "label": "回送", "dest": "名田", "unyo": 52,
+      "number": "回1952S", "type": "回送", "label": "回送", "dest": "名田", "unyo": "52S",
       "next": { "number": "1952S", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "19:11:00", "track": 2, "note": "灰色;(待)特手①04通;×区道①08着" },
@@ -10955,7 +10955,7 @@
       ]
     },
     {
-      "number": "回5016T", "type": "回送", "label": "回送", "dest": "名田", "unyo": 116,
+      "number": "回5016T", "type": "回送", "label": "回送", "dest": "名田", "unyo": "116T",
       "next": { "number": "5016T", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "20:11:00", "track": 2, "note": "灰色;(待)特手①04通;×区道②08着" },
@@ -10975,7 +10975,7 @@
       ]
     },
     {
-      "number": "回5122", "type": "回送", "label": "回送", "dest": "名田", "unyo": 122,
+      "number": "回5122", "type": "回送", "label": "回送", "dest": "名田", "unyo": "122T",
       "next": { "number": "5122", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH53", "name": "下吉沢", "stop": "停", "arr": null, "dep": "21:09:00", "track": 2, "note": "灰色;(待)特手①02通;×区野②07着" },
@@ -11177,7 +11177,7 @@
       ]
     },
     {
-      "number": "回802S", "type": "回送", "label": "回送", "dest": "名田", "unyo": 2,
+      "number": "回802S", "type": "回送", "label": "回送", "dest": "名田", "unyo": "2S",
       "next": { "number": "802SD", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "08:09:00", "track": 1, "note": "灰色;(待)特手②58通" },
@@ -11237,7 +11237,7 @@
       ]
     },
     {
-      "number": "回924S", "type": "回送", "label": "回送", "dest": "名田", "unyo": 24,
+      "number": "回924S", "type": "回送", "label": "回送", "dest": "名田", "unyo": "24S",
       "next": { "number": "924SC", "st": "TH52", "name": "名田" },
       "stops": [
         { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "09:28:30", "track": 1, "note": "灰色;×特館②21通;(待)特手②25通;×普道②28着" },

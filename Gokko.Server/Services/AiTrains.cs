@@ -67,9 +67,11 @@ public sealed class AiTrains : BackgroundService
     private readonly List<Dictionary<string, double>> _signalRuns = new();
     private readonly List<List<(double Pos, double Kmh)>> _limitRuns = new(); // _signalRuns と同じ並び。制限速度が変わった地点
     private readonly List<Dictionary<string, int>> _trackRuns = new(); // _signalRuns と同じ並び。その走りで止まった駅の番線
+    private readonly Dictionary<(string, string), double?> _chainCache = new(); // ChainDistance の答え
+    private Dictionary<string, List<(string To, double D)>>? _chainEdges; // ChainDistance の道（記録の隣どうしの信号機）
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
-    private readonly Dictionary<int, int> _carsByUnyo = new(); // 運行番号ごとの両数（ない運行は6両）
+    private readonly UnyoCars _unyoCars; // 運行番号ごとの両数（Data/UnyoCars.csv。ない運行は6両）
     private Dictionary<string, Dictionary<string, string>> _couplePartners = new(); // 連結: 列車ID → 駅ID → 番線で待つ増結車（RouteEngine から周期ごとに写す）
     private static readonly TimeSpan CoupleStopB = TimeSpan.FromSeconds(5); // 連結: 停B で止まっている時間
     private readonly List<(string Child, int Cars, string Station, int Track, string Parent)> _pendingSplits = new(); // 解放: これから出す車両
@@ -86,6 +88,31 @@ public sealed class AiTrains : BackgroundService
     private HashSet<string> _userInGame = new();       // 運転画面に出ているユーザーの列番
     private DateTime _lastSpawnUtc;
     private TimeSpan? _lastGame;
+    /// <summary>
+    /// 途中の駅から出してよい列車の目安のロープレ時刻（自動運転列車をアリにした・ロープレ時刻を飛ばしたときの時刻）。
+    /// このとき、もう始発駅を出ているはずの列車だけ、このとき走っているはずの所から出す。それ以外の列車は始発駅にだけ出す
+    /// </summary>
+    private TimeSpan? _catchUpAt;
+    private bool _catchUpNext = true; // 次に AutoSpawn をまわすときに _catchUpAt を決める
+    /// <summary>始発駅で出せないまま、発車時刻をこれだけ過ぎたら出すのをやめる。</summary>
+    private static readonly TimeSpan SpawnLateLimit = TimeSpan.FromMinutes(10);
+    /// <summary>出現前の列車として、ダイヤグラムに出す先の長さ（始発駅の発車時刻まで）。</summary>
+    private static readonly TimeSpan PendingHorizon = TimeSpan.FromMinutes(60);
+    private readonly Dictionary<string, TimeSpan> _heldSeen = new(); // 出現前に抑止されていた列番 → 最後に抑止を見たロープレ時刻
+    private volatile IReadOnlyList<PendingTrain> _pending = [];
+
+    /// <summary>
+    /// 出現前の列車（これから始発駅に自動で出す列車）。Station・Track は出す駅と番線、Due は出すときの発車時刻（ロープレ時刻。
+    /// ダイヤグラムの◆で発車時刻を決めていれば、その時刻）、Held は抑止中で出さない、Late は時刻を過ぎても出せていない
+    /// </summary>
+    public sealed record PendingTrain(string Number, string Station, int? Track, bool TrackFixed, TimeSpan Due, bool Held, bool Late);
+
+    /// <summary>出現前の列車（AutoSpawn が2秒ごとに作り直す。ロックを取らずに読める）。</summary>
+    public IReadOnlyList<PendingTrain> Pending => _pending;
+
+    /// <summary>実際の時刻（UTC）を、そのときのロープレ時刻にする（now は今のロープレ時刻）。</summary>
+    private TimeSpan GameAt(DateTime utc, TimeSpan now) =>
+        now + TimeSpan.FromTicks((long)((utc - DateTime.UtcNow).Ticks * (_clock.Speed > 0 ? _clock.Speed : 1)));
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
@@ -107,9 +134,15 @@ public sealed class AiTrains : BackgroundService
         _adj = LoadAdjacency(Path.Combine(dataDir, "TrackCircuits.json"));
         _routesBySignal = rail.Routes.Values.Where(r => r.Signal.Length > 0).GroupBy(r => r.Signal).ToDictionary(g => g.Key, g => g.ToList());
         LoadDistances(Path.Combine(dataDir, "AiTrains.json"));
+        _unyoCars = UnyoCars.Load(dataDir, rail.BaseDia.Values.Select(d => d.Unyo).OfType<string>().ToHashSet());
+        foreach (var p in _unyoCars.Problems) { _logger?.LogWarning("両数の表: {Problem}", p); _log.Note($"両数の表: {p}"); }
         players.VirtualTrains = Snapshot;
+        routes.PendingTrains = () => _pending;
         players.GhostDeleted += OnGhostDeleted;
     }
+
+    /// <summary>特発臨（司令員がその場で立てる臨時列車）。元の列車が発駅に止まったら、特発臨の列番に変える。</summary>
+    public TokuhatsuRinji? Rinji { get; set; }
 
     // =========================================================================================
     // 出す・消す・一覧（管理画面から）
@@ -131,6 +164,7 @@ public sealed class AiTrains : BackgroundService
             if (_enabled == on) return;
             _enabled = on;
             _spawned.Clear();
+            _catchUpNext = on;
             if (!on) _trains.Clear();
         }
 
@@ -138,7 +172,7 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>試運転の運行番号ごとの列車（列番・最初の駅と発車時刻・最後の駅と着時刻）。司令用管理画面などのプルダウンの項目。</summary>
-    public sealed record TrialView(int Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
+    public sealed record TrialView(string Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
 
     public List<TrialView> Trials()
     {
@@ -161,10 +195,10 @@ public sealed class AiTrains : BackgroundService
     /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
     /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
     /// </summary>
-    public string SetTrials(IEnumerable<int> unyos)
+    public string SetTrials(IEnumerable<string> unyos)
     {
         _rail.SetTrialsOn(unyos);
-        var on = _rail.TrialsOn.Order().ToList();
+        var on = _rail.TrialsOn.Order(Gokko.Common.Unyo.Comparer).ToList();
         List<string> removed = new();
         lock (_lock)
         {
@@ -201,7 +235,7 @@ public sealed class AiTrains : BackgroundService
         if (!auto && takesOver == null && _rail.IsIdleTrial(dia)) return (false, $"{number} は走らせない試運転です（試運転のプルダウンで運行 {dia.Unyo} を選んでください）");
         var dir = _routes.DirOfTrain(number);
         if (dir == null) return (false, $"{number}: 列車番号の形が違います");
-        cars = Math.Clamp(cars <= 0 ? 6 : cars, 1, 10);
+        cars = Math.Clamp(cars <= 0 ? CarsOf(number) : cars, 1, 10);
         var now = _clock.Now;
         // 自動進路構成が要求している進路の回路（ゲームにはまだ開いていない進路も。RouteEngine のロックを取るので、自分のロックの外で集める）。
         // 引き継ぐ在線・切り離した車両は、元の列車の進路の上に出るので見ない
@@ -533,6 +567,13 @@ public sealed class AiTrains : BackgroundService
             return;
         }
 
+        // 特発臨: 発駅の番線に止まっていれば、特発臨の列番に変わる
+        if (t.Speed == 0 && !t.Shunting && ToRinji(t, utcNow))
+        {
+            UpdateInfo(t);
+            return;
+        }
+
         // 番線への入換が出発と反対向きだった（大道寺の X線 → 1番線）: 番線に入って止まったら、向きを変える
         if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && ReverseInPlatform(t, next, utcNow))
         {
@@ -681,13 +722,18 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 速さ: 次の停車駅の時刻に間に合うように
+        // 区間の中にもう停車駅がない（赤山町を通過して出ていく上りの特急など）ときは、残りの通過駅の時刻だけで決める
         var cruise = 75 / 3.6;
-        if (next != null && nowGame is { } ng && (next.Arr ?? next.Dep) is { } due)
+        if (nowGame is { } ng && (next != null ? (next.Arr ?? next.Dep) != null : !t.Shunting))
         {
-            var remain = (due - ng).TotalSeconds;
-            var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
-            if (dist is { } dd && dd > 0)
-                cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
+            if (next != null && (next.Arr ?? next.Dep) is { } due)
+            {
+                var remain = (due - ng).TotalSeconds;
+                var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
+                if (dist is { } dd && dd > 0)
+                    cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
+            }
+            else cruise = 110 / 3.6;
 
             // その手前の通過駅にも時刻があれば、そこにも早く着きすぎないように（通過の進路は、ダイヤの時刻になってから開く）
             foreach (var pass in t.Plan.Skip(t.PlanIndex).TakeWhile(p => p != next).Where(p => !p.Stops))
@@ -862,6 +908,42 @@ public sealed class AiTrains : BackgroundService
         if (!st.TrackCircuit.TryGetValue(track, out var platform)) return false;
 
         var old = t.Number;
+        Become(t, number, nd, dir, st, track, platform, i, Time(_rail.Turns.TurnOf(t.Dia)?.Time), utcNow);
+        t.Status = $"{st.Name} {track}番線で折り返し（{old} → {number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} で折り返して {number} になりました");
+        return true;
+    }
+
+    /// <summary>
+    /// 特発臨（<see cref="TokuhatsuRinji"/>）: 元の列車が、特発臨の発駅の番線に止まったら、特発臨の列番に変わる。
+    /// 向き・停車駅を入れ替え、道筋は今の番線の軌道回路から作り直す（<see cref="TurnBack"/> と同じ）。途中駅でも、終点でなくても変わる。
+    /// </summary>
+    private bool ToRinji(Train t, DateTime utcNow)
+    {
+        if (Rinji is not { } rinji || rinji.PendingFor(t.Number) is not { } r || _rail.DiaOf(r.Number) is not { } nd) return false;
+        if (!_rail.Stations.TryGetValue(r.StationId, out var st) || !st.TrackCircuit.TryGetValue(r.Track, out var platform)) return false;
+        if (!t.Info.TrackCircuits.Contains(platform)) return false; // まだ発駅の番線に着いていない
+        if (_routes.DirOfTrain(r.Number) is not { } dir) return false;
+        var i = nd.Stops.FindIndex(s => s.StationId == r.StationId);
+        if (i < 0 || i == nd.Stops.Count - 1) return false;
+
+        var old = t.Number;
+        t.Shunting = false;
+        t.FromShunt = false;
+        t.CoupleStage = 0;
+        Become(t, r.Number, nd, dir, st, r.Track, platform, i, null, utcNow);
+        rinji.MarkStarted(r.Number);
+        t.Status = $"{st.Name} {r.Track}番線で特発臨に変わりました（{old} → {r.Number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} {r.Track}番線で特発臨 {r.Number} になりました");
+        return true;
+    }
+
+    /// <summary>
+    /// 駅の番線で、別の列番（折り返しの列車・特発臨）に変わる。列番・向き・停車駅を入れ替え、道筋は番線の軌道回路から作り直す
+    /// （停止位置は、新しい向きの出発信号機の手前）。i は新しい列番の時刻表で、この駅の位置。
+    /// </summary>
+    private void Become(Train t, string number, DiaTrain nd, Dir dir, StationDef st, int track, string platform, int i, TimeSpan? depFallback, DateTime utcNow)
+    {
         _spawned.Add(RailData.NormalizeTrain(number));
         t.Number = number;
         t.Dia = nd;
@@ -871,7 +953,7 @@ public sealed class AiTrains : BackgroundService
         t.StartTrack = track;
         t.Plan.Clear();
         var first = nd.Stops[i];
-        t.Plan.Add(new PlanStop(first.Name, here.StationId, true, track, null, Time(first.Dep) ?? Time(_rail.Turns.TurnOf(t.Dia)?.Time)));
+        t.Plan.Add(new PlanStop(first.Name, st.Id, true, track, null, Time(first.Dep) ?? depFallback));
         foreach (var s in nd.Stops.Skip(i + 1))
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
@@ -896,9 +978,6 @@ public sealed class AiTrains : BackgroundService
         t.Info.GameRoutes.Clear();
         t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
         t.Info.LastCenter = null;
-        t.Status = $"{st.Name} {track}番線で折り返し（{old} → {number}）";
-        _log.Note($"にぎやかし: {old} は {st.Name} で折り返して {number} になりました");
-        return true;
     }
 
     /// <summary>ゲームの線区（進路を扱う駅のいちばん端からいちばん端まで）の中の駅か。</summary>
@@ -1291,8 +1370,54 @@ public sealed class AiTrains : BackgroundService
         if (spec == null) return null;
         var passed = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head);
         if (passed?.Signal is not { } from) return null;
-        if (Distance(from, spec.Signal) is not { } d) return null;
+        if (ChainDistance(from, spec.Signal) is not { } d) return null;
         return d - (t.Head - passed.Start) + (spec.After ?? -spec.Before);
+    }
+
+    /// <summary>
+    /// 信号機 a から b までの距離。1本の記録に両方がなくても、記録どうしを同じ信号機でつないで引く
+    /// （館浜から大道寺1番のように、1本の記録では届かない所。届かないと速さが決め打ちの 75km/h になる）。
+    /// 記録ごとに、信号機を位置の順に並べた隣どうしを道としてつなぎ、いちばん短い道のりを取る。
+    /// </summary>
+    private double? ChainDistance(string a, string b)
+    {
+        if (a == b) return 0;
+        lock (_chainCache)
+        {
+            if (_chainCache.TryGetValue((a, b), out var cached)) return cached;
+            if (_chainEdges == null)
+            {
+                _chainEdges = new Dictionary<string, List<(string To, double D)>>();
+                foreach (var run in _signalRuns)
+                {
+                    var order = run.OrderBy(x => x.Value).ToList();
+                    for (var k = 0; k + 1 < order.Count; k++)
+                    {
+                        if (!_chainEdges.TryGetValue(order[k].Key, out var list)) _chainEdges[order[k].Key] = list = new();
+                        list.Add((order[k + 1].Key, order[k + 1].Value - order[k].Value));
+                    }
+                }
+            }
+
+            double? result = null;
+            var best = new Dictionary<string, double> { [a] = 0 };
+            var queue = new PriorityQueue<string, double>();
+            queue.Enqueue(a, 0);
+            while (queue.TryDequeue(out var s, out var d))
+            {
+                if (d > best[s]) continue;
+                if (s == b) { result = d; break; }
+                if (!_chainEdges.TryGetValue(s, out var list)) continue;
+                foreach (var (to, len) in list)
+                    if (!best.TryGetValue(to, out var old) || d + len < old)
+                    {
+                        best[to] = d + len;
+                        queue.Enqueue(to, d + len);
+                    }
+            }
+            _chainCache[(a, b)] = result;
+            return result;
+        }
     }
 
     private bool Passed(Train t, PlanStop p)
@@ -1308,6 +1433,8 @@ public sealed class AiTrains : BackgroundService
     /// ・区間の最高速度: 館浜〜新野崎 110km/h、新野崎〜大路（赤山町方）100km/h
     /// ・線路の制限: 道筋の信号機を目印に、ゲームの自動運転で走ったときの記録の位置へ置き換えて、今いる所（最後尾まで）の制限と、
     ///   この先 1500m の制限の手前で減速するための速さ。記録の制限は、前の信号機が G の間の値だけ（信号の現示による制限は除いてある）
+    ///   当てはまる記録が何本もあれば、いちばん高いものを取る（同じ線路なら制限は同じはず。低い記録は、信号などで抑えられた値が残ったもの。
+    ///   羽衣橋〜江ノ原で、ある記録だけ 55km/h が続いていた）。記録の走った範囲の外は使わない
     /// ・分岐: 記録が当てはまらない駅の進路（記録の走りと違う番線に入る・出る、記録がない）は 40km/h
     /// </summary>
     private double LimitCap(Train t)
@@ -1319,38 +1446,45 @@ public sealed class AiTrains : BackgroundService
         Seg? refSeg = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head) ?? t.Path.FirstOrDefault(s => s.Signal != null);
         var refSignal = refSeg?.Signal ?? t.EndSignal;
         var refX = refSeg?.Start ?? t.PathEnd;
-        // 使う記録: 目印の信号機がある記録のうち、この先 1500m の駅の進路（番線）に当てはまるもの。なければ最初のもの
+        // 使う記録: 目印の信号機がある記録のうち、この先 1500m の駅の進路（番線）に当てはまるもの。なければ目印の信号機がある記録すべて
         var routesAhead = t.Path.Where(s => s.Route != null && s.End > t.Head - t.Length && s.Start <= t.Head + 1500).Select(s => s.Route!).ToList();
         var candidates = refSignal == null ? new List<int>()
             : Enumerable.Range(0, _signalRuns.Count).Where(i => _signalRuns[i].ContainsKey(refSignal) && _limitRuns[i].Count > 0).ToList();
-        int? run = candidates.Cast<int?>().FirstOrDefault(i => routesAhead.All(d => RecordCovers(i!.Value, d, t))) ?? candidates.Cast<int?>().FirstOrDefault();
-        if (run is { } i)
-            {
-                var at = _signalRuns[i][refSignal!];
-                var lims = _limitRuns[i];
-                var p0 = at + (t.Head - refX);
-                double LimitAt(double p)
-                {
-                    var v = double.PositiveInfinity;
-                    foreach (var (pos, kmh) in lims)
-                        if (pos <= p) v = kmh; else break;
-                    return v;
-                }
+        var covering = candidates.Where(i => routesAhead.All(d => RecordCovers(i, d, t))).ToList();
+        var use = covering.Count > 0 ? covering : candidates;
 
-                // 今の制限: 先頭から最後尾までのうち、いちばん低いもの（上がるのは最後尾が抜けてから）
-                var now = LimitAt(p0);
+        double? recordCap = null;
+        foreach (var i in use)
+        {
+            var at = _signalRuns[i][refSignal!];
+            var lims = _limitRuns[i];
+            var p0 = at + (t.Head - refX);
+            var end = Math.Max(_signalRuns[i].Values.Max(), lims[^1].Pos) + 300; // 記録の走った範囲の終わり（最後の信号機・制限の少し先まで）
+            if (p0 > end) continue;
+            double LimitAt(double p)
+            {
+                var v = double.PositiveInfinity;
                 foreach (var (pos, kmh) in lims)
-                    if (pos > p0 - t.Length && pos <= p0) now = Math.Min(now, kmh);
-                now = Math.Min(now, LimitAt(p0 - t.Length));
-                cap = Math.Min(cap, now / 3.6);
-                foreach (var (pos, kmh) in lims)
-                {
-                    if (pos <= p0) continue;
-                    if (pos > p0 + 1500) break;
-                    var l = kmh / 3.6;
-                    cap = Math.Min(cap, Math.Sqrt(l * l + 2 * Decel * (pos - p0)));
-                }
+                    if (pos <= p) v = kmh; else break;
+                return v;
             }
+
+            // 今の制限: 先頭から最後尾までのうち、いちばん低いもの（上がるのは最後尾が抜けてから）
+            var now = LimitAt(p0);
+            foreach (var (pos, kmh) in lims)
+                if (pos > p0 - t.Length && pos <= p0) now = Math.Min(now, kmh);
+            now = Math.Min(now, LimitAt(p0 - t.Length));
+            var c = now / 3.6;
+            foreach (var (pos, kmh) in lims)
+            {
+                if (pos <= p0) continue;
+                if (pos > p0 + 1500) break;
+                var l = kmh / 3.6;
+                c = Math.Min(c, Math.Sqrt(l * l + 2 * Decel * (pos - p0)));
+            }
+            recordCap = recordCap is { } rc ? Math.Max(rc, c) : c;
+        }
+        if (recordCap is { } r) cap = Math.Min(cap, r);
 
         // 分岐: 記録が当てはまらない駅の進路は 40km/h（列車がその進路にいる間と、その手前からの減速）
         foreach (var s in t.Path)
@@ -1358,7 +1492,7 @@ public sealed class AiTrains : BackgroundService
             if (s.Route is not { } def || s.End <= t.Head - t.Length || s.Start > t.Head + 1500) continue;
             // 入換の進路はいつも 25km/h
             var shunt = def.Kind.Contains("入換") || def.Category.Contains("入換");
-            if (!shunt && run is { } j && RecordCovers(j, def, t)) continue;
+            if (!shunt && use.Any(j => RecordCovers(j, def, t))) continue;
             var lim = shunt ? ShuntSpeed : Turnout;
             cap = s.Start <= t.Head ? Math.Min(cap, lim) : Math.Min(cap, Math.Sqrt(lim * lim + 2 * Decel * (s.Start - t.Head)));
         }
@@ -1376,13 +1510,17 @@ public sealed class AiTrains : BackgroundService
     /// <summary>
     /// 走ったときの記録（run）の制限が、その駅の進路に当てはまるか。記録の走りがその駅に止まっていれば、同じ番線の進路だけ。
     /// 記録の走りが通過した駅（番線の記録がない）は、こちらも通過するときだけ（どちらも本線を通ったと見なす）。
+    /// 記録の走りがその駅まで来ていなければ当てはまらない。
     /// </summary>
     private bool RecordCovers(int run, RouteDef def, Train t)
     {
         if (!_rail.Stations.TryGetValue(def.StationId, out var st)) return false;
         var m = System.Text.RegularExpressions.Regex.Match(def.To + " " + def.From, @"(\d+)番線");
         int? track = m.Success ? int.Parse(m.Groups[1].Value) : null;
-        if (_trackRuns[run].TryGetValue(st.Name, out var rt)) return track == null || track == rt;
+        // 記録の走りがその駅まで来ていない（駅の信号機が載っていない）なら当てはまらない
+        if (!_signalRuns[run].Keys.Any(k => k.StartsWith(st.Name, StringComparison.Ordinal))) return false;
+        // 番線のない進路（江ノ原信号場の本線の通過など）は、記録の走りが番線に入った（江ノ原車庫へ入った）なら当てはまらない
+        if (_trackRuns[run].TryGetValue(st.Name, out var rt)) return track == rt;
         return !t.Plan.Any(p => p.Name == st.Name && p.Stops);
     }
 
@@ -1561,9 +1699,11 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>
-    /// ダイヤの列車のうち、進路を扱う駅の発車時刻が近い（2分前〜30秒過ぎ）ものを、その駅に出す。
+    /// ダイヤの列車のうち、始発駅（進路を扱う駅で最初の駅）の発車時刻が近い（2分前から）ものを、その駅に出す。
     /// 出さないもの: ユーザーの列車、もう出した・走っている列番、走っている列車がこのあと続けて・折り返して走る列番。
-    /// 番線にほかの列車がいるなどで出せなければ、時刻の範囲の間は2秒ごとに試し直す。
+    /// 番線にほかの列車がいるなどで出せなければ、始発駅で2秒ごとに試し直す（発車時刻から SpawnLateLimit まで。先の駅には出さない）。
+    /// 司令員がダイヤグラムの◆で入れた指示に従う: 発車時刻を決めていればその時刻に合わせて出し、抑止していれば外すまで出さない、番線を決めていればその番線に出す。
+    /// これから出す列車の一覧（Pending）も、ここで作り直す（ダイヤグラムに出現前の列車として出す）。
     /// </summary>
     private void AutoSpawn(HashSet<string> users, List<PlayerInfo> snapshot)
     {
@@ -1572,7 +1712,7 @@ public sealed class AiTrains : BackgroundService
 
         // ユーザーが運転している列車（継続乗務で残した在線も）の運行番号と、その列車の最初の時刻。
         // 同じ運行番号で、それより後に走る列車は出さない（ユーザーの列車が遅れていても、その後の列番はユーザーが続けて走る。回1750 が遅れているのに 1751 が出た）
-        var userUnyo = new Dictionary<int, TimeSpan>();
+        var userUnyo = new Dictionary<string, TimeSpan>();
         foreach (var p in snapshot.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix) && p.TrainNumber.Length > 0))
         {
             if (_rail.DiaOf(p.TrainNumber) is not { Unyo: { } u } ud || ud.Stops.Select(s => Time(s.Arr ?? s.Dep)).FirstOrDefault(t => t != null) is not { } first) continue;
@@ -1580,9 +1720,16 @@ public sealed class AiTrains : BackgroundService
         }
         lock (_lock)
         {
+            if (!_enabled || now is null) _pending = [];
             if (!_enabled || now is not { } n || !_clock.IsRunning) return;
             // ロープレ時刻を戻したら、出した記録を消す（もう一度出せるように）
-            if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) _spawned.Clear();
+            if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) { _spawned.Clear(); _heldSeen.Clear(); }
+            // アリにした直後と、ロープレ時刻を飛ばした（2分より大きく進めた・戻した）ときだけ、途中を走っているはずの列車を途中の駅から出す
+            if (_catchUpNext || _lastGame is { } lg2 && (n < lg2 - TimeSpan.FromMinutes(2) || n > lg2 + TimeSpan.FromMinutes(2)))
+            {
+                _catchUpAt = n;
+                _catchUpNext = false;
+            }
             _lastGame = n;
 
             // 走っている列車が、このあと続けて・折り返して走る列番
@@ -1604,30 +1751,46 @@ public sealed class AiTrains : BackgroundService
             foreach (var u in users)
                 if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
 
+            var pending = new List<PendingTrain>();
             foreach (var dia in _rail.Dia.Values)
             {
                 var number = RailData.NormalizeTrain(dia.Number);
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
-                // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
+                // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
+                // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、
+                // ほかの列車との順番が崩れて詰まる。
+                // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 var startDir = _routes.DirOfTrain(number);
-                var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30)
-                    && !(startDir is { } sd2 && PassesWithoutTrack(s, sd2)));
-                if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
-                if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
+                var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
+                if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                    ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
+                    : cands[0];
+                if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
                 if (dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車
-                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
-                if (start.StationId == EntryStation && start.Stop != "停" && start.Track == 2 && _routes.DirOfTrain(number) == Dir.Down)
-                {
-                    if (dep - n > TimeSpan.FromSeconds(EntryLeadSeconds)) continue;
-                    todo.Add((number, start.Name, EntryTrack));
-                    continue;
-                }
 
-                todo.Add((number, start.Name, null));
+                // 司令員の指示（ダイヤグラムの◆）は、出現前でも列番で入れておける: 発車時刻（その時刻に合わせて出す）・抑止（外すまで出さない）・番線
+                var due = dep;
+                if (_central.OpenAt(number, startId) is { } openAt && GameAt(openAt, n) > due) due = GameAt(openAt, n);
+                var held = _central.IsHeld(number, startId);
+                if (held) _heldSeen[number] = n;
+                // 始発駅で長く出せなかった列車は、もう出さない（抑止していた間は数えない）
+                var lateFrom = _heldSeen.TryGetValue(number, out var hs) && hs > due ? hs : due;
+                if (n - lateFrom > SpawnLateLimit) continue;
+                if (due > n + PendingHorizon) continue;
+
+                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
+                var entryPass = startId == EntryStation && start.Stop != "停" && start.Track == 2 && startDir == Dir.Down;
+                var track = _central.TrackOverride(number, startId) ?? (entryPass ? EntryTrack : null);
+                pending.Add(new PendingTrain(number, startId, track ?? start.Track, track != null && !(entryPass && track == EntryTrack), due, held, n > due));
+                if (held || due - n > (entryPass ? TimeSpan.FromSeconds(EntryLeadSeconds) : TimeSpan.FromMinutes(2))) continue;
+                todo.Add((number, start.Name, track));
             }
+            _pending = pending;
         }
 
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track);
@@ -1681,10 +1844,15 @@ public sealed class AiTrains : BackgroundService
     // 距離の表
     // =========================================================================================
 
-    /// <summary>自動で出す列車の両数。ダイヤに両数が書いてあれば（臨時列車）それ、なければ運行番号から AiTrains.json の carsByUnyo で引く（ない運行は6両）。</summary>
+    /// <summary>
+    /// 自動で出す列車の両数。ダイヤに両数が書いてあれば（運転課の臨時列車）それ。なければ列番の表（Data/TrainCars.csv）、
+    /// それもなければダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。
+    /// </summary>
     private int CarsOf(string number) =>
-        _rail.DiaOf(number) is { Cars: { } dc } ? dc
-        : _rail.DiaOf(number)?.Unyo is { } u && _carsByUnyo.TryGetValue(u, out var c) ? c : 6;
+        _rail.DiaOf(number) is { Cars: { } dc } ? dc : _unyoCars.Of(number, _rail.DiaOf(number)?.Unyo);
+
+    /// <summary>両数の表を読んだときのおかしな所（管理画面に出す）。</summary>
+    public IReadOnlyList<string> CarsProblems => _unyoCars.Problems;
 
     private double LengthOf(string circuit) =>
         _circuitLengths.TryGetValue(circuit, out var l) ? l : circuit.StartsWith("TH") ? DefaultStationCircuit : DefaultLineCircuit;
@@ -1735,9 +1903,6 @@ public sealed class AiTrains : BackgroundService
                         s.GetProperty("track").GetInt32(), s.GetProperty("signal").GetString()!,
                         s.TryGetProperty("before", out var b) ? b.GetDouble() : 0, s.TryGetProperty("after", out var a) ? a.GetDouble() : null,
                         s.TryGetProperty("couple", out var cp) ? cp.GetDouble() : null, s.TryGetProperty("stopB", out var sb) ? sb.GetDouble() : null));
-            if (root.TryGetProperty("carsByUnyo", out var carsBy))
-                foreach (var c in carsBy.EnumerateObject())
-                    if (int.TryParse(c.Name, out var unyo) && c.Value.TryGetInt32(out var n)) _carsByUnyo[unyo] = n;
             if (root.TryGetProperty("circuitLengths", out var lens))
                 foreach (var c in lens.EnumerateObject())
                     _circuitLengths[c.Name] = c.Value.GetDouble();

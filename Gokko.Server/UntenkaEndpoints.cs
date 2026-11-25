@@ -91,7 +91,7 @@ public static class UntenkaEndpoints
                 me = new { id, name = crew.InfoOf(id)?.Name ?? "", approver = crew.HasRole(id, CrewRoster.PlanningRole) },
                 downIncreasing = downInc,
                 stations, types, runTimes,
-                unyoUsed = rail.BaseDia.Values.Select(d => d.Unyo).Where(u => u != null).Distinct().Order()
+                unyoUsed = rail.BaseDia.Values.Select(d => d.Unyo).Where(u => u != null).Distinct().Order(Gokko.Common.Unyo.Comparer)
             });
         });
 
@@ -167,7 +167,7 @@ public static class UntenkaEndpoints
     // 受け取った列車をそのまま持たない（保存するのは自分で作った物だけ）
     private static TempTrains.TrainSpec Copy(TempTrains.TrainSpec t) => new()
     {
-        Unyo = t.Unyo, Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
+        Unyo = t.Unyo ?? "", Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
         TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "", Cars = t.Cars,
         Stops = (t.Stops ?? new()).Take(80).Select(s => new TempTrains.StopSpec { St = s.St ?? "", Stop = s.Stop ?? "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
     };

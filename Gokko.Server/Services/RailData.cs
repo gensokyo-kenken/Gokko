@@ -186,8 +186,8 @@ public sealed class DiaTrain
     /// </summary>
     public (string Number, string StationId)? Next { get; set; }
 
-    /// <summary>運行番号（列番の付け方から求めたもの。<see cref="Gokko.Common.Unyo"/>）。読めなければ null。</summary>
-    public int? Unyo { get; set; }
+    /// <summary>運行番号（"24"・"24S"。列番の付け方から求めたもの。<see cref="Gokko.Common.Unyo"/>）。読めなければ null。</summary>
+    public string? Unyo { get; set; }
 
     /// <summary>両数（臨時列車で決めたときだけ。null なら自動運転は運行番号ごとの両数）。</summary>
     public int? Cars { get; set; }
@@ -333,24 +333,24 @@ public sealed class RailData
     public DiaTrain? DiaOf(string train) => Dia.GetValueOrDefault(NormalizeTrain(train));
 
     // ---- 試運転（所定の臨時列車）: 普段は走らせず、司令が選んだ運行番号だけ走らせる。選択は再起動で「なし」に戻る ----
-    private volatile HashSet<int> _trialsOn = new();
+    private volatile HashSet<string> _trialsOn = new();
 
     /// <summary>試運転か（列番が「試」で始まる。時刻表の種別は試運転）。</summary>
     public static bool IsTrial(DiaTrain d) => d.Number.StartsWith("試");
 
     /// <summary>試運転の運行番号（時刻表の並び）。</summary>
-    public List<int> TrialUnyos() => Dia.Values.Where(d => IsTrial(d) && d.Unyo != null).Select(d => d.Unyo!.Value).Distinct().Order().ToList();
+    public List<string> TrialUnyos() => Dia.Values.Where(d => IsTrial(d) && d.Unyo != null).Select(d => d.Unyo!).Distinct().Order(Gokko.Common.Unyo.Comparer).ToList()!;
 
     /// <summary>走らせる試運転の運行番号。</summary>
-    public IReadOnlyCollection<int> TrialsOn => _trialsOn;
+    public IReadOnlyCollection<string> TrialsOn => _trialsOn;
 
     /// <summary>試運転の選択を変えると増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
     public int TrialVersion { get; private set; }
 
-    public void SetTrialsOn(IEnumerable<int> unyos)
+    public void SetTrialsOn(IEnumerable<string> unyos)
     {
         var known = TrialUnyos().ToHashSet();
-        _trialsOn = unyos.Where(known.Contains).ToHashSet();
+        _trialsOn = unyos.Select(Gokko.Common.Unyo.Normalize).OfType<string>().Where(known.Contains).ToHashSet();
         TrialVersion++;
     }
 
@@ -625,7 +625,10 @@ public sealed class RailData
                     && NormalizeTrain(Str(nx, "number")) is { Length: > 0 } nextNumber && Str(nx, "st") is { Length: > 0 } nextStation)
                     cur.Next = (nextNumber, nextStation);
 
-                cur.Unyo ??= t.TryGetProperty("unyo", out var un) && un.ValueKind == JsonValueKind.Number ? un.GetInt32() : Gokko.Common.Unyo.FromTrain(number);
+                // 運行番号は "24S" のような文字列（数字だけの 6 も読む）。書いていなければ列番から求める
+                cur.Unyo ??= t.TryGetProperty("unyo", out var un) && un.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                    && Gokko.Common.Unyo.Normalize(un.ValueKind == JsonValueKind.Number ? un.GetRawText() : un.GetString()) is { } unText
+                    ? unText : Gokko.Common.Unyo.FromTrain(number);
                 if (t.TryGetProperty("turn", out var tn) && tn.ValueKind == JsonValueKind.Object && Str(tn, "kind") is { Length: > 0 } turnKind)
                     cur.Turn = new DiaTurn(turnKind, NormalizeTrain(Str(tn, "number")) is { Length: > 0 } tno ? tno : null,
                         Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null,
