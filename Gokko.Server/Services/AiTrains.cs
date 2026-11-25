@@ -75,6 +75,7 @@ public sealed class AiTrains : BackgroundService
     private Dictionary<string, Dictionary<string, string>> _couplePartners = new(); // 連結: 列車ID → 駅ID → 番線で待つ増結車（RouteEngine から周期ごとに写す）
     private static readonly TimeSpan CoupleStopB = TimeSpan.FromSeconds(5); // 連結: 停B で止まっている時間
     private readonly List<(string Child, int Cars, string Station, int Track, string Parent)> _pendingSplits = new(); // 解放: これから出す車両
+    private readonly List<((string Child, int Cars, string Station, int Track, string Parent) Split, string ParentId, string Circuit)> _splitsAfterLeave = new(); // 解放: 元の列車が番線から出るのを待つ車両
 
     private readonly object _lock = new();
     private readonly Dictionary<string, Train> _trains = new();
@@ -496,6 +497,12 @@ public sealed class AiTrains : BackgroundService
                 // 切り離した車両を出す（Add はほかの参加者の在線を見るので、自分のロックの外で）
                 lock (_lock)
                 {
+                    // 元の列車が番線から出た（消えた）ら、跡地に出す
+                    foreach (var w in _splitsAfterLeave.Where(w => !_trains.TryGetValue(w.ParentId, out var pt) || !pt.Info.TrackCircuits.Contains(w.Circuit)).ToList())
+                    {
+                        _splitsAfterLeave.Remove(w);
+                        _pendingSplits.Add(w.Split);
+                    }
                     splitSpawns.AddRange(_pendingSplits);
                     _pendingSplits.Clear();
                 }
@@ -1349,7 +1356,12 @@ public sealed class AiTrains : BackgroundService
         // 臨時列車で両数を決めた列車は、決めた両数から切り離した分を引く（運行番号の既定の両数で下を止めると、減らなくなる）
         t.Cars = t.Dia.Cars != null ? Math.Max(1, t.Cars - cars) : Math.Max(CarsOf(t.Number), t.Cars - cars);
         t.Length = t.Cars * CarLength;
-        _pendingSplits.Add((child.Number, cars, p.Name, cs.Track ?? p.Track ?? -1, t.Number));
+        var split = (child.Number, cars, p.Name, cs.Track ?? p.Track ?? -1, t.Number);
+        // 元の列車がこの駅から先へ進むなら、番線から出たあと、その跡地に出す（終わって折り返すなら、切り離した車両が先に出るので、すぐ）
+        var goesOn = t.Plan.Skip(t.Plan.IndexOf(p) + 1).Any() || t.Dia.Stops.LastOrDefault()?.StationId != p.StationId;
+        if (goesOn && _rail.Stations.TryGetValue(p.StationId, out var sd) && sd.TrackCircuit.TryGetValue(split.Item4, out var circuit))
+            _splitsAfterLeave.Add((split, t.Id, circuit));
+        else _pendingSplits.Add(split);
     }
 
     private double? BoundaryOf(Train t, string signal)
