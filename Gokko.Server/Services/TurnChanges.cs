@@ -32,6 +32,13 @@ public sealed class TurnChanges(RailData rail)
     // 直接折返・途中折返しにしている列車（列番 → 指定）
     private readonly Dictionary<string, DirectTurn> _direct = new();
 
+    /// <summary>途中折返しで、train から折り返して走る列車の指定（train が後運用の側。なければ null）。</summary>
+    public DirectTurn? MidwayInto(string train)
+    {
+        var no = RailData.NormalizeTrain(train);
+        lock (_lock) return _direct.Values.FirstOrDefault(d => d.Midway && d.Next == no);
+    }
+
     /// <summary>直接折返・途中折返しの指定（なければ null）。</summary>
     public DirectTurn? DirectOf(string train)
     {

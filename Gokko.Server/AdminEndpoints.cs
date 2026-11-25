@@ -105,6 +105,20 @@ public static class AdminEndpoints
         return m.Success ? m.Groups[1].Value : null;
     }
 
+    /// <summary>
+    /// 計画の線で引く範囲（時刻表の駅の番号）。From から To まで（To が null なら終点まで）。
+    /// 打ち切った列車は打ち切った駅まで（Mid は、その駅で途中折返しする指定）。途中折返しで走り始める列車は、その駅から（Into はその指定）。
+    /// </summary>
+    private static (int From, int? To, TurnChanges.DirectTurn? Mid, TurnChanges.DirectTurn? Into) PlanCut(RailData rail, CentralControl central, DiaTrain t)
+    {
+        var mid = rail.Turns.DirectOf(t.Number) is { Midway: true } m ? m : null;
+        var cutSt = mid?.Station ?? central.CutStation(t.Number);
+        int? to = cutSt != null && t.Stops.FindIndex(s => s.StationId == cutSt) is var ci && ci >= 0 && ci < t.Stops.Count - 1 ? ci : null;
+        var into = rail.Turns.MidwayInto(t.Number);
+        var from = into != null && t.Stops.FindIndex(s => s.StationId == into.Station) is var fi && fi > 0 ? fi : 0;
+        return (from, to, to != null ? mid : null, from > 0 ? into : null);
+    }
+
     /// <summary>折り返しが路線の中の駅か: 列車の終点（時刻表の最後の駅）と、次の列車の始発が、同じ路線の駅。</summary>
     private static bool TurnsOnLine(RailData rail, DiaTrain t, string next) =>
         t.Stops.Count > 0 && t.Stops[^1].StationId is { } sid && rail.Line.ZoneOfStation(sid) >= 0
@@ -1132,7 +1146,7 @@ public static class AdminEndpoints
             }),
             appear = engine.View(RouteEngine.ViewAppear),
             diaMode = central.DiaMode,
-            turnVersion = rail.Turns.Version + rail.TrialVersion + events.Version, // 後運用を差し替えた・試運転の選択・催物用臨停設定を変えたら増える（計画の線を読み直す合図）
+            turnVersion = rail.Turns.Version + rail.TrialVersion + events.Version + central.CutVersion, // 後運用を差し替えた・打ち切りを変えた・試運転の選択・催物用臨停設定を変えたら増える（計画の線を読み直す合図）
             // つながっている参加者（強制切断の一覧用）
             players = players.Snapshot().Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)).OrderBy(p => p.JoinedUtc).Select(p => new
             {
@@ -1153,25 +1167,36 @@ public static class AdminEndpoints
 
         // ダイヤグラムに薄く引く、時刻表（Timetable.json）の計画の線。大きいので、画面を開いたときに1回だけ読む。
         // 路線の駅だけ（y はゾーン）。時刻はロープレ時刻 "HH:mm:ss"（書かれていなければ null）
-        g.MapGet("/diagram/plan", (RailData rail, EventStops events) => Results.Ok(new
+        g.MapGet("/diagram/plan", (RailData rail, EventStops events, CentralControl central) => Results.Ok(new
         {
             // 折り返しの入換にかかる秒数（ゾーン → "から>へ" → 秒）
             shuntSeconds = rail.Stations.Values.Where(s => s.ShuntSeconds.Count > 0 && rail.Line.ZoneOfStation(s.Id) >= 0)
                 .ToDictionary(s => rail.Line.ZoneOfStation(s.Id).ToString(), s => s.ShuntSeconds),
-            trains = rail.Dia.Values.Where(t => !rail.IsIdleTrial(t)).Select(t => new // 走らない試運転は引かない
+            trains = rail.Dia.Values.Where(t => !rail.IsIdleTrial(t)).Select(t => (t, cut: PlanCut(rail, central, t))).Select(x => new // 走らない試運転は引かない
             {
-                train = t.Number,
-                type = t.Type,
-                next = t.Next?.Number,
+                train = x.t.Number,
+                type = x.t.Type,
+                next = x.cut.To == null ? x.t.Next?.Number : null,
                 // 終点で折り返して次の列車になる（運行のつなぎ）。time はその発車・入換の時刻、how は「発」か「入換」
                 // via は、入換で折り返すときに入る引上線などの段（TrackRoutes.json の shuntOut。着いた番線からの最初のもの。"5" や "Y"）
                 // 路線の中の駅で折り返すときだけ（三郷より先など、路線の外で折り返す運行はつながない）
                 // 後運用を差し替えていれば、差し替えたもの
-                turn = rail.Turns.TurnOf(t) is { Kind: "折返", Number: { } tn } tt && TurnsOnLine(rail, t, tn) ? new { number = tn, time = tt.Time, how = tt.How, via = tt.How == "入換" ? ShuntRow(rail, t) : null } : null,
+                // 途中折返し: 打ち切った駅で、折り返して走る列車へつなぐ。打ち切っただけなら、つながない
+                turn = x.cut.Mid is { } mid ? new { number = mid.Next, time = rail.DiaOf(mid.Next)?.Stops.FirstOrDefault(s => s.StationId == mid.Station) is { } ms ? ms.Dep ?? ms.Arr : null, how = (string?)"発", via = (string?)null }
+                    : x.cut.To != null ? null
+                    : rail.Turns.TurnOf(x.t) is { Kind: "折返", Number: { } tn } tt && TurnsOnLine(rail, x.t, tn) ? new { number = tn, time = tt.Time, how = tt.How, via = tt.How == "入換" ? ShuntRow(rail, x.t) : null } : null,
                 // 催物用臨停設定で臨時停車になる駅は、着＝通過時刻 − 停車時間（止まる線にする）
-                stops = t.Stops.Select((s, i) => (s, ev: events.Times(t, i)))
-                    .Where(x => x.s.StationId != null && rail.Line.ZoneOfStation(x.s.StationId) >= 0 && (x.s.Arr != null || x.s.Dep != null))
-                    .Select(x => new { y = rail.Line.ZoneOfStation(x.s.StationId!), arr = x.ev?.Arr ?? x.s.Arr, dep = x.s.Dep, track = x.s.Track }).ToList()
+                // 打ち切り・途中折返しで走らない区間は引かない（打ち切った駅まで・折り返して走り始める駅から）
+                stops = x.t.Stops.Select((s, i) => (s, i, ev: events.Times(x.t, i)))
+                    .Where(y => y.i >= x.cut.From && (x.cut.To == null || y.i <= x.cut.To))
+                    .Where(y => y.s.StationId != null && rail.Line.ZoneOfStation(y.s.StationId) >= 0 && (y.s.Arr != null || y.s.Dep != null || y.i == x.cut.To))
+                    .Select(y => new
+                    {
+                        y = rail.Line.ZoneOfStation(y.s.StationId!),
+                        arr = y.i == x.cut.From && x.cut.From > 0 ? null : y.ev?.Arr ?? y.s.Arr ?? (y.i == x.cut.To ? y.s.Dep : null),
+                        dep = y.i == x.cut.To ? null : y.s.Dep,
+                        track = y.i == x.cut.To && x.cut.Mid is { } m1 ? m1.Track : y.i == x.cut.From && x.cut.Into is { } m2 ? m2.Track : y.s.Track
+                    }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
         }));
     }
