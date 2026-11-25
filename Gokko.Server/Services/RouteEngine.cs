@@ -1035,6 +1035,16 @@ public sealed partial class RouteEngine
     private void RouteLog(DateTime now, TrainRun run, StationRun st, string kind, List<RouteDef> path) =>
         RouteLogLine(now, $"{run.Train} {st.St.Name} {kind} {string.Join("→", Enumerable.Reverse(path).Select(r => r.Name))}");
 
+    /// <summary>
+    /// 入換（始発の入換・終着の引上げ）を待っている理由が変わったら、進路の記録に残す。入換は駅の着発と違って、待ちが長くなっても画面にしか出ないため。
+    /// 同じ理由が続くあいだは書かない。
+    /// </summary>
+    private void ShuntWaitLog(DateTime now, TrainRun run, StationRun st, string kind, string before, string wait)
+    {
+        if (wait == before) return;
+        RouteLogLine(now, $"{run.Train} {st.St.Name} {kind}待ち {wait}");
+    }
+
     private void RouteLogLine(DateTime now, string text)
     {
         var line = $"{_clock.TextAt(now)} {text}"; // 画面の記録はロープレ時刻（ファイルには実際の日時も書く）
@@ -2480,9 +2490,14 @@ public sealed partial class RouteEngine
                     : PanelControlled(run, st) ? PanelWait
                     : (_central.Hold(run.Train, st.St.Id) & HoldKind.Depart) != 0 ? "出発抑止（集中扱い）"
                     : SplitOrderHold(run, st) ?? Conflict(run, st, outPath, occupied, departure: true);
-                if (outWait != null) (st.ShuntOut, st.ShuntOutWait) = (GroupState.Waiting, outWait);
+                if (outWait != null)
+                {
+                    ShuntWaitLog(now, run, st, "引上げ", st.ShuntOutWait, outWait);
+                    (st.ShuntOut, st.ShuntOutWait) = (GroupState.Waiting, outWait);
+                }
                 else
                 {
+                    RouteLog(now, run, st, st.ForceShuntOut ? "引上げ（駅扱い）" : "引上げ", outPath);
                     foreach (var outRoute in Enumerable.Reverse(outPath))
                         run.Requests.Add(new RouteReq { Def = outRoute, Id = ++_seq, Station = st, Departure = true, RequestedUtc = now });
                     (st.ShuntOut, st.ShuntOutWait, st.ForceShuntOut) = (GroupState.Requested, "", false);
@@ -2527,6 +2542,7 @@ public sealed partial class RouteEngine
             var path = choice?.Routes;
             if (path == null || path.Count == 0)
             {
+                ShuntWaitLog(now, run, st, "入換", st.ShuntWait, "入換に使う線路がふさがっています");
                 (st.Shunt, st.ShuntWait) = (GroupState.Waiting, "入換に使う線路がふさがっています");
                 return;
             }
@@ -2538,10 +2554,12 @@ public sealed partial class RouteEngine
                 : TimeWait(run, st, now) ?? DiaShuntHold(run, st) ?? DiaShuntTrackHold(run, st, to) ?? Conflict(run, st, path, occupied, departure: false);
             if (wait != null)
             {
+                ShuntWaitLog(now, run, st, "入換", st.ShuntWait, wait);
                 (st.Shunt, st.ShuntWait) = (GroupState.Waiting, wait);
                 return;
             }
 
+            RouteLog(now, run, st, st.ForceShunt ? "入換（駅扱い）" : "入換", path);
             foreach (var r in Enumerable.Reverse(path))
                 run.Requests.Add(new RouteReq { Def = r, Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
             (st.Shunt, st.ShuntWait) = (GroupState.Requested, "");
