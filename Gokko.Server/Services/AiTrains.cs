@@ -115,6 +115,10 @@ public sealed class AiTrains : BackgroundService
     private TimeSpan GameAt(DateTime utc, TimeSpan now) =>
         now + TimeSpan.FromTicks((long)((utc - DateTime.UtcNow).Ticks * (_clock.Speed > 0 ? _clock.Speed : 1)));
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
+    private const long StatusLogMaxBytesPerDay = 20L * 1024 * 1024; // 状態の記録の1日の上限
+    private string _statusLogDay = "";
+    private long _statusLogBytes;
+    private bool _statusLogFull;
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
         IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ProtectionRadio protectionRadio,
@@ -423,6 +427,7 @@ public sealed class AiTrains : BackgroundService
                 _dispatcherProtection.CopyActiveRangesTo(activeProtection);
 
                 List<string> departures = new();
+                List<string>? statusLines = null;
                 var couplePartners = _routes.CouplePartners();
                 var coupled = _routes.TakeCoupled();
                 var splits = _routes.TakeSplits();
@@ -484,6 +489,12 @@ public sealed class AiTrains : BackgroundService
                             if (_errorLogged.Add(t.Id)) _logger?.LogError(stepError, "にぎやかしの列車 {Train} でエラー", t.Number);
                             continue;
                         }
+                        if (t.Status != t.LoggedStatus)
+                        {
+                            t.LoggedStatus = t.Status;
+                            var where = _rail.Line.DescribeZones(t.Info.Zones) ?? string.Join(" ", t.Info.TrackCircuits);
+                            (statusLines ??= new()).Add($"{t.Number} {t.Status}（{where}）");
+                        }
                         if (t.WantDeparture) { departures.Add(t.Id); t.WantDeparture = false; }
                         if (!protectedStop && t.FinishedUtc is { } f && now - f > TerminalLinger)
                         {
@@ -492,6 +503,8 @@ public sealed class AiTrains : BackgroundService
                         }
                     }
                 }
+
+                if (statusLines != null) StatusLog(now, statusLines);
 
                 // 切り離した車両を出す（Add はほかの参加者の在線を見るので、自分のロックの外で）
                 lock (_lock)
@@ -526,6 +539,46 @@ public sealed class AiTrains : BackgroundService
             {
                 _logger?.LogError(ex, "にぎやかしの列車でエラー");
             }
+        }
+    }
+
+    /// <summary>
+    /// 自動運転の列車の状態（画面の「状態」と同じ文）が変わったら、日ごとのファイル logs/ai-yyyyMMdd.log に1行ずつ書く。
+    /// 在線の記録では回路しかわからず、止まっている理由（進路待ち・信号の手前・連結待ちなど）があとから追えないため。
+    /// 1行に実際の日時・ロープレ時刻・列番・状態・いる場所を書く。1日のファイルが上限を超えたら、その日はもう書かない。
+    /// </summary>
+    private void StatusLog(DateTime now, List<string> lines)
+    {
+        try
+        {
+            var local = now.ToLocalTime();
+            var day = local.ToString("yyyyMMdd");
+            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
+            var path = Path.Combine(dir, $"ai-{day}.log");
+            if (day != _statusLogDay)
+            {
+                Directory.CreateDirectory(dir);
+                _statusLogDay = day;
+                _statusLogBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
+                _statusLogFull = false;
+            }
+            if (_statusLogFull) return;
+
+            var game = _clock.TextAt(now);
+            var sb = new StringBuilder();
+            foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
+            if (_statusLogBytes > StatusLogMaxBytesPerDay)
+            {
+                _statusLogFull = true;
+                sb.Clear().Append($"{local:yyyy-MM-dd HH:mm:ss} {game} この日の状態の記録が {StatusLogMaxBytesPerDay / 1024 / 1024}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
+            }
+            var text = sb.ToString();
+            File.AppendAllText(path, text);
+            _statusLogBytes += Encoding.UTF8.GetByteCount(text);
+        }
+        catch
+        {
+            // 書けなくても列車は動かし続ける
         }
     }
 
@@ -2050,6 +2103,7 @@ public sealed class AiTrains : BackgroundService
         public string? PlanDetail { get; set; }
         public DateTime? FinishedUtc { get; set; }
         public string Status { get; set; } = "";
+        public string LoggedStatus { get; set; } = ""; // 状態の記録（logs/ai-*.log）に最後に書いた状態
         public bool Auto { get; init; }
         public DateTime? ExitUtc { get; set; }    // 赤山町から線区の外へ出て消す時刻
         public bool Shunting { get; set; }        // 入換（引上げ）中
