@@ -1169,6 +1169,12 @@ public sealed partial class RouteEngine
             return LeverSignals().Where(x => !_levers.TryGetValue(x.Section, out var lv) || lv.Dir != x.Dir).Select(x => x.Name).ToList();
     }
 
+    /// <summary>走っている列車の遅れ（秒）。走っていない・まだ分からなければ null。</summary>
+    public double? DelayOf(string train)
+    {
+        lock (_lock) return RunByTrain(train)?.Delay;
+    }
+
     /// <summary>列車の向き（走っていればその列車、いなければ列番から）。分からなければ null。</summary>
     public Dir? DirOfTrain(string train)
     {

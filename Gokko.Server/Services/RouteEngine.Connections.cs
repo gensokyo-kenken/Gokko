@@ -19,6 +19,17 @@ public sealed partial class RouteEngine
         {
             if (_connections.IsCut(c)) continue;
             if (ConnectionFeeder(c) is not { } feeder || FeederArrived(feeder, c.StationId) != false) continue;
+            // 相手がこの列車のいる番線に着く（大道寺の直接折返で 3番線を使い、3番線に着く相手を待つ）: この列車が出るまで相手は着けない
+            if (feeder.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is { Track: { } ft } && ft == st.Track)
+            {
+                if (!_crew.DispatcherOnDuty())
+                {
+                    _connections.SetCut(c.Key, true);
+                    _log.Note($"接続: {c.StationName} {c.Waiter} の {c.Feeder} 待ちを自動で切りました（司令員不在。{c.Feeder} は {ft}番線に着くので、{run.Train} が出るまで着けないため）");
+                    continue;
+                }
+                return $"接続待ち（{feeder.Train} の{c.StationName}着を待つ。{feeder.Train} はこの列車のいる {ft}番線に着くので着けません。接続を切るか、{feeder.Train} の番線を変えてください）";
+            }
             if (FeederBlockedBy(run, st, feeder) is { } blocker)
             {
                 if (!_crew.DispatcherOnDuty())
