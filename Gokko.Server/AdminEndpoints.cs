@@ -782,6 +782,8 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示と、そこからできる操作（管理画面と、ダイヤグラムの設定画面で共通）。</summary>
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
+        g.MapEventStops(); // 催物用臨停設定（EventStopEndpoints.cs）
+
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
         // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
         g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List() }));
@@ -1022,7 +1024,7 @@ public static class AdminEndpoints
     {
         // 開いている画面の数だけ（/api/admin・/api/dia・/api/diaview とも同じ答え）1秒に1回読まれ、作るのに約20ms かかる（11/22 のデバッグ運転）。
         // 画面は1秒ごとに読むので、1秒は同じ答えを使い回す（操作した直後は ResponseCache.Clear で作り直す）
-        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache) => cache.Get("diagram", TimeSpan.FromSeconds(1), () => new
+        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache, EventStops events) => cache.Get("diagram", TimeSpan.FromSeconds(1), () => new
         {
             now = DateTimeOffset.UtcNow,
             stations = rail.Line.StationIds.Select(id => new
@@ -1052,7 +1054,7 @@ public static class AdminEndpoints
             }),
             appear = engine.View(RouteEngine.ViewAppear),
             diaMode = central.DiaMode,
-            turnVersion = rail.Turns.Version, // 後運用を差し替えたら増える（計画の線を読み直す合図）
+            turnVersion = rail.Turns.Version + events.Version, // 後運用を差し替えた・催物用臨停設定を変えたら増える（計画の線を読み直す合図）
             // つながっている参加者（強制切断の一覧用）
             players = players.Snapshot().Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)).OrderBy(p => p.JoinedUtc).Select(p => new
             {
@@ -1073,7 +1075,7 @@ public static class AdminEndpoints
 
         // ダイヤグラムに薄く引く、時刻表（Timetable.json）の計画の線。大きいので、画面を開いたときに1回だけ読む。
         // 路線の駅だけ（y はゾーン）。時刻はロープレ時刻 "HH:mm:ss"（書かれていなければ null）
-        g.MapGet("/diagram/plan", (RailData rail) => Results.Ok(new
+        g.MapGet("/diagram/plan", (RailData rail, EventStops events) => Results.Ok(new
         {
             // 折り返しの入換にかかる秒数（ゾーン → "から>へ" → 秒）
             shuntSeconds = rail.Stations.Values.Where(s => s.ShuntSeconds.Count > 0 && rail.Line.ZoneOfStation(s.Id) >= 0)
@@ -1088,8 +1090,10 @@ public static class AdminEndpoints
                 // 路線の中の駅で折り返すときだけ（三郷より先など、路線の外で折り返す運行はつながない）
                 // 後運用を差し替えていれば、差し替えたもの
                 turn = rail.Turns.TurnOf(t) is { Kind: "折返", Number: { } tn } tt && TurnsOnLine(rail, t, tn) ? new { number = tn, time = tt.Time, how = tt.How, via = tt.How == "入換" ? ShuntRow(rail, t) : null } : null,
-                stops = t.Stops.Where(s => s.StationId != null && rail.Line.ZoneOfStation(s.StationId) >= 0 && (s.Arr != null || s.Dep != null))
-                    .Select(s => new { y = rail.Line.ZoneOfStation(s.StationId!), arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+                // 催物用臨停設定で臨時停車になる駅は、着＝通過時刻 − 停車時間（止まる線にする）
+                stops = t.Stops.Select((s, i) => (s, ev: events.Times(t, i)))
+                    .Where(x => x.s.StationId != null && rail.Line.ZoneOfStation(x.s.StationId) >= 0 && (x.s.Arr != null || x.s.Dep != null))
+                    .Select(x => new { y = rail.Line.ZoneOfStation(x.s.StationId!), arr = x.ev?.Arr ?? x.s.Arr, dep = x.s.Dep, track = x.s.Track }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
         }));
     }

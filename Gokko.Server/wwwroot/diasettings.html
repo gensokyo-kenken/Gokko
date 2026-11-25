@@ -77,6 +77,19 @@
     <h2>列車別設定</h2>
     <div id="trains"></div>
   </section>
+  <section class="wide" id="eventStopSection">
+    <h2>催物用臨停設定</h2>
+    <div class="row">
+      <label>駅 <select id="esStation"></select></label>
+      <label>種別 <select id="esKind"></select></label>
+      <select id="esDir" title="臨時停車させる向き"><option value="上下">上下</option><option value="上り">上り</option><option value="下り">下り</option></select>
+      <label>開始 <input id="esFrom" placeholder="11:00" size="6"></label>
+      <label>終了 <input id="esTo" placeholder="未指定" size="6" title="空なら終わりなし"></label>
+      <button id="esAdd" class="primary">追加</button>
+    </div>
+    <div id="esList"></div>
+    <div id="esHelp" class="muted" style="margin-top:6px"></div>
+  </section>
   <section class="wide" id="connSection">
     <h2>接続待ち</h2>
     <div id="connections"></div>
@@ -325,6 +338,69 @@
   refresh();
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
   setInterval(poll, 1000);
+})();
+</script>
+<script>
+// ---- 催物用臨停設定: 駅・種別・向き・時間帯で、まとめて臨時停車にする（/api/dia/event-stops） ----
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const crewToken = GokkoCrew.token();
+  async function api(method, path, body) {
+    const res = await fetch("/api/dia" + path, {
+      method,
+      headers: { "X-Dia-Key": $("key").value, ...(crewToken ? { "X-Crew-Token": crewToken } : {}), "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store"
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((json && (json.message || json.detail)) || ("HTTP " + res.status));
+    return json;
+  }
+
+  let filled = false, lastHtml = "";
+  async function load() {
+    if (!$("key").value && !crewToken) return;
+    let d;
+    try { d = await api("GET", "/event-stops"); } catch (e) { return; } // 読めないときは、上の接続の表示に任せる
+    if (!filled) {
+      $("esStation").innerHTML = d.stations.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+      $("esKind").innerHTML = d.kinds.map((k, i) => `<option value="${esc(k.kind)}">${esc(k.label)}${i < d.kinds.length - 1 ? "〜準急" : ""}</option>`).join("");
+      $("esHelp").textContent = `選んだ種別と、それより下の種別（準急まで）が、その駅を通る時刻が開始〜終了の間なら臨時停車します（終了が空なら終わりなし）。` +
+        `普通はもともと止まり、回送・試運転は止まりません。停車時間は${d.dwellSeconds}秒（発車＝通過時刻）。自動運転の列車が止まり、進路・運転順序・ダイヤグラム・列車位置案内・タブレットのスタフも臨時停車として扱います。` +
+        `列車別設定の臨時通過・打ち切りがあれば、そちらが先です。サーバーを再起動すると消えます。`;
+      filled = true;
+    }
+    const html = d.rules.length === 0
+      ? `<div class="muted">設定はありません</div>`
+      : `<table><tr class="muted"><td>駅</td><td>種別</td><td>向き</td><td>時間帯</td><td></td></tr>${d.rules.map((r) => `
+          <tr><td><b>${esc(r.stationName)}</b></td>
+            <td>${esc(r.kindLabel)}${r.kind === "準急" ? "" : "〜準急"}</td>
+            <td>${esc(r.dir)}</td>
+            <td>${esc(r.from)}〜${r.to ? esc(r.to) : `<span class="muted">（終わりなし）</span>`}</td>
+            <td><button data-es-remove="${r.id}" data-es-label="${esc(`${r.stationName} ${r.kindLabel} ${r.dir} ${r.from}〜${r.to || ""}`)}">削除</button></td></tr>`).join("")}</table>`;
+    if (html !== lastHtml) { $("esList").innerHTML = html; lastHtml = html; }
+  }
+
+  async function act(path, body) {
+    try { await api("POST", path, body); $("error").textContent = ""; }
+    catch (e) { $("error").textContent = e.message; }
+    await load();
+  }
+
+  $("esAdd").onclick = async () => {
+    await act("/event-stops/add", { station: $("esStation").value, kind: $("esKind").value, dir: $("esDir").value, from: $("esFrom").value, to: $("esTo").value });
+  };
+  $("esList").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-es-remove]");
+    if (!b) return;
+    if (!(await GokkoDia.ask(`催物用臨停設定「${b.dataset.esLabel}」を削除しますか？`, "まだその駅に着いていない列車は、時刻表どおりに戻ります。"))) return;
+    await act("/event-stops/remove", { id: Number(b.dataset.esRemove) });
+  });
+  $("saveKey").addEventListener("click", () => load());
+  load();
+  setInterval(load, 5000); // ほかの司令員が変えた設定も出す
 })();
 </script>
 </body>

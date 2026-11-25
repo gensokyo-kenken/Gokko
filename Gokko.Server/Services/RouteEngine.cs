@@ -47,7 +47,11 @@ public sealed partial class RouteEngine
     private readonly Dictionary<string, TrainRun> _runs = new();
     private long _seq;
 
-    public RouteEngine(RailData data, RunTimeModel model, CentralControl central, PlayerRegistry players, IncidentManager log, GameClock clock, ConnectionTable connections)
+    /// <summary>催物用臨停設定（司令用管理画面）。自動運転の列車・スタフ・ダイヤグラムも、これを見る。</summary>
+    public EventStops EventStops { get; }
+
+    public RouteEngine(RailData data, RunTimeModel model, CentralControl central, PlayerRegistry players, IncidentManager log, GameClock clock, ConnectionTable connections,
+        EventStops eventStops)
     {
         _connections = connections;
         _clock = clock;
@@ -58,6 +62,8 @@ public sealed partial class RouteEngine
         _log = log;
         _approach = new ApproachTrigger(data);
         central.Changed += _ => Interlocked.Increment(ref _centralVersion); // 運転順序を作り直す目安（RouteEngine.OrderPlan.cs）
+        EventStops = eventStops;
+        eventStops.Changed += _ => Interlocked.Increment(ref _centralVersion);
         central.AutoRouteRequests = () =>
         {
             lock (_lock)
@@ -122,12 +128,17 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>ダイヤのその駅の時刻（運転日の秒）。depart なら発（通過）時刻、なければ着。arrive なら着時刻、なければ発。</summary>
-    private static double? DiaSec(TrainRun run, string stationId, bool depart)
+    private double? DiaSec(TrainRun run, string stationId, bool depart)
     {
         var stop = run.Dia?.Stops.FirstOrDefault(x => x.StationId == stationId);
         if (stop == null) return null;
-        return depart ? ParseDiaTime(stop.Dep) ?? ParseDiaTime(stop.Arr) : ParseDiaTime(stop.Arr) ?? ParseDiaTime(stop.Dep);
+        var arr = StopArr(run.Dia!, stop); // 催物用臨停設定の臨時停車は、通過時刻の少し前に着く
+        return depart ? ParseDiaTime(stop.Dep) ?? ParseDiaTime(arr) : ParseDiaTime(arr) ?? ParseDiaTime(stop.Dep);
     }
+
+    /// <summary>ダイヤの着時刻。催物用臨停設定で臨時停車になる駅（時刻表では通過）は、通過時刻 − 停車時間。</summary>
+    private string? StopArr(DiaTrain dia, DiaStop stop) =>
+        stop.Arr ?? (stop.Stop == "通" && EventStops.Times(dia, dia.Stops.IndexOf(stop)) is { Arr: { } a } ? a : null);
 
     /// <summary>
     /// 入換で始まる列車の入換時刻（列番 → 運転日の秒）。前の列車のスタフの「折返|881C 08:42入換」から。
@@ -1165,7 +1176,7 @@ public sealed partial class RouteEngine
     /// ・種別: 接頭辞が「回」（定期回送）「試」（試運転）なら回送。それ以外（「臨」を含む）は、数字のあとの文字の最後（社局 T・S の後ろ）
     ///   A＝特急、B＝急行、C＝準急、D＝区急、K＝快急、なし（社局 T・S だけも）＝普通
     /// </summary>
-    private static (string Type, Dir Dir)? TrainInfo(string train)
+    internal static (string Type, Dir Dir)? TrainInfo(string train)
     {
         var body = Regex.Replace(train.Trim(), @"#\d+$", "");
         body = Regex.Replace(body, "[XYZ]$", "", RegexOptions.IgnoreCase);
@@ -1476,7 +1487,14 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
-    /// 列車別設定の臨時停車・臨時通過・打ち切り（サーバーの扱いだけ。ゲームの停車駅は変わらない）。
+    /// 駅の停車の変更: 列車別設定の臨時停車・臨時通過・打ち切り（"停車"・"通過"・"打ち切り"）。
+    /// 列車別設定がなければ、催物用臨停設定で臨時停車になる駅は "停車"。どちらもなければ null。
+    /// </summary>
+    private string? StopChange(string train, DiaTrain? dia, string stationId) =>
+        _central.StopOverride(train, stationId) ?? (dia != null && EventStops.Applies(dia, stationId) ? "停車" : null);
+
+    /// <summary>
+    /// 列車別設定の臨時停車・臨時通過・打ち切り（サーバーの扱いだけ。ゲームの停車駅は変わらない）。催物用臨停設定の臨時停車も入る。
     /// 変わったら、まだ列車が入っていなければ、その駅の進路を取り消して作り直す。入っていれば変えない。
     /// </summary>
     private void ApplyStopOverride(TrainRun run, StationRun st, DateTime now)
@@ -1485,9 +1503,12 @@ public sealed partial class RouteEngine
         // 運転士の「打ち切り・入換」は、列車別設定の打ち切りと同じに扱う（列車別設定があれば、そちらが先）
         var driverEnd = ov == null && DriverEndChosen(run, st);
         if (driverEnd) ov = "打ち切り";
+        // 催物用臨停設定の臨時停車は、列車別設定・運転士の打ち切りがないときだけ
+        var byEvent = ov == null && run.Dia != null && EventStops.Applies(run.Dia, st.St.Id);
+        if (byEvent) ov = "停車";
         try
         {
-            ApplyStopOverrideCore(run, st, ov, driverEnd, now);
+            ApplyStopOverrideCore(run, st, ov, driverEnd, now, byEvent);
         }
         finally
         {
@@ -1513,7 +1534,7 @@ public sealed partial class RouteEngine
             ? new List<int>()
             : st.Options.Where(t => st.St.Routes[run.Dir].ShuntOuts.Any(o => o.From == t) && (!st.IsStart || st.Track == t)).ToList();
 
-    private void ApplyStopOverrideCore(TrainRun run, StationRun st, string? ov, bool driverEnd, DateTime now)
+    private void ApplyStopOverrideCore(TrainRun run, StationRun st, string? ov, bool driverEnd, DateTime now, bool byEvent = false)
     {
         var stop = ov switch { "停車" or "打ち切り" => "停車", "通過" => "通過", _ => st.BaseStopType };
         if (st.IsStart && stop == "通過") stop = "停車";
@@ -1540,7 +1561,7 @@ public sealed partial class RouteEngine
             st.DepartPath.Clear();
         }
         else ResolvePaths(run, st);
-        _log.Note($"{(driverEnd || st.DriverEnd ? "運転士の打ち切り・入換" : "列車別設定")}: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
+        _log.Note($"{(driverEnd || st.DriverEnd ? "運転士の打ち切り・入換" : byEvent ? "催物用臨停設定" : "列車別設定")}: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
     }
 
     private void UpdateStations(TrainRun run, DateTime now)
@@ -3944,13 +3965,13 @@ public sealed partial class RouteEngine
                 for (var i = 0; i < dia.Stops.Count; i++)
                 {
                     var s = dia.Stops[i];
-                    var change = s.StationId is { } sid ? _central.StopOverride(train, sid) : null;
+                    var change = s.StationId is { } sid ? StopChange(train, dia, sid) : null;
                     var end = change == "打ち切り";
                     var passengerStop = change == "停車" || (change != "通過" && s.Stop is not ("通" or "運停"));
                     if ((end || passengerStop) && !(s.StationId?.EndsWith("S") == true || s.Name.Contains("信号場") || s.Name is "江原信" or "珠川信"))
                     {
                         dest = s.Name;
-                        var scheduled = s.Arr ?? s.Dep; // 着時刻のない駅（始発・発時刻だけの駅）は発時刻
+                        var scheduled = StopArr(dia, s) ?? s.Dep; // 着時刻のない駅（始発・発時刻だけの駅）は発時刻。催物用臨停設定の臨時停車は、通過時刻 − 停車時間
                         var arrived = s.StationId != null && run.ActualArr.ContainsKey(s.StationId);
                         var passed = i <= lastPassed;
                         // 到着見込み: 遅れがあれば定刻に足す。なければ、次の駅だけ走行時間から見込む
@@ -3973,7 +3994,8 @@ public sealed partial class RouteEngine
         }
     }
 
-    private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds);
+    /// <summary>発車案内の1本。EventDia があれば、時刻表では通過の駅（その時刻表の EventIndex 番目）: 催物用臨停設定で臨時停車になるときだけ出す。</summary>
+    private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds, DiaTrain? EventDia = null, int EventIndex = -1);
     private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
 
     private static readonly string[] PassengerKindOrder = ["特急", "快急", "急行", "区急", "準急", "普通"];
@@ -4002,6 +4024,12 @@ public sealed partial class RouteEngine
             {
                 // 最後の停車駅は終着なので出さない。ただし発時刻があり、行き先がその先（路線の外）なら、そこからも発車する
                 if (stop == dest && (stop.Dep == null || dia.Dest.Length == 0 || stop.Name == dia.Dest)) break;
+                // 通過の駅は、催物用臨停設定で臨時停車になりうる種別だけ（出すかは、案内のときに設定を見て決める。発は通過時刻）
+                if (stop.Stop == "通" && stop.StationId != null && EventStops.KindOrder.Contains(dia.Type) && (stop.Dep ?? stop.Arr) is { } passAt && ParseDiaTime(passAt) is { } passSec)
+                {
+                    entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dia.Dest.Length > 0 ? dia.Dest : dest.Name, passAt, stop.Track, info.Dir, passSec, dia, dia.Stops.IndexOf(stop))));
+                    continue;
+                }
                 if (stop.Stop != "停" || stop.StationId == null || stop.Dep == null || ParseDiaTime(stop.Dep) is not { } sec) continue;
                 entries.Add((stop.StationId, new PassengerDeparture(dia.Number, dia.Type, dia.Dest.Length > 0 ? dia.Dest : dest.Name, stop.Dep, stop.Track, info.Dir, sec)));
             }
@@ -4024,7 +4052,7 @@ public sealed partial class RouteEngine
             var zone = _data.Line.ZoneOfStation(id);
             var running = _runs.Values.Where(r => r.HasPosition && r.Dia != null).ToLookup(r => r.Dia!.Number);
             var candidates = new List<PassengerDeparture>();
-            foreach (var dep in _departuresByStation[id])
+            foreach (var dep in _departuresByStation[id].Where(d => d.EventDia == null || EventStops.Applies(d.EventDia, d.EventIndex)))
             {
                 var runs = running[dep.Train];
                 if (!runs.Any())
@@ -4068,7 +4096,7 @@ public sealed partial class RouteEngine
                     {
                         train = d.Train, kind = d.Kind, dest = d.Dest, time = d.Time, track = d.Track,
                         // その種別がこの駅に普段は止まらない（浜園の特急など）: 臨時停車
-                        specialStop = PassengerKindOrder.Contains(d.Kind) && !PassengerKinds()[id].Contains(d.Kind),
+                        specialStop = d.EventDia != null || PassengerKindOrder.Contains(d.Kind) && !PassengerKinds()[id].Contains(d.Kind),
                         advisory = advisories.Contains(d.Train)
                     }).ToArray()
                 }).ToArray()
@@ -4259,13 +4287,15 @@ public sealed partial class RouteEngine
                 var st = run != null && s.StationId != null ? run.Stations.FirstOrDefault(x => x.St.Id == s.StationId && !x.Done) : null;
                 var passed = i <= lastPassed;
                 if (!passed && nextIndex < 0 && run is { HasPosition: true } && s.StationId != null && _data.Line.ZoneOfStation(s.StationId) >= 0) nextIndex = i;
+                // 臨時停車（催物用臨停設定・列車別設定）: 時刻表で通過の駅を「臨停」にし、通過時刻を発車時刻として書く（通過時刻がなければ空）
+                var special = s.Stop == "通" && s.StationId != null && StopChange(run?.Train ?? dia.Number, dia, s.StationId) == "停車";
                 return new
                 {
                     name = s.Name,
                     control,
-                    stop = s.Stop,
-                    arr = s.Arr,
-                    dep = s.Dep,
+                    stop = special ? "臨停" : s.Stop,
+                    arr = special ? null : s.Arr,
+                    dep = special ? s.Dep ?? s.Arr : s.Dep,
                     track = s.Track ?? (s.StationId != null && dia.Stations.TryGetValue(s.StationId, out var ds) ? ds.Track : null),
                     note = s.Note ?? "",
                     actArr = s.StationId != null && run != null && run.ActualArr.TryGetValue(s.StationId, out var aa) ? FormatDiaTime(aa) : null,
@@ -4464,8 +4494,8 @@ public sealed partial class RouteEngine
             var dia = run?.Dia ?? _data.DiaOf(key);
             bool Control(string? id) => id != null && _data.Stations.TryGetValue(id, out var s) && s.RouteControl;
 
-            // 列車別設定の臨時停車・臨時通過・打ち切り（進路を扱う駅だけ）。stop は「臨停」「臨通」「打切」になる
-            string? Override(string? id) => id != null ? _central.StopOverride(key, id) : null;
+            // 列車別設定の臨時停車・臨時通過・打ち切りと、催物用臨停設定の臨時停車。stop は「臨停」「臨通」「打切」になる
+            string? Override(string? id) => id != null ? StopChange(key, dia, id) : null;
 
             if (dia != null && dia.Stops.Count > 0)
             {

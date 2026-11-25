@@ -92,11 +92,12 @@ public sealed partial class RouteEngine
     private static bool PlannedPasses(PlannedTrain p, string stationId) =>
         (p.OnlyAt == null || p.OnlyAt == stationId) && p.Dia.Stops.Any(s => s.StationId == stationId && s.Stop != "運停");
 
-    private static double? PlannedDiaSec(PlannedTrain p, string stationId, bool depart)
+    private double? PlannedDiaSec(PlannedTrain p, string stationId, bool depart)
     {
         var stop = p.Dia.Stops.FirstOrDefault(x => x.StationId == stationId);
         if (stop == null) return null;
-        return depart ? DaySec(stop.Dep) ?? DaySec(stop.Arr) : DaySec(stop.Arr) ?? DaySec(stop.Dep);
+        var arr = StopArr(p.Dia, stop); // 催物用臨停設定の臨時停車は、通過時刻の少し前に着く
+        return depart ? DaySec(stop.Dep) ?? DaySec(arr) : DaySec(arr) ?? DaySec(stop.Dep);
     }
 
     /// <summary>
