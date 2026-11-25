@@ -1678,8 +1678,8 @@ public sealed class AiTrains : BackgroundService
             {
                 var number = RailData.NormalizeTrain(dia.Number);
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
-                if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
+                if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
                 // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。

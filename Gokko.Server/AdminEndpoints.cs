@@ -791,8 +791,8 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示と、そこからできる操作（管理画面と、ダイヤグラムの設定画面で共通）。</summary>
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
-        g.MapEventStops(); // 催物用臨停設定（EventStopEndpoints.cs）
         TokuhatsuRinjiEndpoints.MapTokuhatsuRinji(g); // 特発臨（運転整理のために、その場で立てる臨時列車）
+        g.MapEventStops(); // 催物用臨停設定（EventStopEndpoints.cs）
 
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
         // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
