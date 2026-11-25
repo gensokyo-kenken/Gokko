@@ -41,6 +41,13 @@ public static class UntenkaEndpoints
                         uses.Add((s.StationId, (info.Dir == Dir.Down ? "下" : "上") + (s.Stop == "通" ? "通" : "停"), tr));
             }
             var byStation = uses.ToLookup(u => u.St);
+            // 駅ごとの所定停車の種別: その駅を通るその種別の列車のうち、半分以上が止まる種別（種別を選んだときに停車のチェックを入れる）
+            var stopTypes = rail.BaseDia.Values
+                .SelectMany(d => d.Stops.Skip(1).Take(d.Stops.Count - 2) // 始発・終点は数えない（検車区で終わる列車などで、ふだん止まらない駅が「停車」にならないように）
+                    .Where(s => s.StationId != null).Select(s => (St: s.StationId!, d.Type, Stop: s.Stop == "停")))
+                .GroupBy(x => (x.St, x.Type))
+                .Where(g => g.Count(x => x.Stop) * 2 >= g.Count())
+                .ToLookup(g => g.Key.St, g => g.Key.Type);
             // 駅は、路線の外（大路〜三郷の手前など、時刻表に載っている駅）も含めた並び
             var stations = temp.Stations.Select(st => new
             {
@@ -50,7 +57,8 @@ public static class UntenkaEndpoints
                 control = st.Control,
                 tracks = byStation[st.Id].Select(u => u.Track)
                     .Concat(rail.Stations.TryGetValue(st.Id, out var def) ? def.TrackCircuit.Keys : Enumerable.Empty<int>()).Distinct().Order().ToList(),
-                def = byStation[st.Id].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key)
+                def = byStation[st.Id].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key),
+                stopTypes = stopTypes[st.Id].ToList()
             }).ToList();
             var types = TempTrains.Types.Select(t => new
             {

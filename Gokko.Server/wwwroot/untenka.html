@@ -405,12 +405,32 @@
     return s.def[k] ?? null;
   }
 
+  // その種別が、その駅にふだん止まるか（所定の時刻表で半分以上が止まる）
+  const usualStop = (st, type) => !!(stById[st] && (stById[st].stopTypes || []).includes(type));
+
+  // 種別を選んだとき: 途中の駅の停車・通過を、その種別の所定停車にそろえ、時刻を入れ直す
+  function applyStopPattern(t) {
+    if (t.stops.length < 2) return;
+    const dir = dirOf(t);
+    t.stops.forEach((s, i) => {
+      if (i === 0 || i === t.stops.length - 1) return;
+      const stop = usualStop(s.st, t.type) ? "停" : "通";
+      if (stop === s.stop) return;
+      s.stop = stop;
+      if (stop === "通") s.arr = null;
+      const st = stById[s.st];
+      if (st && (s.track == null || !st.control)) s.track = st.control || stop === "停" ? defTrack(s.st, dir, stop) : null;
+    });
+    manual.delete(t);
+    autoFill(t);
+  }
+
   const field = (id, key, conv = (v) => v) => {
     $(id).onchange = $(id).oninput = () => {
       const t = cur.trains[curTrain];
       t[key] = conv($(id).value);
       dirty = true;
-      if (key === "type") { drawLabels(t); t.label = ""; }
+      if (key === "type") { drawLabels(t); t.label = ""; applyStopPattern(t); drawStops(t); }
       drawHint(t);
       drawTrains();
     };
@@ -437,7 +457,7 @@
     const dir = base.downIncreasing == null ? null : (inc === base.downIncreasing ? "下り" : "上り");
     t.stops = list.map((s, i) => {
       const o = old[s.id];
-      const stop = i === 0 || i === list.length - 1 ? "停" : o ? o.stop : "通";
+      const stop = i === 0 || i === list.length - 1 ? "停" : o ? o.stop : usualStop(s.id, t.type) ? "停" : "通";
       return o ? { ...o, stop } : { st: s.id, stop, arr: null, dep: null, track: s.control || stop === "停" ? defTrack(s.id, dir, stop) : null };
     });
     t.stops[0].dep = t.stops[0].dep || $("tDep").value.trim() || null;
