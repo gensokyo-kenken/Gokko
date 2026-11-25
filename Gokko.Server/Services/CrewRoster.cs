@@ -184,7 +184,7 @@ public sealed class CrewRoster
                 _lastDuty = f.LastDuties.Where(x => ids.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
                 _auto = f.AutoAssigned.Where(_assign.ContainsKey).ToHashSet();
                 _extras = f.Extras.Where(x => ids.Contains(x.User) && x.Duty.Length > 0).ToList();
-                _roleAttend = f.RoleAttendance.Where(x => RoleNames.Contains(x.Key))
+                _roleAttend = f.RoleAttendance.Where(x => AttendRoleNames.Contains(x.Key))
                     .ToDictionary(x => x.Key, x => x.Value.Where(a => _users.Any(u => u.Id == a.Key && u.Roles.Contains(x.Key))).ToDictionary(a => a.Key, a => a.Value));
                 _applications = f.Applications.Where(x => x.Key.Length > 0 && x.DiscordHash.Length > 0).ToList();
 
@@ -709,6 +709,7 @@ public sealed class CrewRoster
             while (reader.Read())
             {
                 var role = reader.GetString(0);
+                if (!AttendRoleNames.Contains(role)) continue; // 出勤しない役職（運転課課長代理など）は読まない
                 if (!_roleAttend.TryGetValue(role, out var people))
                     _roleAttend[role] = people = new Dictionary<string, RoleAttend>();
                 people[reader.GetString(1)] = new RoleAttend
@@ -1620,7 +1621,14 @@ public sealed class CrewRoster
             att.Remove(id);
             _log?.LogInformation("司令員 ID:{Id} を自動で退勤させました（{Minutes}分操作なし）", id, (int)DispatcherIdleLimit.TotalMinutes);
         }
-        Save();
+        // DB からも消す（再起動で出勤中に戻らないように）。_lock の中なので、ほかの更新と順番は入れ替わらない
+        ExecuteUpdate((connection, transaction) =>
+        {
+            foreach (var id in gone)
+                Execute(connection, transaction,
+                    "DELETE FROM role_attendance WHERE role = $role AND user_id = $id",
+                    ("$role", DispatcherRole), ("$id", id));
+        });
         if (DispatcherAutoLeft is { } h) ThreadPool.QueueUserWorkItem(_ => { foreach (var id in gone) h(id); });
     }
 
