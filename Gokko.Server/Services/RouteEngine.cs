@@ -2777,9 +2777,19 @@ public sealed partial class RouteEngine
         r.Dia?.TerminalId ?? r.Stations.FirstOrDefault(s => !s.Done)?.St.Id;
 
     /// <summary>第二場内と同じ所から同じ回路へ入る入換信号機の進路（大道寺 12L → 28L、11L → 27L）。</summary>
-    private RouteDef? ParallelShunt(RouteDef home) =>
-        _data.Routes.Values.FirstOrDefault(r => r.Interlock == home.Interlock && r.Name != home.Name && r.Kind.Contains("入換")
-                                                && r.From == home.From && r.To == home.To && r.Circuits.SequenceEqual(home.Circuits));
+    private RouteDef? ParallelShunt(RouteDef home) => ParallelShuntOf(_data, home);
+
+    internal static RouteDef? ParallelShuntOf(RailData data, RouteDef home) =>
+        data.Routes.Values.FirstOrDefault(r => r.Interlock == home.Interlock && r.Name != home.Name && r.Kind.Contains("入換")
+                                               && r.From == home.From && r.To == home.To && r.Circuits.SequenceEqual(home.Circuits));
+
+    /// <summary>
+    /// その駅・向き・番線で、増結車が待つ番線に列車が入って連結できるか（場内が2つ以上あり、最後の場内と同じ所へ入る入換信号機がある）。
+    /// 運転課の臨時列車の確認に使う
+    /// </summary>
+    internal static bool CanCoupleAt(RailData data, string stationId, Dir dir, int track) =>
+        data.Stations.TryGetValue(stationId, out var sd) && sd.RouteControl && sd.Routes[dir].Arrive.TryGetValue(track, out var path)
+        && path.Count >= 2 && ParallelShuntOf(data, path[^1]) != null;
 
     /// <summary>場内で取る進路。増結車が番線にいれば、最後の進路（第二場内）を除く（入換信号機はあとで開ける）。</summary>
     private List<RouteDef> CoupleArrivePath(TrainRun run, StationRun st)

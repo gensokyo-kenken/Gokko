@@ -70,7 +70,9 @@ public static class UntenkaEndpoints
                         through = sd.Routes[d].Through.Count > 0,
                         // 終点で入換するとき: 着いた番線（from）から入れる線（label）。その線から出る向きの入換で入れる番線は shunts
                         shuntOuts = sd.Routes[d].ShuntOuts.Select(o => new { from = o.From, label = o.Label }).Distinct().ToList(),
-                        shunts = sd.Routes[d].Shunts.Select(s => new { from = s.FromLabel, to = s.To }).Distinct().ToList()
+                        shunts = sd.Routes[d].Shunts.Select(s => new { from = s.FromLabel, to = s.To }).Distinct().ToList(),
+                        // この向きの列車が、増結車のいる番線へ入って連結できる番線
+                        couple = sd.Routes[d].Arrive.Keys.Where(k => RouteEngine.CanCoupleAt(rail, st.Id, d, k)).Order().ToList()
                     })
                     : null
             }).ToList();
@@ -113,7 +115,7 @@ public static class UntenkaEndpoints
                 shunt = t.Turn is { Kind: "折返", How: "入換" } st ? new { time = st.Time, via = st.Via ?? DefaultVia(rail, t) } : null,
                 // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
                 stops = t.Stops.Where(s => temp.ZoneOf(s.StationId) != null && (s.Arr != null || s.Dep != null))
-                    .Select(s => new { y = temp.ZoneOf(s.StationId)!.Value, stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+                    .Select(s => new { y = temp.ZoneOf(s.StationId)!.Value, st = s.StationId, stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
         }));
 

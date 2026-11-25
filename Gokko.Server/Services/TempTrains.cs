@@ -79,7 +79,7 @@ public sealed class TempTrains
         /// 「種別変更」は向きを変えずに、着いた番線から列番・種別を変えて TurnNext として続けて走る（時刻表の途中駅で列番が変わる列車と同じ）。
         /// </summary>
         public string TurnHow { get; set; } = "";
-        /// <summary>後運用の列番（同じグループの列車）。</summary>
+        /// <summary>後運用の列番（同じグループの列車。増結車の連結する相手は所定の列車でもよい）。</summary>
         public string TurnNext { get; set; } = "";
         /// <summary>入換の時刻（入換のときだけ。空なら後運用の発車の2分前）。</summary>
         public string? TurnTime { get; set; }
@@ -448,6 +448,19 @@ public sealed class TempTrains
         return trains.OrderBy(t => t.Unyo, Gokko.Common.Unyo.Comparer).ThenBy(t => t.Stops.Select(s => DaySec(s.Dep ?? s.Arr)).FirstOrDefault(x => x != null) ?? 0).ToList();
     }
 
+    /// <summary>列番の列車: このグループの列車、なければ所定の時刻表の列車（駅の時刻・番線だけ。連結・切り離しの相手を確かめるのに使う）。</summary>
+    private TrainSpec? FindTrain(string number, List<TrainSpec> trains)
+    {
+        if (number.Length == 0) return null;
+        if (trains.FirstOrDefault(x => x.Number == number) is { } mine) return mine;
+        if (!_rail.BaseDia.TryGetValue(number, out var d)) return null;
+        return new TrainSpec
+        {
+            Number = d.Number, Type = d.Type, Unyo = d.Unyo ?? "", Cars = d.Cars ?? 0,
+            Stops = d.Stops.Where(s => s.StationId != null).Select(s => new StopSpec { St = s.StationId!, Stop = s.Stop == "停" ? "停" : "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
+        };
+    }
+
     /// <summary>種別に合う列番の形か（末尾の文字・回送の「回」）。</summary>
     private static string? NumberTypeError(TrainSpec t)
     {
@@ -530,12 +543,14 @@ public sealed class TempTrains
 
             // 解放（列番が「解」＋元の列車の列番。時刻表の 解2076C と同じ）: 発駅で元の列車から切り離して出る。
             // 元の列車がこのグループにあれば、その駅に停車し、同じ番線で、元の列車が着いたあとに出るか
-            if (n.StartsWith("解") && trains.FirstOrDefault(x => x.Number == n[1..]) is { } src)
+            // 元の列車は所定の列車でもよい（終点に限らず、途中の停車駅でも切り離せる）
+            if (n.StartsWith("解") && FindTrain(n[1..], trains) is { } src)
             {
                 var first = t.Stops[0];
                 var fname = StationName(first.St);
                 var ss = src.Stops.FirstOrDefault(s => s.St == first.St);
-                if (ss == null || ss.Stop != "停") errors.Add($"{n}: 元の列車 {src.Number} は{fname}に停車しません（切り離す駅に停車させてください）");
+                if (ss != null && ss == src.Stops[0]) errors.Add($"{n}: {src.Number} は{fname}から出る列車です（切り離すのは、着いた駅でです）");
+                else if (ss == null || ss.Stop != "停") errors.Add($"{n}: 元の列車 {src.Number} は{fname}に停車しません（切り離す駅に停車させてください）");
                 else
                 {
                     if (first.Track != null && ss.Track != null && first.Track != ss.Track)
@@ -552,14 +567,22 @@ public sealed class TempTrains
             {
                 var end = t.Stops[^1];
                 var endName = StationName(end.St);
-                var parent = trains.FirstOrDefault(x => x.Number == t.TurnNext);
+                // 連結する相手は、このグループの列車か所定の列車
+                var parent = FindTrain(t.TurnNext, trains);
                 var ps = parent?.Stops.FirstOrDefault(s => s.St == end.St);
-                if (t.TurnNext.Length == 0 || parent == null || parent == t) errors.Add($"{n}: 連結する列車{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}がこのグループにありません");
+                if (t.TurnNext.Length == 0 || parent == null || parent == t) errors.Add($"{n}: 連結する列車{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}が、このグループにも所定の時刻表にもありません");
                 else if (ps == null || ps.Stop != "停") errors.Add($"{n}: 連結する列車 {parent.Number} は{endName}に停車しません");
                 else
                 {
                     if (n != "連" + parent.Number) errors.Add($"{n}: 増結車の列番は「連{parent.Number}」にしてください（連結する列車の列番に「連」を付ける）");
                     if (end.Track != null && ps.Track != null && end.Track != ps.Track) errors.Add($"{n}: {parent.Number} は{endName} {ps.Track}番線に着きます。増結車も {ps.Track}番線で待ってください");
+                    // 連結できる番線か（増結車のいる番線へ、入換信号機で入れる番線だけ。大道寺の上りの1番線などは入れない）
+                    if (ps.Track is { } ptk && RouteEngine.TrainInfo(parent.Number) is { } pinfo && !RouteEngine.CanCoupleAt(_rail, end.St, pinfo.Dir, ptk))
+                    {
+                        var okTracks = _rail.Stations.TryGetValue(end.St, out var csd) ? csd.Routes[pinfo.Dir].Arrive.Keys.Where(k => RouteEngine.CanCoupleAt(_rail, end.St, pinfo.Dir, k)).Order().ToList() : new List<int>();
+                        errors.Add($"{n}: {endName} {ptk}番線は、{(pinfo.Dir == Dir.Down ? "下り" : "上り")}の列車が増結車のいる番線へ入る入換信号機がないので、連結できません"
+                            + (okTracks.Count > 0 ? $"（{endName}で連結できる番線: {string.Join("・", okTracks)}番線）" : $"（{endName}では{(pinfo.Dir == Dir.Down ? "下り" : "上り")}の列車に連結できません）"));
+                    }
                     double? ready = DaySec(end.Arr ?? end.Dep), parr = DaySec(ps.Arr ?? ps.Dep);
                     if (ready != null && parr != null && parr < ready) errors.Add($"{n}: {parent.Number} が{endName}に着くのは、増結車が番線に入るより前です（増結車が先に入って待ちます）");
                     if (trains.Count(x => x != t && x.TurnHow == "連結" && x.TurnNext == parent.Number) > 0) errors.Add($"{n}: {parent.Number} には、ほかの増結車も連結します");
@@ -700,7 +723,7 @@ public sealed class TempTrains
                     d.Next = (chg.Number, last);
                 // 増結車: 時刻表の 連777 と同じく、終点（待つ駅）で後運用の列車に「併結」する
                 else if (t.TurnHow == "連結" && t.TurnNext.Length > 0)
-                    d.Turn = new DiaTurn("併結", t.TurnNext, NormTime(trains.FirstOrDefault(x => x.Number == t.TurnNext)?.Stops.FirstOrDefault(s => s.St == last)?.Dep), null);
+                    d.Turn = new DiaTurn("併結", t.TurnNext, NormTime(FindTrain(t.TurnNext, trains)?.Stops.FirstOrDefault(s => s.St == last)?.Dep), null);
                 else d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
                     ? new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発") : null);
                 list.Add(d);
