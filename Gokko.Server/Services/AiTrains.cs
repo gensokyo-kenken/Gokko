@@ -139,6 +139,9 @@ public sealed class AiTrains : BackgroundService
         players.GhostDeleted += OnGhostDeleted;
     }
 
+    /// <summary>特発臨（司令員がその場で立てる臨時列車）。元の列車が発駅に止まったら、特発臨の列番に変える。</summary>
+    public TokuhatsuRinji? Rinji { get; set; }
+
     // =========================================================================================
     // 出す・消す・一覧（管理画面から）
     // =========================================================================================
@@ -562,6 +565,13 @@ public sealed class AiTrains : BackgroundService
             return;
         }
 
+        // 特発臨: 発駅の番線に止まっていれば、特発臨の列番に変わる
+        if (t.Speed == 0 && !t.Shunting && ToRinji(t, utcNow))
+        {
+            UpdateInfo(t);
+            return;
+        }
+
         // 番線への入換が出発と反対向きだった（大道寺の X線 → 1番線）: 番線に入って止まったら、向きを変える
         if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && ReverseInPlatform(t, next, utcNow))
         {
@@ -891,6 +901,42 @@ public sealed class AiTrains : BackgroundService
         if (!st.TrackCircuit.TryGetValue(track, out var platform)) return false;
 
         var old = t.Number;
+        Become(t, number, nd, dir, st, track, platform, i, Time(_rail.Turns.TurnOf(t.Dia)?.Time), utcNow);
+        t.Status = $"{st.Name} {track}番線で折り返し（{old} → {number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} で折り返して {number} になりました");
+        return true;
+    }
+
+    /// <summary>
+    /// 特発臨（<see cref="TokuhatsuRinji"/>）: 元の列車が、特発臨の発駅の番線に止まったら、特発臨の列番に変わる。
+    /// 向き・停車駅を入れ替え、道筋は今の番線の軌道回路から作り直す（<see cref="TurnBack"/> と同じ）。途中駅でも、終点でなくても変わる。
+    /// </summary>
+    private bool ToRinji(Train t, DateTime utcNow)
+    {
+        if (Rinji is not { } rinji || rinji.PendingFor(t.Number) is not { } r || _rail.DiaOf(r.Number) is not { } nd) return false;
+        if (!_rail.Stations.TryGetValue(r.StationId, out var st) || !st.TrackCircuit.TryGetValue(r.Track, out var platform)) return false;
+        if (!t.Info.TrackCircuits.Contains(platform)) return false; // まだ発駅の番線に着いていない
+        if (_routes.DirOfTrain(r.Number) is not { } dir) return false;
+        var i = nd.Stops.FindIndex(s => s.StationId == r.StationId);
+        if (i < 0 || i == nd.Stops.Count - 1) return false;
+
+        var old = t.Number;
+        t.Shunting = false;
+        t.FromShunt = false;
+        t.CoupleStage = 0;
+        Become(t, r.Number, nd, dir, st, r.Track, platform, i, null, utcNow);
+        rinji.MarkStarted(r.Number);
+        t.Status = $"{st.Name} {r.Track}番線で特発臨に変わりました（{old} → {r.Number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} {r.Track}番線で特発臨 {r.Number} になりました");
+        return true;
+    }
+
+    /// <summary>
+    /// 駅の番線で、別の列番（折り返しの列車・特発臨）に変わる。列番・向き・停車駅を入れ替え、道筋は番線の軌道回路から作り直す
+    /// （停止位置は、新しい向きの出発信号機の手前）。i は新しい列番の時刻表で、この駅の位置。
+    /// </summary>
+    private void Become(Train t, string number, DiaTrain nd, Dir dir, StationDef st, int track, string platform, int i, TimeSpan? depFallback, DateTime utcNow)
+    {
         _spawned.Add(RailData.NormalizeTrain(number));
         t.Number = number;
         t.Dia = nd;
@@ -900,7 +946,7 @@ public sealed class AiTrains : BackgroundService
         t.StartTrack = track;
         t.Plan.Clear();
         var first = nd.Stops[i];
-        t.Plan.Add(new PlanStop(first.Name, here.StationId, true, track, null, Time(first.Dep) ?? Time(_rail.Turns.TurnOf(t.Dia)?.Time)));
+        t.Plan.Add(new PlanStop(first.Name, st.Id, true, track, null, Time(first.Dep) ?? depFallback));
         foreach (var s in nd.Stops.Skip(i + 1))
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
@@ -925,9 +971,6 @@ public sealed class AiTrains : BackgroundService
         t.Info.GameRoutes.Clear();
         t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
         t.Info.LastCenter = null;
-        t.Status = $"{st.Name} {track}番線で折り返し（{old} → {number}）";
-        _log.Note($"にぎやかし: {old} は {st.Name} で折り返して {number} になりました");
-        return true;
     }
 
     /// <summary>ゲームの線区（進路を扱う駅のいちばん端からいちばん端まで）の中の駅か。</summary>
@@ -1635,6 +1678,7 @@ public sealed class AiTrains : BackgroundService
             {
                 var number = RailData.NormalizeTrain(dia.Number);
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
