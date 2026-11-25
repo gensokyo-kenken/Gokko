@@ -140,9 +140,19 @@
         <div class="list" id="trains" style="max-height:220px"></div>
         <div class="row" id="trainBtns">
           <button id="addTrain">列車を追加</button>
+          <button id="addSplit" title="走っている列車（このグループの列車か所定の列車）から、途中の停車駅や終点で車両を切り離して、別の列車として走らせます">切り離しを追加</button>
           <button id="dupTrain">複製</button>
           <button id="delTrain">列車を削除</button>
           <button id="check">確認</button>
+        </div>
+        <div class="row" id="splitBox" hidden>
+          切り離す列車: <input id="sParent" type="text" size="10" list="sParentList" placeholder="列番"><datalist id="sParentList"></datalist>
+          駅: <select id="sSt"></select>
+          切り離した車両の運行番号: <input id="sUnyo" type="text" size="4" placeholder="24S">
+          両数: <input id="sCars" type="text" size="2" inputmode="numeric" placeholder="2">
+          <button id="sMake">作る</button>
+          <button id="sCancel">やめる</button>
+          <div class="note" id="sNote">切り離した車両は「解＋元の列番」の回送になります。作ったあと、終点を選んで［駅を並べる］で行き先までの時刻を入れます（後運用も選べます）。</div>
         </div>
       </fieldset>
 
@@ -310,7 +320,7 @@
     $("withdraw").disabled = !cur.id || cur.applied || !(cur.status === "申請中" || cur.status === "承認") || !(mine || base.me.approver);
     $("remove").disabled = !cur.id || cur.applied || cur.status === "承認" || !(mine || base.me.approver);
     $("approveBox").hidden = !(base.me.approver && cur.status === "申請中");
-    for (const id of ["addTrain", "dupTrain", "delTrain", "dgDraw"]) $(id).disabled = !ed;
+    for (const id of ["addTrain", "addSplit", "dupTrain", "delTrain", "dgDraw"]) $(id).disabled = !ed;
     if (!ed && drawing) { drawing = null; $("dgDraw").classList.remove("on"); }
     $("dupTrain").disabled = $("delTrain").disabled = !ed || curTrain < 0;
     drawTrains();
@@ -352,6 +362,48 @@
     return { unyo: prev ? prev.unyo : (base.freeUnyo || ""), number: "", type: "普通", label: "", dest: "", stops: [] };
   }
   $("addTrain").onclick = () => { cur.trains.push(newTrain()); curTrain = cur.trains.length - 1; dirty = true; drawEditor(); $("tNumber").focus(); };
+  // ---- 切り離し: 「解＋元の列番」の列車を、切り離す駅（元の列車が停車する駅。途中駅でも終点でも）から出す ----
+  $("addSplit").onclick = () => {
+    $("splitBox").hidden = false;
+    const t = cur.trains[curTrain];
+    $("sParentList").innerHTML = [...cur.trains.filter((x) => x.number && !x.number.startsWith("解") && x.turnHow !== "連結").map((x) => x.number), ...basePartners().map((x) => x.number)]
+      .map((n) => `<option value="${esc(n)}">`).join("");
+    if (!$("sParent").value && t && t.number && !/^[解連]/.test(t.number)) $("sParent").value = t.number;
+    $("sUnyo").value = $("sUnyo").value || "";
+    drawSplitStations();
+    $("sParent").focus();
+  };
+  $("sCancel").onclick = () => { $("splitBox").hidden = true; };
+  $("sParent").oninput = () => drawSplitStations();
+  function drawSplitStations() {
+    const p = trainByNumber($("sParent").value.trim());
+    const cands = p ? p.stops.slice(1).filter((s) => s.stop === "停") : [];
+    $("sSt").innerHTML = cands.length ? cands.map((s, i) => {
+      const last = s === p.stops[p.stops.length - 1];
+      return `<option value="${esc(s.st)}" ${last ? "selected" : ""}>${esc(stById[s.st]?.name || s.st)} ${short(s.arr || s.dep)}着${s.track != null ? ` ${s.track}番線` : ""}${last ? "（終点）" : ""}</option>`;
+    }).join("") : `<option value="">${p ? "（停車する駅がありません）" : "（列番を入れると選べます）"}</option>`;
+  }
+  $("sMake").onclick = () => {
+    const pn = $("sParent").value.trim(), p = trainByNumber(pn), st = $("sSt").value, unyo = $("sUnyo").value.trim();
+    if (!p) { alert(`${pn || "列番"}: このグループにも所定の時刻表にもない列車です`); return; }
+    const ps = p.stops.find((s) => s.st === st);
+    if (!ps) { alert("切り離す駅を選んでください"); return; }
+    if (!unyo) { alert("切り離した車両の運行番号を入れてください（元の列車とは別の運行になります）"); $("sUnyo").focus(); return; }
+    const number = "解" + p.number;
+    if (cur.trains.some((x) => x.number === number)) { alert(`${number} はもうあります`); return; }
+    // 終点で切り離すなら着いてから2分、途中駅なら元の列車が出てから1分あと（元の列車が番線から出たあと、その跡地に出る）
+    const last = ps === p.stops[p.stops.length - 1];
+    const dep = last ? (sec(ps.arr || ps.dep) ?? 0) + 120 : (sec(ps.dep || ps.arr) ?? 0) + 60;
+    const cars = parseInt($("sCars").value, 10);
+    // 切り離した車両は回送（「解」で始まる列番は回送。時刻表の 解2076C と同じ）。後運用で客を乗せる列車にもできる
+    cur.trains.push({ unyo, number, type: "回送", label: "", dest: "", cars: cars > 0 ? cars : 0, turnHow: "", turnNext: "", turnVia: "", turnTime: null,
+      stops: [{ st, stop: "停", arr: null, dep: fmt(dep), track: ps.track ?? null }] });
+    curTrain = cur.trains.length - 1;
+    dirty = true;
+    $("splitBox").hidden = true;
+    drawEditor();
+    if ($("tTo")) $("tTo").focus();
+  };
   $("dupTrain").onclick = () => {
     const t = JSON.parse(JSON.stringify(cur.trains[curTrain]));
     t.number = "";
@@ -396,15 +448,30 @@
     const end = t.stops[t.stops.length - 1];
     if (!end) return [];
     if (t.turnHow === "連結") {
+      // このグループの列車と、所定の列車（増結車が番線に入ったあとに着く列車。近い順に40本まで）
       const at = (x) => x.stops.find((s) => s.st === end.st);
-      return cur.trains.filter((x) => x !== t && at(x) && at(x).stop === "停" && x.stops[x.stops.length - 1] !== at(x))
-        .sort((a, b) => (sec(at(a).arr || at(a).dep) ?? 0) - (sec(at(b).arr || at(b).dep) ?? 0));
+      // 連結できる番線（増結車のいる番線へ入換信号機で入れる番線）に着く列車だけ
+      const canCouple = (x) => { const r = stById[end.st]?.rules?.[dirOf(x)], tk = at(x).track; return !r || tk == null || (r.couple || []).includes(tk); };
+      const ok = (x) => x !== t && at(x) && at(x).stop === "停" && x.stops[x.stops.length - 1] !== at(x) && canCouple(x);
+      const when = (x) => sec(at(x).arr || at(x).dep) ?? 0, ready = sec(end.arr || end.dep);
+      const mineC = cur.trains.filter(ok).sort((a, b) => when(a) - when(b));
+      const baseC = basePartners().filter((x) => ok(x) && (ready == null || when(x) >= ready)).sort((a, b) => when(a) - when(b)).slice(0, 40);
+      const keep = t.turnNext && !mineC.some((x) => x.number === t.turnNext) && !baseC.some((x) => x.number === t.turnNext) && basePartners().find((x) => x.number === t.turnNext);
+      return [...mineC, ...baseC, ...(keep ? [keep] : [])];
     }
     const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
     return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr)
         && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same))
       .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
   }
+  // 所定の列車を、連結・切り離しの相手として（列番・種別・駅の停車と時刻・番線）。試運転は出さない
+  function basePartners() {
+    return (plan || []).filter((p) => !p.trial && p.stops).map((p) => ({
+      number: p.name, type: p.type, base: true, stops: p.stops.filter((s) => s.st).map((s) => ({ st: s.st, stop: s.stop === "停" ? "停" : "通", arr: s.arr, dep: s.dep, track: s.track }))
+    }));
+  }
+  // 列番の列車（このグループ、なければ所定）
+  const trainByNumber = (n) => (n && (cur.trains.find((x) => x.number === n) || basePartners().find((x) => x.number === n))) || null;
   // 種別変更: 後運用は着いた番線のまま出るので、後運用の発駅の番線を合わせる
   function sameTrack(t) {
     if (t.turnHow !== "種別変更") return;
@@ -450,7 +517,7 @@
       const x = cands.find((y) => y.number === n);
       const endSt = t.stops[t.stops.length - 1]?.st, xs = x && x.stops.find((s) => s.st === endSt);
       const info = !x ? (how === "連結" ? "（この駅に止まらない列車）" : "（終点から出ない列車）")
-        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
+        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}${x.base ? "（所定）" : ""}` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
       return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${info}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
@@ -483,7 +550,7 @@
       if (t.turnHow === "連結" && t.turnNext) {
         if (!t.number || t.number.startsWith("連")) t.number = "連" + t.turnNext;
         t.type = "回送";
-        const end = t.stops[t.stops.length - 1], p = cur.trains.find((x) => x.number === t.turnNext), ps = p && end && p.stops.find((s) => s.st === end.st);
+        const end = t.stops[t.stops.length - 1], p = trainByNumber(t.turnNext), ps = p && end && p.stops.find((s) => s.st === end.st);
         if (ps && ps.track != null) end.track = ps.track;
         drawTrain();
       }
@@ -962,7 +1029,7 @@
     // 増結車: 待つ番線で、連結する列車が着くまで点線で待つ（そこで連結）
     for (const m of mine) {
       if (m.t.turnHow !== "連結") continue;
-      const p = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext), a = m.sh.pts[m.sh.pts.length - 1];
+      const p = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext) || byNo.get(m.t.turnNext), a = m.sh.pts[m.sh.pts.length - 1];
       const pt = p && timeAt(p.sh, a.z, true);
       if (pt == null || pt < a.t) continue;
       mineP.push(`<polyline points="${L.x(a.t)},${L.y(a.z, a.track)} ${L.x(pt)},${L.y(a.z, a.track)}" fill="none" stroke="${DC[m.type] || "#a0a0a0"}" stroke-width="1.6" stroke-dasharray="2 3"/>`);
@@ -1311,7 +1378,8 @@
       const j = await api("GET", "/plan");
       singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
       minRuns = new Map((j.minRuns || []).map((x) => [`${x.from}>${x.to}`, x.sec]));
-      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, shunt: t.shunt, trial: !!t.trial, sh: shape(t.stops) }));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, shunt: t.shunt, trial: !!t.trial, stops: t.stops, sh: shape(t.stops) }));
+      if (cur && curTrain >= 0 && cur.trains[curTrain]) drawTurn(cur.trains[curTrain]); // 連結・切り離しの相手に所定の列車を出す
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
   }
