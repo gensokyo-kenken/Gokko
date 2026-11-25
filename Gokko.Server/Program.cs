@@ -37,6 +37,7 @@ builder.Services.AddSingleton<RunTimeModel>();
 builder.Services.AddSingleton<SignalCalculator>();
 builder.Services.AddSingleton<CentralControl>();
 builder.Services.AddSingleton<EventStops>(); // 催物用臨停設定（司令用管理画面。再起動で消える）
+builder.Services.AddSingleton<TokuhatsuRinji>(); // 特発臨（運転整理のために司令員がその場で立てる臨時列車。メモリだけ）
 builder.Services.AddSingleton<ConnectionTable>(); // 接続待ちの組（ダイヤの「(接)」から）
 builder.Services.AddSingleton<RouteEngine>();
 builder.Services.AddSingleton<ProtectionRadio>();
@@ -137,5 +138,12 @@ app.MapExtensionEndpoints(options);
 app.MapOnboardEndpoints(); // 乗務タブレット（スマホ）から放送装置を扱う
 app.MapRelayPanelEndpoints();
 app.Services.GetRequiredService<RelayPanels>(); // 起動時に駅のデータを読む（誤りをすぐ記録に出す）
+
+// 特発臨: 自動運転の列車は、発駅で特発臨の列番に変わる。走り出してから取り消したら、自動運転の列車を消す
+var rinji = app.Services.GetRequiredService<TokuhatsuRinji>();
+var rinjiAi = app.Services.GetRequiredService<AiTrains>();
+rinjiAi.Rinji = rinji;
+rinji.Changed += message => incidentLog.Note(message);
+rinji.Removed += numbers => rinjiAi.RemoveNumbers(numbers);
 
 app.Run();

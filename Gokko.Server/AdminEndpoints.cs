@@ -211,7 +211,7 @@ public static class AdminEndpoints
 
         // 乗務タブレット（tablet.html）: スタフの並びの時刻表・次の駅・進路の状態・行路
         // ヘッダー X-Crew-Token（ログインの合い札）があれば、その人の行路を出す。train がなければ、その人の行路の、いま乗る列車
-        view.MapGet("/tablet", (HttpRequest http, string? train, RouteEngine engine, DutyRosters rosters, CrewRoster crew, PlayerRegistry players) =>
+        view.MapGet("/tablet", (HttpRequest http, string? train, RouteEngine engine, DutyRosters rosters, CrewRoster crew, PlayerRegistry players, TokuhatsuRinji rinji) =>
         {
             var roster = rosters.Current;
             var token = http.Headers["X-Crew-Token"].ToString();
@@ -222,6 +222,9 @@ public static class AdminEndpoints
                 crew.FollowTrain(id, me.TrainNumber, roster);
             var duties = id == null ? null : crew.DutiesOf(id).Select(roster.DutyById).OfType<Duty>().ToList();
             var t = string.IsNullOrEmpty(train) && duties != null ? engine.CurrentTrainOf(duties) : train;
+            // 運転している列車が特発臨（行路にない列番）なら、その列車を出す
+            if (string.IsNullOrEmpty(train) && id != null && players.Snapshot().FirstOrDefault(p => p.CrewId == id && p.InGame && rinji.IsRinji(p.TrainNumber)) is { } rp)
+                t = rp.TrainNumber;
             if (string.IsNullOrEmpty(t)) return Results.NotFound(new { message = id != null ? $"ID:{id} には、まだ行路が割り当てられていません" : "列車番号がありません" });
             if (id != null) crew.Seen(id, t);
             if (engine.TabletView(t, roster, duties, id) is not { } v) return Results.NotFound(new { message = $"{t} のダイヤはありません" });
@@ -229,6 +232,7 @@ public static class AdminEndpoints
             var node = System.Text.Json.JsonSerializer.SerializeToNode(v, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
             node["extras"] = System.Text.Json.JsonSerializer.SerializeToNode(id == null ? new List<string>() : crew.ExtrasOf(id));
             node["attended"] = id != null && crew.AttendedAt(id) != null;
+            node["rinji"] = System.Text.Json.JsonSerializer.SerializeToNode(rinji.TabletNotice(t), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)); // この列車から立てた特発臨（列番を入れ直してもらう）
             return Results.Ok(node);
         });
         // 出勤（タブレットの［出勤］）: 行路がなければ、空いている行路をランダムに1つ割り当てる（所属を見る。前回と同じ行路は避ける）
@@ -737,13 +741,15 @@ public static class AdminEndpoints
     }
 
     /// <summary>ロープレ時刻の設定・停止・再開（管理画面と司令用管理画面で共通）。</summary>
-    private static IResult SetClock(ClockRequest req, GameClock clock, IncidentManager incidents, CentralControl central, RailData rail)
+    private static IResult SetClock(ClockRequest req, GameClock clock, IncidentManager incidents, CentralControl central, RailData rail, TokuhatsuRinji rinji)
     {
             // ロープレ時刻を設定・解除したら、手で入れたダイヤの指示を一度取り消す（駅の扱いは残す。一時停止・再開・速さでは消さない）
             void ResetDia()
             {
                 var n = central.ResetManual();
                 var t = rail.Turns.Reset();
+                var r = rinji.Reset();
+                if (r > 0) incidents.Note($"ダイヤのリセット: 特発臨 {r}本を取消");
                 incidents.Note(n + t == 0
                     ? "ダイヤのリセット: 取り消す手動の設定はありません"
                     : $"ダイヤのリセット: 列車ごとの指示・出発順序・走行順 {n}件、後運用の差し替え {t}件を取消");
@@ -785,6 +791,7 @@ public static class AdminEndpoints
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
         g.MapEventStops(); // 催物用臨停設定（EventStopEndpoints.cs）
+        TokuhatsuRinjiEndpoints.MapTokuhatsuRinji(g); // 特発臨（運転整理のために、その場で立てる臨時列車）
 
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
         // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）

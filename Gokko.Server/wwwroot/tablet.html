@@ -513,6 +513,15 @@
     } catch (e) {}
     return "";
   }
+  // 特発臨: 司令員がこの列車から特発臨を立てたら、列番を入れ直してもらう（入れ直すと、その列番の時刻表に変わる）
+  function rinjiNotice() {
+    const r = data && data.rinji;
+    if (!r) return "";
+    return `<div class="pane" style="border:2px solid #c62828"><b class="err">特発臨 ${esc(r.number)}（${esc(r.type)}）</b>
+      ${esc(r.station)} ${r.track}番線 ${esc(r.dep || "")}発 → ${esc(r.dest)} ${esc(r.arr || "")}着。
+      ${esc(r.from)} は ${esc(r.station)} で打ち切りです。ゲームの列番を <b>${esc(r.number)}</b> に入れ直してください。
+      <a href="tablet.html?train=${encodeURIComponent(r.number)}">${esc(r.number)} の時刻表を見る</a></div>`;
+  }
   // 出勤: 行路がなければ、空いている行路がランダムに1つ割り当てられる（所属を見る）
   async function attend() {
     try { setFlash((await post("/crew/attend")).message); } catch (e) { setFlash(e.message); }
@@ -733,7 +742,7 @@
     const oldScroll = document.querySelector(".staff-scroll");
     const keepTop = oldScroll ? oldScroll.scrollTop : null;
     document.body.classList.toggle("fit", !!data);
-    document.getElementById("app").innerHTML = data ? flash() + render(layout)
+    document.getElementById("app").innerHTML = data ? flash() + rinjiNotice() + render(layout)
       : `<div class="pick">${flash()}<div class="pane err">${esc(error)}</div>
           ${notice ? `<div class="pane"><div class="row"><button data-attend="1">出勤</button></div>
             <div class="t-muted">出勤すると、空いている行路が自動で割り当てられます。乗る列車が決まっているときは、「列車を選ぶ」から列番を入れて開いてください。</div></div>` : ""}
