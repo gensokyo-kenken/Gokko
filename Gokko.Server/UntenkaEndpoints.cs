@@ -109,6 +109,8 @@ public static class UntenkaEndpoints
                 type = t.Type,
                 trial = RailData.IsTrial(t), // 試運転（画面では「試運転を表示」のときだけ出す）
                 turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
+                // 入換して折り返す列車: 入換の時刻と入る線（引上線などの名前。null なら後運用の発車の番線へそのまま移る）。図で入換先の段に線を引く
+                shunt = t.Turn is { Kind: "折返", How: "入換" } st ? new { time = st.Time, via = st.Via ?? DefaultVia(rail, t) } : null,
                 // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
                 stops = t.Stops.Where(s => temp.ZoneOf(s.StationId) != null && (s.Arr != null || s.Dep != null))
                     .Select(s => new { y = temp.ZoneOf(s.StationId)!.Value, stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
@@ -164,6 +166,15 @@ public static class UntenkaEndpoints
             log.Note($"司令用管理画面: 催物用臨時列車「{name}」を{(on ? "適用" : "取消")}しました");
             return Results.Ok(new { ok = true });
         });
+    }
+
+    // 入換の線が書かれていないとき: 終点で着いた番線から、その向きで入れる最初の線（入換の既定。なければ null）
+    private static string? DefaultVia(RailData rail, DiaTrain t)
+    {
+        var end = t.Stops.LastOrDefault(s => s.StationId != null);
+        if (end?.StationId is not { } id || end.Track is not { } tr || RouteEngine.TrainInfo(t.Number) is not { } info
+            || !rail.Stations.TryGetValue(id, out var sd) || !sd.RouteControl) return null;
+        return sd.Routes[info.Dir].ShuntOuts.FirstOrDefault(o => o.From == tr)?.Label;
     }
 
     // 受け取った列車をそのまま持たない（保存するのは自分で作った物だけ）
