@@ -186,8 +186,11 @@ public sealed class DiaTrain
     /// </summary>
     public (string Number, string StationId)? Next { get; set; }
 
-    /// <summary>運行番号（列番の付け方から求めたもの。<see cref="Gokko.Common.Unyo"/>）。読めなければ null。</summary>
-    public int? Unyo { get; set; }
+    /// <summary>運行番号（"24"・"24S"。列番の付け方から求めたもの。<see cref="Gokko.Common.Unyo"/>）。読めなければ null。</summary>
+    public string? Unyo { get; set; }
+
+    /// <summary>両数（臨時列車で決めたときだけ。null なら自動運転は運行番号ごとの両数）。</summary>
+    public int? Cars { get; set; }
 
     /// <summary>終点のあと（スタフの「折返」「引継」「滞泊」）。書かれていなければ null。</summary>
     public DiaTurn? Turn { get; set; }
@@ -202,8 +205,9 @@ public sealed class DiaTrain
 /// <summary>
 /// 終点のあと。Kind は 折返（Number の列車として折り返す。Time はその発車・入換の時刻、How は「発」か「入換」）、
 /// 引継（同じ列番のまま線区の外へ）、滞泊（その駅で夜を越す）。
+/// Via は、入換で折り返すときに引き上げる線（TrackRoutes.json の shuntOut の label。"X線" など）。書かれていなければ既定の線。
 /// </summary>
-public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How);
+public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How, string? Via = null);
 
 /// <summary>時刻表の1駅（StationId は路線の外の駅なら null。Stop は 停・通・運停）。</summary>
 public sealed record DiaStop(string Name, string? StationId, string Stop, string? Arr, string? Dep, int? Track = null, string? Note = null);
@@ -277,12 +281,81 @@ public sealed class RailData
     /// <summary>単線区間に接する駅か（行き違いのために、空いている番線へ入れる駅）。</summary>
     public bool TouchesSingleTrack(string station) => SingleTrackSections.Any(p => p.Item1 == station || p.Item2 == station);
 
-    /// <summary>ダイヤ。列車番号（正規化したもの）→ 列車。</summary>
-    public Dictionary<string, DiaTrain> Dia { get; } = new();
+    // 所定のダイヤ（Timetable.json から読んだもの。起動したあとは変えない）
+    private readonly Dictionary<string, DiaTrain> _baseDia = new();
+    private volatile Dictionary<string, DiaTrain>? _dia;
+
+    /// <summary>
+    /// ダイヤ。列車番号（正規化したもの）→ 列車。読み込みが済んだあとは書き換えない（読むだけ）。
+    /// 催物用の臨時列車を適用している間は、所定のダイヤに臨時列車を足した別の表になる（<see cref="SetExtraTrains"/>）。
+    /// </summary>
+    public Dictionary<string, DiaTrain> Dia => _dia ?? _baseDia;
+
+    /// <summary>所定のダイヤ（臨時列車を足していないもの）。</summary>
+    public IReadOnlyDictionary<string, DiaTrain> BaseDia => _baseDia;
+
+    // 所定のダイヤに重ねる列車（出どころ → 列車。催物用の臨時列車・特発臨など）
+    private readonly Dictionary<string, List<DiaTrain>> _extra = new();
+    private readonly object _extraLock = new();
+
+    /// <summary>
+    /// 所定のダイヤに重ねる列車を、出どころ（source。"催物"・"特発臨" など）ごとに差し替える。extra が空なら、その出どころの列車を外す。
+    /// どの出どころにも列車がなければ、所定のダイヤに戻す。
+    /// 所定のダイヤは変えず、足した表を新しく作って参照を切り替えるだけなので、読んでいる途中の処理はそのまま古い表を読み終える。
+    /// 表は、ほかの出どころを先に足し、この出どころを最後に足す。所定のダイヤ・ほかの出どころにある列番は足さない（この出どころの足せなかった列番を返す）。
+    /// </summary>
+    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra)
+    {
+        var skipped = new List<string>();
+        lock (_extraLock)
+        {
+            if (extra.Count == 0) _extra.Remove(source);
+            else _extra[source] = extra.ToList();
+            if (_extra.Count == 0) _dia = null;
+            else
+            {
+                var d = new Dictionary<string, DiaTrain>(_baseDia);
+                foreach (var (src, list) in _extra)
+                    if (src != source)
+                        foreach (var t in list) d.TryAdd(t.Number, t);
+                if (_extra.TryGetValue(source, out var mine))
+                    foreach (var t in mine)
+                        if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
+                _dia = d;
+            }
+        }
+        Turns.DiaChanged();
+        return skipped;
+    }
 
     public static string NormalizeTrain(string? s) => (s ?? "").Normalize(NormalizationForm.FormKC).Trim().ToUpperInvariant();
 
     public DiaTrain? DiaOf(string train) => Dia.GetValueOrDefault(NormalizeTrain(train));
+
+    // ---- 試運転（所定の臨時列車）: 普段は走らせず、司令が選んだ運行番号だけ走らせる。選択は再起動で「なし」に戻る ----
+    private volatile HashSet<string> _trialsOn = new();
+
+    /// <summary>試運転か（列番が「試」で始まる。時刻表の種別は試運転）。</summary>
+    public static bool IsTrial(DiaTrain d) => d.Number.StartsWith("試");
+
+    /// <summary>試運転の運行番号（時刻表の並び）。</summary>
+    public List<string> TrialUnyos() => Dia.Values.Where(d => IsTrial(d) && d.Unyo != null).Select(d => d.Unyo!).Distinct().Order(Gokko.Common.Unyo.Comparer).ToList()!;
+
+    /// <summary>走らせる試運転の運行番号。</summary>
+    public IReadOnlyCollection<string> TrialsOn => _trialsOn;
+
+    /// <summary>試運転の選択を変えると増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
+    public int TrialVersion { get; private set; }
+
+    public void SetTrialsOn(IEnumerable<string> unyos)
+    {
+        var known = TrialUnyos().ToHashSet();
+        _trialsOn = unyos.Select(Gokko.Common.Unyo.Normalize).OfType<string>().Where(known.Contains).ToHashSet();
+        TrialVersion++;
+    }
+
+    /// <summary>走らない試運転か（選ばれていない運行番号の試運転）。自動運転の列車として出さず、ダイヤグラムの計画の線も引かない。</summary>
+    public bool IsIdleTrial(DiaTrain d) => IsTrial(d) && !(d.Unyo is { } u && _trialsOn.Contains(u));
 
     private TurnChanges? _turns;
 
@@ -552,10 +625,14 @@ public sealed class RailData
                     && NormalizeTrain(Str(nx, "number")) is { Length: > 0 } nextNumber && Str(nx, "st") is { Length: > 0 } nextStation)
                     cur.Next = (nextNumber, nextStation);
 
-                cur.Unyo ??= t.TryGetProperty("unyo", out var un) && un.ValueKind == JsonValueKind.Number ? un.GetInt32() : Gokko.Common.Unyo.FromTrain(number);
+                // 運行番号は "24S" のような文字列（数字だけの 6 も読む）。書いていなければ列番から求める
+                cur.Unyo ??= t.TryGetProperty("unyo", out var un) && un.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                    && Gokko.Common.Unyo.Normalize(un.ValueKind == JsonValueKind.Number ? un.GetRawText() : un.GetString()) is { } unText
+                    ? unText : Gokko.Common.Unyo.FromTrain(number);
                 if (t.TryGetProperty("turn", out var tn) && tn.ValueKind == JsonValueKind.Object && Str(tn, "kind") is { Length: > 0 } turnKind)
                     cur.Turn = new DiaTurn(turnKind, NormalizeTrain(Str(tn, "number")) is { Length: > 0 } tno ? tno : null,
-                        Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null);
+                        Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null,
+                        Str(tn, "via") is { Length: > 0 } tvia ? tvia : null);
 
                 if (cur.Stops.Count == 0)
                     foreach (var s in t.GetProperty("stops").EnumerateArray())

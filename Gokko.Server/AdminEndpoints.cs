@@ -61,6 +61,8 @@ public static class AdminEndpoints
     public sealed record ConnectionCutRequest(string? Key, bool Cut);
     public sealed record AiTrainRequest(string? Train, int? Cars, string? Station, string? Id);
     public sealed record AiTrainModeRequest(bool On);
+    /// <summary>Unyos は運行番号（"24"・"24S"。前の形の数字も受ける）。</summary>
+    public sealed record AiTrialRequest(List<System.Text.Json.JsonElement>? Unyos);
 
     /// <summary>駅の出発順序（Direction は使わない。上下まとめて1つの順序）。</summary>
     public sealed record OrderRequest(string Station, string? Direction, List<string>? Trains);
@@ -86,13 +88,15 @@ public static class AdminEndpoints
 
     /// <summary>
     /// 終点で入換して折り返す列車の、引上線などの段の名前（ダイヤグラムの段。"5番線（引上線）" → "5"、"入換Y線" → "Y"）。
-    /// 着いた番線からの shuntOut の最初のもの。本線への入換など、段にならないものは null
+    /// 着いた番線からの shuntOut の最初のもの（折返に Via があればその線）。本線への入換など、段にならないものは null
     /// </summary>
     private static string? ShuntRow(RailData rail, DiaTrain t)
     {
         var end = t.Stops.LastOrDefault(s => s.StationId != null);
         if (end?.StationId is not { } sid || end.Track is not { } track || !rail.Stations.TryGetValue(sid, out var st)) return null;
-        var label = st.Routes.Values.SelectMany(r => r.ShuntOuts).FirstOrDefault(s => s.From == track)?.Label;
+        // ダイヤの折返に引き上げる線（X線など）が書かれていれば、その線
+        var outs = st.Routes.Values.SelectMany(r => r.ShuntOuts).Where(s => s.From == track).ToList();
+        var label = (rail.Turns.TurnOf(t)?.Via is { } via && outs.Any(s => s.Label == via) ? via : null) ?? outs.FirstOrDefault()?.Label;
         if (label == null) return null;
         var m = System.Text.RegularExpressions.Regex.Match(label, @"^(\d+)番線");
         if (m.Success) return m.Groups[1].Value;
@@ -154,6 +158,7 @@ public static class AdminEndpoints
         MapDiagramControls(admin);
         MapDiagramControls(dia);
         dia.MapPost("/clock", SetClock);
+        app.MapUntenkaEndpoints(dia); // 運転課（催物用の臨時列車）。適用・取消は司令用管理画面から
 
         // 司令員（勤怠管理で役職「司令員」を振った乗務員）がログインして使う。ヘッダー X-Crew-Token にログインの合い札（タブレットと同じログイン）。
         // /api/dispatch は diagrammarker.html を単体で開いたとき（ダイヤグラムの操作もできる）
@@ -207,7 +212,7 @@ public static class AdminEndpoints
 
         // 乗務タブレット（tablet.html）: スタフの並びの時刻表・次の駅・進路の状態・行路
         // ヘッダー X-Crew-Token（ログインの合い札）があれば、その人の行路を出す。train がなければ、その人の行路の、いま乗る列車
-        view.MapGet("/tablet", (HttpRequest http, string? train, RouteEngine engine, DutyRosters rosters, CrewRoster crew, PlayerRegistry players) =>
+        view.MapGet("/tablet", (HttpRequest http, string? train, RouteEngine engine, DutyRosters rosters, CrewRoster crew, PlayerRegistry players, TokuhatsuRinji rinji) =>
         {
             var roster = rosters.Current;
             var token = http.Headers["X-Crew-Token"].ToString();
@@ -218,6 +223,9 @@ public static class AdminEndpoints
                 crew.FollowTrain(id, me.TrainNumber, roster);
             var duties = id == null ? null : crew.DutiesOf(id).Select(roster.DutyById).OfType<Duty>().ToList();
             var t = string.IsNullOrEmpty(train) && duties != null ? engine.CurrentTrainOf(duties) : train;
+            // 運転している列車が特発臨（行路にない列番）なら、その列車を出す
+            if (string.IsNullOrEmpty(train) && id != null && players.Snapshot().FirstOrDefault(p => p.CrewId == id && p.InGame && rinji.IsRinji(p.TrainNumber)) is { } rp)
+                t = rp.TrainNumber;
             if (string.IsNullOrEmpty(t)) return Results.NotFound(new { message = id != null ? $"ID:{id} には、まだ行路が割り当てられていません" : "列車番号がありません" });
             if (id != null) crew.Seen(id, t);
             if (engine.TabletView(t, roster, duties, id) is not { } v) return Results.NotFound(new { message = $"{t} のダイヤはありません" });
@@ -225,6 +233,7 @@ public static class AdminEndpoints
             var node = System.Text.Json.JsonSerializer.SerializeToNode(v, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
             node["extras"] = System.Text.Json.JsonSerializer.SerializeToNode(id == null ? new List<string>() : crew.ExtrasOf(id));
             node["attended"] = id != null && crew.AttendedAt(id) != null;
+            node["rinji"] = System.Text.Json.JsonSerializer.SerializeToNode(rinji.TabletNotice(t), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)); // この列車から立てた特発臨（列番を入れ直してもらう）
             return Results.Ok(node);
         });
         // 出勤（タブレットの［出勤］）: 行路がなければ、空いている行路をランダムに1つ割り当てる（所属を見る。前回と同じ行路は避ける）
@@ -733,13 +742,15 @@ public static class AdminEndpoints
     }
 
     /// <summary>ロープレ時刻の設定・停止・再開（管理画面と司令用管理画面で共通）。</summary>
-    private static IResult SetClock(ClockRequest req, GameClock clock, IncidentManager incidents, CentralControl central, RailData rail)
+    private static IResult SetClock(ClockRequest req, GameClock clock, IncidentManager incidents, CentralControl central, RailData rail, TokuhatsuRinji rinji)
     {
             // ロープレ時刻を設定・解除したら、手で入れたダイヤの指示を一度取り消す（駅の扱いは残す。一時停止・再開・速さでは消さない）
             void ResetDia()
             {
                 var n = central.ResetManual();
                 var t = rail.Turns.Reset();
+                var r = rinji.Reset();
+                if (r > 0) incidents.Note($"ダイヤのリセット: 特発臨 {r}本を取消");
                 incidents.Note(n + t == 0
                     ? "ダイヤのリセット: 取り消す手動の設定はありません"
                     : $"ダイヤのリセット: 列車ごとの指示・出発順序・走行順 {n}件、後運用の差し替え {t}件を取消");
@@ -780,18 +791,34 @@ public static class AdminEndpoints
     /// <summary>ダイヤグラムの表示と、そこからできる操作（管理画面と、ダイヤグラムの設定画面で共通）。</summary>
     private static void MapDiagramControls(RouteGroupBuilder g)
     {
+        TokuhatsuRinjiEndpoints.MapTokuhatsuRinji(g); // 特発臨（運転整理のために、その場で立てる臨時列車）
+        g.MapEventStops(); // 催物用臨停設定（EventStopEndpoints.cs）
+
         // にぎやかしの列車（サーバーだけで走る列車）。出す・消す・一覧
         // 一覧と、自動運転列車のアリ/ナシ（アリなら、ダイヤの列車を時刻に合わせて自動で出す。ユーザーの列車は出さない）
-        g.MapGet("/ai-trains", (AiTrains ai) => Results.Ok(new { enabled = ai.Enabled, trains = ai.List() }));
+        g.MapGet("/ai-trains", (AiTrains ai, RailData rail) => Results.Ok(new
+        {
+            enabled = ai.Enabled,
+            trains = ai.List(),
+            trials = ai.Trials(),       // 試運転の運行番号ごとの列車（プルダウンの項目）
+            trialsOn = rail.TrialsOn,   // 走らせる試運転の運行番号（空なら「なし」）
+            carsProblems = ai.CarsProblems, // 両数の表（Data/UnyoCars.csv・TrainCars.csv）のおかしな所
+        }));
         g.MapPost("/ai-trains/mode", (AiTrainModeRequest req, AiTrains ai) =>
         {
             ai.SetEnabled(req.On);
             return Results.Ok(new { ok = true, enabled = ai.Enabled });
         });
+        // 試運転（所定の臨時列車）を走らせる運行番号。空なら1本も出さない
+        g.MapPost("/ai-trains/trial", (AiTrialRequest req, AiTrains ai, RailData rail) =>
+        {
+            var message = ai.SetTrials((req.Unyos ?? new()).Select(u => u.ValueKind == System.Text.Json.JsonValueKind.String ? u.GetString() : u.GetRawText()).OfType<string>());
+            return Results.Ok(new { ok = true, message, trialsOn = rail.TrialsOn });
+        });
         g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { ok = false, message = "列車番号を入れてください" });
-            var (ok, message) = ai.Add(req.Train, req.Cars ?? 6, req.Station?.Trim());
+            var (ok, message) = ai.Add(req.Train, req.Cars ?? 0, req.Station?.Trim());
             return ok ? Results.Ok(new { ok, message }) : Results.BadRequest(new { ok, message });
         });
         g.MapPost("/ai-trains/remove", (AiTrainRequest req, AiTrains ai) =>
@@ -1020,7 +1047,7 @@ public static class AdminEndpoints
     {
         // 開いている画面の数だけ（/api/admin・/api/dia・/api/diaview とも同じ答え）1秒に1回読まれ、作るのに約20ms かかる（11/22 のデバッグ運転）。
         // 画面は1秒ごとに読むので、1秒は同じ答えを使い回す（操作した直後は ResponseCache.Clear で作り直す）
-        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache) => cache.Get("diagram", TimeSpan.FromSeconds(1), () => new
+        g.MapGet("/diagram", (RouteEngine engine, RailData rail, PlayerRegistry players, CentralControl central, ResponseCache cache, EventStops events) => cache.Get("diagram", TimeSpan.FromSeconds(1), () => new
         {
             now = DateTimeOffset.UtcNow,
             stations = rail.Line.StationIds.Select(id => new
@@ -1050,7 +1077,7 @@ public static class AdminEndpoints
             }),
             appear = engine.View(RouteEngine.ViewAppear),
             diaMode = central.DiaMode,
-            turnVersion = rail.Turns.Version, // 後運用を差し替えたら増える（計画の線を読み直す合図）
+            turnVersion = rail.Turns.Version + rail.TrialVersion + events.Version, // 後運用を差し替えた・試運転の選択・催物用臨停設定を変えたら増える（計画の線を読み直す合図）
             // つながっている参加者（強制切断の一覧用）
             players = players.Snapshot().Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId)).OrderBy(p => p.JoinedUtc).Select(p => new
             {
@@ -1071,12 +1098,12 @@ public static class AdminEndpoints
 
         // ダイヤグラムに薄く引く、時刻表（Timetable.json）の計画の線。大きいので、画面を開いたときに1回だけ読む。
         // 路線の駅だけ（y はゾーン）。時刻はロープレ時刻 "HH:mm:ss"（書かれていなければ null）
-        g.MapGet("/diagram/plan", (RailData rail) => Results.Ok(new
+        g.MapGet("/diagram/plan", (RailData rail, EventStops events) => Results.Ok(new
         {
             // 折り返しの入換にかかる秒数（ゾーン → "から>へ" → 秒）
             shuntSeconds = rail.Stations.Values.Where(s => s.ShuntSeconds.Count > 0 && rail.Line.ZoneOfStation(s.Id) >= 0)
                 .ToDictionary(s => rail.Line.ZoneOfStation(s.Id).ToString(), s => s.ShuntSeconds),
-            trains = rail.Dia.Values.Select(t => new
+            trains = rail.Dia.Values.Where(t => !rail.IsIdleTrial(t)).Select(t => new // 走らない試運転は引かない
             {
                 train = t.Number,
                 type = t.Type,
@@ -1086,8 +1113,10 @@ public static class AdminEndpoints
                 // 路線の中の駅で折り返すときだけ（三郷より先など、路線の外で折り返す運行はつながない）
                 // 後運用を差し替えていれば、差し替えたもの
                 turn = rail.Turns.TurnOf(t) is { Kind: "折返", Number: { } tn } tt && TurnsOnLine(rail, t, tn) ? new { number = tn, time = tt.Time, how = tt.How, via = tt.How == "入換" ? ShuntRow(rail, t) : null } : null,
-                stops = t.Stops.Where(s => s.StationId != null && rail.Line.ZoneOfStation(s.StationId) >= 0 && (s.Arr != null || s.Dep != null))
-                    .Select(s => new { y = rail.Line.ZoneOfStation(s.StationId!), arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+                // 催物用臨停設定で臨時停車になる駅は、着＝通過時刻 − 停車時間（止まる線にする）
+                stops = t.Stops.Select((s, i) => (s, ev: events.Times(t, i)))
+                    .Where(x => x.s.StationId != null && rail.Line.ZoneOfStation(x.s.StationId) >= 0 && (x.s.Arr != null || x.s.Dep != null))
+                    .Select(x => new { y = rail.Line.ZoneOfStation(x.s.StationId!), arr = x.ev?.Arr ?? x.s.Arr, dep = x.s.Dep, track = x.s.Track }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
         }));
     }

@@ -68,6 +68,9 @@ public sealed class ClientReport
 
     // ---- 以下は在線共有モードのときだけ使う ----
 
+    /// <summary>編成平均乗車率（%、表示用の丸め前）。取得できないときは null。</summary>
+    public decimal? AverageOccupancy { get; set; }
+
     /// <summary>自列車の停車駅の情報（ゲームの stationList）。時刻は送らない。</summary>
     public List<StopInfo> Stops { get; set; } = new();
 

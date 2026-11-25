@@ -377,6 +377,20 @@ public sealed class CrewController
     /// <summary>車両ごとの乗車率（ゲームの値のまま）。</summary>
     public IReadOnlyList<float> CarOccupancy { get; private set; } = [];
 
+    /// <summary>全車の乗車率の単純平均（%）。どれか1両でも取得できなければ未取得。</summary>
+    public decimal? AverageOccupancyPercent()
+    {
+        if (CarOccupancy.Count == 0 || CarOccupancy.Count != CarModels.Count) return null;
+        decimal sum = 0;
+        foreach (var rate in CarOccupancy)
+        {
+            if (!float.IsFinite(rate) || rate < 0 || rate > int.MaxValue) return null;
+            sum += (decimal)rate;
+        }
+        var scale = _config.OccupancyRateIsRatio ? 100 : 1;
+        return sum * scale / CarOccupancy.Count;
+    }
+
     private void Tick()
     {
         var s = _tci.Read();
@@ -384,6 +398,11 @@ public sealed class CrewController
         {
             CarModels = s.CarModels ?? [];
             CarOccupancy = s.CarOccupancy ?? [];
+        }
+        else
+        {
+            CarModels = [];
+            CarOccupancy = [];
         }
         if (_role == CrewRole.Driver) DriverTick(s);
         else ConductorTick(s);

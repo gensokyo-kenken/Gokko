@@ -37,12 +37,12 @@ public sealed class TurnChanges(RailData rail)
     }
 
     /// <summary>運行番号（差し替えたあとは、つないだ列車の運行番号を受け継ぐ）。</summary>
-    public int? UnyoOf(DiaTrain d)
+    public string? UnyoOf(DiaTrain d)
     {
         lock (_lock) return _over.Count == 0 ? d.Unyo : Unyo(d.Number, 0);
     }
 
-    private int? Unyo(string number, int depth)
+    private string? Unyo(string number, int depth)
     {
         var d = rail.Dia.GetValueOrDefault(number);
         if (d == null) return null;
@@ -139,6 +139,16 @@ public sealed class TurnChanges(RailData rail)
                 cancelable = _changes.Any(c => c.A == d.Number || c.X == d.Number),
                 candidates
             };
+        }
+    }
+
+    /// <summary>ダイヤに列車を足した・外した（臨時列車の適用・取消）。折返のつなぎを作り直し、計画の線を読み直させる。</summary>
+    public void DiaChanged()
+    {
+        lock (_lock)
+        {
+            _origPred = _pred = _nextPred = null;
+            Version++;
         }
     }
 

@@ -48,6 +48,7 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
         public required string Dispatcher;
         public string? Caller; // null なら一斉通告
         public bool Private;
+        public bool BroadcastSession; // 個別に切り替えた間も一斉通告の枠を確保する
 
         /// <summary>一斉通告に応答して話している運転士・車掌（何人でも）。</summary>
         public readonly HashSet<string> Responders = new();
@@ -81,6 +82,12 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
     public bool IsDispatcher(string connectionId)
     {
         lock (_gate) return _dispatchers.ContainsKey(connectionId);
+    }
+
+    /// <summary>その接続が司令員なら社員番号、でなければ null。</summary>
+    public string? DispatcherCrew(string connectionId)
+    {
+        lock (_gate) return _dispatchers.GetValueOrDefault(connectionId);
     }
 
     /// <summary>参加している司令員（接続ID → 社員番号）。</summary>
@@ -245,10 +252,10 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
             if (!_dispatchers.ContainsKey(id)) return Result(false, "一斉通告は司令員だけが流せます");
             if (CallOf(id) != null) return Result(false, "今の通話を終えてから一斉通告してください");
             if (OfferFrom(id) != null) return Result(false, "個別呼出を取り消してから一斉通告してください");
-            if (_calls.Values.FirstOrDefault(c => c.Caller == null) is { } other)
+            if (_calls.Values.FirstOrDefault(c => c.BroadcastSession) is { } other)
                 return Result(false, $"{DispatcherLabel(_dispatchers.GetValueOrDefault(other.Dispatcher, ""))} が一斉通告中です");
             // 全員で開始チャイムを鳴らす。司令員のマイクはすぐ開く（チャイムと声は重なって流れる）
-            Renumber(new Call { Dispatcher = id });
+            Renumber(new Call { Dispatcher = id, BroadcastSession = true });
             return Result(true, "一斉通告を始めました（全員に聞こえます）");
         }
     }
@@ -324,15 +331,32 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
         }
     }
 
-    public TrainRadioResult ChangeMode(string id, long callId, bool privateCall)
+    public TrainRadioResult ChangeMode(string id, long callId, bool privateCall, string? responder = null)
     {
         lock (_gate)
         {
             Snapshot();
-            if (!_calls.TryGetValue(callId, out var call) || call.Dispatcher != id || call.Caller == null)
+            if (!_calls.TryGetValue(callId, out var call) || call.Dispatcher != id)
                 return Result(false, "通話中の司令員だけが切り替えられます");
+            if (responder != null && (!call.BroadcastSession || call.Private))
+                return Result(false, "共通の一斉通告中に操作してください");
             if (call.Private != privateCall)
             {
+                if (call.BroadcastSession)
+                {
+                    if (privateCall)
+                    {
+                        if (responder == null || !call.Responders.Contains(responder))
+                            return Result(false, "一斉通告に応答中の乗務員を選んでください");
+                        call.Caller = responder;
+                        call.Responders.Clear(); // 他の乗務員のマイクは閉じる。共通に戻れば再応答できる
+                    }
+                    else
+                    {
+                        call.Responders.Add(call.Caller!);
+                        call.Caller = null;
+                    }
+                }
                 call.Private = privateCall;
                 Renumber(call);
             }
@@ -437,7 +461,7 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
                 : new TrainRadioSpeaker { Id = id };
             var calls = _calls.Values.OrderBy(c => c.Id).Select(c => (Call: c, View: new TrainRadioCall
             {
-                Id = c.Id, IsPrivate = c.Private, Dispatcher = Speaker(c.Dispatcher), Caller = c.Caller == null ? null : Speaker(c.Caller),
+                Id = c.Id, IsPrivate = c.Private, BroadcastSession = c.BroadcastSession, Dispatcher = Speaker(c.Dispatcher), Caller = c.Caller == null ? null : Speaker(c.Caller),
                 Responders = c.Responders.Select(Speaker).OrderBy(s => s.Label, StringComparer.CurrentCulture).ToList()
             })).ToList();
             TrainRadioOffer OfferView(long offerId, string who) => new() { Id = offerId, Label = members.TryGetValue(who, out var m) ? m.Label : "" };
