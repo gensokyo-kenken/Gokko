@@ -23,6 +23,8 @@
     <Content Include="Data\CrossingBlocks.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- 行路表。勤怠管理の画面で Duties*.csv から選んで読む（既定は Duties.csv。Duties.full.csv は館浜〜大路の本来の行路） -->
     <Content Include="Data\Duties.csv;Data\Duties.full.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- 運行番号ごとの両数。スプレッドシートから書き出した CSV をそのまま置く（見出しの「運行番号」「両数」の列だけ読む） -->
+    <Content Include="Data\UnyoCars.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- 管理画面。exe の場所を基準に読むので、dotnet build の出力にもコピーする -->
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
