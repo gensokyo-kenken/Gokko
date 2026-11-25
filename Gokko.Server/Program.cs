@@ -36,6 +36,7 @@ builder.Services.AddSingleton<IncidentManager>();
 builder.Services.AddSingleton<RunTimeModel>();
 builder.Services.AddSingleton<SignalCalculator>();
 builder.Services.AddSingleton<CentralControl>();
+builder.Services.AddSingleton<EventStops>(); // 催物用臨停設定（司令用管理画面。再起動で消える）
 builder.Services.AddSingleton<ConnectionTable>(); // 接続待ちの組（ダイヤの「(接)」から）
 builder.Services.AddSingleton<RouteEngine>();
 builder.Services.AddSingleton<ProtectionRadio>();
@@ -91,6 +92,7 @@ var central = app.Services.GetRequiredService<CentralControl>();
 var incidentLog = app.Services.GetRequiredService<IncidentManager>();
 central.Changed += message => incidentLog.Note(message);
 rail.Turns.Changed += message => incidentLog.Note(message);
+app.Services.GetRequiredService<EventStops>().Changed += message => incidentLog.Note(message);
 app.Services.GetRequiredService<PlayerRegistry>().Changed += message => incidentLog.Note(message);
 var crewRoster = app.Services.GetRequiredService<CrewRoster>();
 crewRoster.DispatcherAutoLeft += id => incidentLog.Note($"司令員 ID:{id} を自動で退勤させました（{(int)CrewRoster.DispatcherIdleLimit.TotalMinutes}分操作なし）");
