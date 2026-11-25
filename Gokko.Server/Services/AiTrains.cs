@@ -86,6 +86,14 @@ public sealed class AiTrains : BackgroundService
     private HashSet<string> _userInGame = new();       // 運転画面に出ているユーザーの列番
     private DateTime _lastSpawnUtc;
     private TimeSpan? _lastGame;
+    /// <summary>
+    /// 途中の駅から出してよい列車の目安のロープレ時刻（自動運転列車をアリにした・ロープレ時刻を飛ばしたときの時刻）。
+    /// このとき、もう始発駅を出ているはずの列車だけ、このとき走っているはずの所から出す。それ以外の列車は始発駅にだけ出す
+    /// </summary>
+    private TimeSpan? _catchUpAt;
+    private bool _catchUpNext = true; // 次に AutoSpawn をまわすときに _catchUpAt を決める
+    /// <summary>始発駅で出せないまま、発車時刻をこれだけ過ぎたら出すのをやめる。</summary>
+    private static readonly TimeSpan SpawnLateLimit = TimeSpan.FromMinutes(10);
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
@@ -131,6 +139,7 @@ public sealed class AiTrains : BackgroundService
             if (_enabled == on) return;
             _enabled = on;
             _spawned.Clear();
+            _catchUpNext = on;
             if (!on) _trains.Clear();
         }
 
@@ -1487,9 +1496,9 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>
-    /// ダイヤの列車のうち、進路を扱う駅の発車時刻が近い（2分前〜30秒過ぎ）ものを、その駅に出す。
+    /// ダイヤの列車のうち、始発駅（進路を扱う駅で最初の駅）の発車時刻が近い（2分前から）ものを、その駅に出す。
     /// 出さないもの: ユーザーの列車、もう出した・走っている列番、走っている列車がこのあと続けて・折り返して走る列番。
-    /// 番線にほかの列車がいるなどで出せなければ、時刻の範囲の間は2秒ごとに試し直す。
+    /// 番線にほかの列車がいるなどで出せなければ、始発駅で2秒ごとに試し直す（発車時刻から SpawnLateLimit まで。先の駅には出さない）。
     /// </summary>
     private void AutoSpawn(HashSet<string> users, List<PlayerInfo> snapshot)
     {
@@ -1509,6 +1518,12 @@ public sealed class AiTrains : BackgroundService
             if (!_enabled || now is not { } n || !_clock.IsRunning) return;
             // ロープレ時刻を戻したら、出した記録を消す（もう一度出せるように）
             if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) _spawned.Clear();
+            // アリにした直後と、ロープレ時刻を飛ばした（2分より大きく進めた・戻した）ときだけ、途中を走っているはずの列車を途中の駅から出す
+            if (_catchUpNext || _lastGame is { } lg2 && (n < lg2 - TimeSpan.FromMinutes(2) || n > lg2 + TimeSpan.FromMinutes(2)))
+            {
+                _catchUpAt = n;
+                _catchUpNext = false;
+            }
             _lastGame = n;
 
             // 走っている列車が、このあと続けて・折り返して走る列番
@@ -1536,12 +1551,18 @@ public sealed class AiTrains : BackgroundService
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
-                // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
+                // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
+                // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、
+                // ほかの列車との順番が崩れて詰まる。
+                // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 var startDir = _routes.DirOfTrain(number);
-                var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30)
-                    && !(startDir is { } sd2 && PassesWithoutTrack(s, sd2)));
+                var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
+                if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                    ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
+                    : cands[0];
                 if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
-                if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
+                if (dep < n - SpawnLateLimit) continue; // 始発駅で長く出せなかった列車は、もう出さない
                 if (dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車
                 // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
                 if (start.StationId == EntryStation && start.Stop != "停" && start.Track == 2 && _routes.DirOfTrain(number) == Dir.Down)
