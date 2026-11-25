@@ -474,10 +474,35 @@
     $("tLabel").innerHTML = `<option value="">${esc(t.type)}</option>` + labels.filter((l) => l !== t.type).map((l) => `<option ${l === t.label ? "selected" : ""}>${esc(l)}</option>`).join("");
   }
 
+  // ---- 列番を運行番号と発駅の発車時刻から自動で入れる（Gokko.Common/Unyo.cs の列番の付け方の逆） ----
+  // 列番 = 頭の字（回送は「回」、それ以外は「臨」）＋ 始発の時 ＋ 運行番号の下2桁（下りは＋1）＋ 運行番号の S・T ＋ 種別の記号。
+  // 運行番号が100番台なら数字に＋3000、200番台なら＋6000。手で列番を直したら、それ以後は自動では変えない
+  const autoNums = new WeakMap(); // 列車 → 自動で入れた列番
+  function makeNumber(t) {
+    if (t.turnHow === "連結") return null; // 増結車は「連＋連結する列車の列番」
+    const m = /^(\d+)([A-Z]*)$/.exec(t.unyo || "");
+    const dep = sec(t.stops[0] && t.stops[0].dep), d = dirOf(t);
+    if (!m || dep == null || !d) return null;
+    const u = +m[1];
+    if (u % 2 === 1) return null; // 運行番号は偶数（下りは＋1した奇数、上りは偶数の列番になる）
+    const low = (u % 100) + (d === "下り" ? 1 : 0);
+    const n = (u >= 200 ? 6000 : u >= 100 ? 3000 : 0) + Math.floor((dep % 86400) / 3600) * 100 + low;
+    const letter = /^[ST]/.test(m[2]) ? m[2][0] : "";
+    const type = base.types.find((x) => x.type === t.type);
+    return t.type === "回送" ? `回${n}${letter}` : `臨${n}${letter}${type ? type.suffix : ""}`;
+  }
+  function autoNumber(t) {
+    const nn = makeNumber(t);
+    if (!nn || (t.number && t.number !== autoNums.get(t))) return;
+    t.number = nn;
+    autoNums.set(t, nn);
+    if (cur.trains[curTrain] === t) $("tNumber").value = nn;
+  }
+
   function drawHint(t) {
     const type = base.types.find((x) => x.type === t.type);
     const d = dirOf(t);
-    const hint = t.turnHow === "連結" ? "増結車の列番は「連＋連結する列車の列番」" : t.type === "回送" ? "列番は「回」で始める" : type && type.suffix ? `列番の末尾は ${type.suffix}` : "列番の末尾に種別の文字を付けない";
+    const hint = t.turnHow === "連結" ? "増結車の列番は「連＋連結する列車の列番」" : makeNumber(t) ? "列番は運行番号と発車時刻から自動で入ります（手で直せます）" : t.unyo && (parseInt(t.unyo, 10) || 0) % 2 === 1 ? "列番を自動で入れるには、運行番号を偶数にします" : t.type === "回送" ? "列番は「回」で始める" : type && type.suffix ? `列番の末尾は ${type.suffix}` : "列番の末尾に種別の文字を付けない";
     $("tHint").textContent = `${hint}・数字の最後は${d === "上り" ? "偶数（上り）" : d === "下り" ? "奇数（下り）" : "奇数＝下り／偶数＝上り"}`;
     $("tDir").textContent = d ? `${d}` : "";
   }
@@ -568,6 +593,7 @@
       t[key] = conv($(id).value);
       dirty = true;
       if (key === "type") { drawLabels(t); t.label = ""; applyStopPattern(t); drawStops(t); }
+      if (key === "unyo" || key === "type") autoNumber(t);
       drawHint(t);
       drawTrains();
     };
@@ -585,7 +611,7 @@
   field("tDest", "dest", (v) => v.trim());
   $("tDep").onchange = () => {
     const t = cur.trains[curTrain];
-    if (t.stops[0]) { t.stops[0].dep = $("tDep").value.trim(); dirty = true; manual.delete(t); autoFill(t); drawStops(t); drawTrains(); }
+    if (t.stops[0]) { t.stops[0].dep = $("tDep").value.trim(); dirty = true; manual.delete(t); autoFill(t); autoNumber(t); drawHint(t); drawStops(t); drawTrains(); }
   };
 
   // 発駅〜終点の駅を並べる（今の停車・時刻は、同じ駅なら残す）
@@ -619,6 +645,7 @@
     fixTracks(t);
     manual.delete(t);
     autoFill(t);
+    autoNumber(t);
     drawTrain(); drawTrains();
   };
 
@@ -1048,6 +1075,7 @@
     const prev = cur.trains[curTrain];
     const t = { unyo: prev ? prev.unyo : (base.freeUnyo || ""), number: "", type: prev ? prev.type : "普通", label: "", dest: list[list.length - 1].name, stops };
     fixTracks(t); // 打った番線が入れない番線なら、入れる番線に直す
+    autoNumber(t); // 運行番号と発車時刻から列番を入れる
     cur.trains.push(t);
     curTrain = cur.trains.length - 1;
     manual.add(t);
@@ -1292,7 +1320,7 @@
       base = await api("GET", "/base");
       for (const s of base.stations) stById[s.id] = s;
       const used = new Set(base.unyoUsed.map(String));
-      base.freeUnyo = String([...Array(99).keys()].map((i) => 99 - i).find((n) => !used.has(String(n))) || ""); // 所定で使っていない運行番号（大きい方から）
+      base.freeUnyo = String([...Array(49).keys()].map((i) => 98 - 2 * i).find((n) => !used.has(String(n))) || ""); // 所定で使っていない運行番号（偶数。大きい方から。列番の付け方は偶数の運行番号）
       $("meRole").textContent = base.me.approver ? "（運転課課長代理）" : "";
       await loadGroups();
       loadPlan();
