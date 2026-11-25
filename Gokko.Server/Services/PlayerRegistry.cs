@@ -64,6 +64,13 @@ public sealed class PlayerInfo
     /// <summary>位置（ゾーン）が分かっていた最後の時刻。データにない回路を踏んでいる間は、前の位置を保つ。</summary>
     public DateTime ZonesUpdatedUtc { get; set; }
 
+    /// <summary>
+    /// 連結された増結車（ユーザーが運転している 連777 など）なら、連結した列車の列番（777）。親の列車が同じ軌道回路に入った時点で入る。
+    /// この間は在線を出さない（<see cref="PlayerRegistry.Snapshot"/> で踏んでいる回路を空にする。その回路には親の列番が出る）。
+    /// 運転画面を出る・列番が変わると外す。
+    /// </summary>
+    public string? CoupledInto { get; set; }
+
     /// <summary>この列車が引き継いだ在線の接続ID（継続乗務の在線を自動運転の列車が引き継いだとき）。進路・駅の状態をそこから移す。</summary>
     public string? TakesOver { get; set; }
 
@@ -122,8 +129,24 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         if (!_players.TryRemove(connectionId, out var p)) return;
         lock (p)
             if (!kicked && (p.ContinueDuty || central.DiaMode) && p.Mode == ShareMode.Shared && p.InGame && p.TrackCircuits.Count > 0 && p.TrainNumber.Length > 0
-                && p.AppearReason == null && !LeavesLine(p))
+                && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
                 AddGhost(p);
+    }
+
+    /// <summary>連結: 増結車（ユーザーが運転している列車）を、親の列車に連結したことにする（在線を消す）。参加していなければ false。</summary>
+    public bool Couple(string connectionId, string parent)
+    {
+        if (!_players.TryGetValue(connectionId, out var p)) return false;
+        string child;
+        lock (p)
+        {
+            if (p.CoupledInto != null) return false;
+            p.CoupledInto = parent;
+            child = p.TrainNumber;
+        }
+
+        Changed?.Invoke($"連結: {child} は {parent} に連結したので、在線を消しました");
+        return true;
     }
 
     public PlayerInfo? Get(string connectionId)
@@ -138,7 +161,11 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         var list = new List<PlayerInfo>();
         foreach (var p in _players.Values)
         {
-            lock (p) list.Add(p.Clone());
+            PlayerInfo c;
+            lock (p) c = p.Clone();
+            // 連結された増結車は在線を出さない（親の列車の在線だけにする）
+            if (c.CoupledInto != null) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
+            list.Add(c);
         }
 
         lock (_ghosts)
@@ -309,11 +336,13 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             var nowIn = report.InGame && circuits.Count > 0;
             // ダイヤ運転中は、継続乗務ボタンによらず残す（出現待ちだった列車は、在線がないので残さない）
             if (wasIn && !nowIn && p.Mode == ShareMode.Shared && (p.ContinueDuty || report.ContinueDuty || central.DiaMode) && p.TrainNumber.Length > 0
-                && p.AppearReason == null && !LeavesLine(p))
+                && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
                 AddGhost(p);
             p.ContinueDuty = report.ContinueDuty;
             p.TrainNumberTyped = report.TrainNumberTyped;
             var number = Truncate(NormalizeName(report.TrainNumber));
+            // 連結された増結車: 運転画面を出た・列番が変わったら、ふつうの列車に戻す
+            if (p.CoupledInto != null && (!nowIn || number != p.TrainNumber)) p.CoupledInto = null;
             // ダイヤ運転中に列車番号を手入力していなければ、出現待ち（残した在線は引き継がず、消しも踏みつぶしもしない）
             var mustType = central.DiaMode && p.Mode == ShareMode.Shared && !report.TrainNumberTyped;
             if (!nowIn) p.AppearReason = null;
