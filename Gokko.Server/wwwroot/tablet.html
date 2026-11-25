@@ -518,7 +518,7 @@
     const r = data && data.rinji;
     if (!r) return "";
     return `<div class="pane" style="border:2px solid #c62828"><b class="err">特発臨 ${esc(r.number)}（${esc(r.type)}）</b>
-      ${esc(r.station)} ${r.track}番線 ${esc(r.dep || "")}発 → ${esc(r.dest)} ${esc(r.arr || "")}着。
+      ${esc(r.station)} ${r.track != null ? `${r.track}番線` : "（着いた番線）"} ${esc(r.dep || "")}発 → ${esc(r.dest)} ${esc(r.arr || "")}着。
       ${esc(r.from)} は ${esc(r.station)} で打ち切りです。ゲームの列番を <b>${esc(r.number)}</b> に入れ直してください。
       <a href="tablet.html?train=${encodeURIComponent(r.number)}">${esc(r.number)} の時刻表を見る</a></div>`;
   }

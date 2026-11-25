@@ -378,8 +378,7 @@ public sealed class AiTrains : BackgroundService
                 // 駅で停車中なら消す（ホームで出発を待つ列車は、出発の進路の接近の区間にいる。自動進路構成が先行列車に譲らせた進路を
                 // 持ち続けると、先行列車がその進路を取れない）
                 if (i >= 0 && !t.Dwelling && t.Path[i].Route is { Approach.Count: > 0 } ap && t.Info.TrackCircuits.Any(ap.Approach.Contains)) continue;
-                if (i > 0) t.Path.RemoveRange(i, t.Path.Count - i);
-                t.Info.GameRoutes.Remove((r.Interlocking, r.RouteName));
+                if (i > 0) t.Path.RemoveRange(i, t.Path.Count - i);                t.Info.GameRoutes.Remove((r.Interlocking, r.RouteName));
             }
             t.CanRequestDeparture = state.CanRequestDeparture;
             t.RouteMessage = state.RouteMessage;
@@ -928,8 +927,10 @@ public sealed class AiTrains : BackgroundService
     private bool ToRinji(Train t, DateTime utcNow)
     {
         if (Rinji is not { } rinji || rinji.PendingFor(t.Number) is not { } r || _rail.DiaOf(r.Number) is not { } nd) return false;
-        if (!_rail.Stations.TryGetValue(r.StationId, out var st) || !st.TrackCircuit.TryGetValue(r.Track, out var platform)) return false;
-        if (!t.Info.TrackCircuits.Contains(platform)) return false; // まだ発駅の番線に着いていない
+        if (!_rail.Stations.TryGetValue(r.StationId, out var st)) return false;
+        // 発駅の番線（走っている列車から立てた特発臨は、番線が決まっていないので、止まった番線）
+        var track = r.Track ?? st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? -1;
+        if (!st.TrackCircuit.TryGetValue(track, out var platform) || !t.Info.TrackCircuits.Contains(platform)) return false; // まだ発駅の番線に着いていない
         if (_routes.DirOfTrain(r.Number) is not { } dir) return false;
         var i = nd.Stops.FindIndex(s => s.StationId == r.StationId);
         if (i < 0 || i == nd.Stops.Count - 1) return false;
@@ -938,10 +939,10 @@ public sealed class AiTrains : BackgroundService
         t.Shunting = false;
         t.FromShunt = false;
         t.CoupleStage = 0;
-        Become(t, r.Number, nd, dir, st, r.Track, platform, i, null, utcNow);
-        rinji.MarkStarted(r.Number);
-        t.Status = $"{st.Name} {r.Track}番線で特発臨に変わりました（{old} → {r.Number}）";
-        _log.Note($"にぎやかし: {old} は {st.Name} {r.Track}番線で特発臨 {r.Number} になりました");
+        Become(t, r.Number, nd, dir, st, track, platform, i, null, utcNow);
+        rinji.MarkStarted(r.Number, track);
+        t.Status = $"{st.Name} {track}番線で特発臨に変わりました（{old} → {r.Number}）";
+        _log.Note($"にぎやかし: {old} は {st.Name} {track}番線で特発臨 {r.Number} になりました");
         return true;
     }
 
