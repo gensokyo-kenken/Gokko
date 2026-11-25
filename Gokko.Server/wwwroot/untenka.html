@@ -149,9 +149,10 @@
           <span class="muted" id="tDir"></span>
         </div>
         <div class="list" style="max-height:none">
-          <table><thead><tr><th>駅</th><th>停車</th><th>着</th><th>発（通過）</th><th>番線</th></tr></thead><tbody id="stops"></tbody></table>
+          <table><thead><tr><th>駅</th><th>番線</th><th>停車</th><th>着</th><th>発（通過）</th></tr></thead><tbody id="stops"></tbody></table>
         </div>
-        <div class="note">時刻は 10:05 か 10:05:30 の形で入れます。停車駅（発駅を除く）と、進路を扱う駅の番線は、同じ向きのいつもの番線を最初に入れています。</div>
+        <div class="note">時刻は 10:05 か 10:05:30 の形で入れます。発駅の発車時刻を入れると、標準運転時分（停車駅は30秒停車）でほかの駅の時刻をざっと入れます。途中の時刻を手で直したあとは自動では入れ直しません（［標準運転時分で埋める］で入れ直します）。<br>
+          番線は、同じ向きのいつもの番線を最初に入れています。</div>
       </fieldset>
     </div>
   </div>
@@ -357,11 +358,11 @@
       const trackSel = st.control || s.track != null
         ? `<select data-k="track" data-i="${i}" ${dis}><option value="">${s.stop === "停" ? "－" : "所定"}</option>${tracks.map((n) => `<option value="${n}" ${n === s.track ? "selected" : ""}>${n}番線</option>`).join("")}</select>` : "";
       return `<tr class="${s.stop === "停" ? "" : "pass"}">
-        <td>${esc(st.name)}${st.control ? "" : ' <span class="muted">（進路なし）</span>'}</td>
+        <td>${esc(st.name)}</td>
+        <td>${trackSel}</td>
         <td><input type="checkbox" data-k="stop" data-i="${i}" ${s.stop === "停" ? "checked" : ""} ${first || last ? "disabled" : dis}></td>
         <td>${s.stop === "停" && !first ? `<input class="t-in" data-k="arr" data-i="${i}" value="${esc(short(s.arr))}" ${dis}>` : ""}</td>
-        <td>${!last ? `<input class="t-in" data-k="dep" data-i="${i}" value="${esc(short(s.dep))}" ${dis}>` : ""}</td>
-        <td>${trackSel}</td></tr>`;
+        <td>${!last ? `<input class="t-in" data-k="dep" data-i="${i}" value="${esc(short(s.dep))}" ${dis}>` : ""}</td></tr>`;
     }).join("") || `<tr><td colspan="5" class="muted">発駅・終点を選んで［駅を並べる］を押します。</td></tr>`;
   }
 
@@ -389,7 +390,7 @@
   field("tDest", "dest", (v) => v.trim());
   $("tDep").onchange = () => {
     const t = cur.trains[curTrain];
-    if (t.stops[0]) { t.stops[0].dep = $("tDep").value.trim(); dirty = true; drawStops(t); drawTrains(); }
+    if (t.stops[0]) { t.stops[0].dep = $("tDep").value.trim(); dirty = true; manual.delete(t); autoFill(t); drawStops(t); drawTrains(); }
   };
 
   // 発駅〜終点の駅を並べる（今の停車・時刻は、同じ駅なら残す）
@@ -412,15 +413,28 @@
     t.stops[t.stops.length - 1].dep = null;
     if (!t.dest) t.dest = b.name;
     dirty = true;
+    manual.delete(t);
+    autoFill(t);
     drawTrain(); drawTrains();
   };
 
-  // 標準運転時分で時刻を入れる
+  // 標準運転時分で時刻を入れる。発駅の発車時刻を入れた・駅を並べた・停車を変えたときは自動で入れる
+  // （途中の駅の時刻を手で直したあとは、自動では入れ直さない。［標準運転時分で埋める］を押せば入れ直す）
+  const manual = new WeakSet(); // 途中の時刻を手で直した列車
+  function autoFill(t) {
+    if (manual.has(t) || t.stops.length < 2 || sec(t.stops[0].dep) == null) return;
+    fillTimes(t);
+  }
   $("fill").onclick = () => {
     const t = cur.trains[curTrain];
     if (t.stops.length < 2) { alert("先に［駅を並べる］を押してください"); return; }
+    if (sec(t.stops[0].dep) == null) { alert("発駅の発車時刻を入れてください"); return; }
+    manual.delete(t);
+    const missing = fillTimes(t);
+    if (missing.length) alert(`標準運転時分がない区間は2分で入れました。直してください:\n${missing.join("\n")}`);
+  };
+  function fillTimes(t) {
     let now = sec(t.stops[0].dep);
-    if (now == null) { alert("発駅の発車時刻を入れてください"); return; }
     const dir = dirOf(t);
     const types = [t.type === "回送" ? "普通" : t.type, "普通"];
     const missing = [];
@@ -441,8 +455,8 @@
     }
     dirty = true;
     drawStops(t); drawTrains();
-    if (missing.length) alert(`標準運転時分がない区間は2分で入れました。直してください:\n${missing.join("\n")}`);
-  };
+    return missing;
+  }
 
   $("stops").onchange = (ev) => {
     const el = ev.target;
@@ -455,10 +469,14 @@
       if (s.stop === "通") s.arr = null;
       const st = stById[s.st];
       if (s.track == null || !st.control) s.track = st.control || s.stop === "停" ? defTrack(s.st, dirOf(t), s.stop) : null;
+      autoFill(t);
       drawStops(t);
     } else if (k === "track") s.track = el.value === "" ? null : +el.value;
-    else s[k] = el.value.trim() || null;
-    if (+el.dataset.i === 0 && k === "dep") $("tDep").value = el.value;
+    else {
+      s[k] = el.value.trim() || null;
+      if (+el.dataset.i === 0 && k === "dep") { $("tDep").value = el.value; manual.delete(t); autoFill(t); }
+      else manual.add(t);
+    }
     dirty = true;
     drawTrains();
   };
