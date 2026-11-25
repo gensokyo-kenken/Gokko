@@ -756,8 +756,9 @@ public sealed partial class RouteEngine
     public void Tick()
     {
         var now = DateTime.UtcNow;
-        var snapshot = _players.Snapshot()
-            .Where(p => p.Mode == ShareMode.Shared && p.InGame && p.TrainCrewConnected && p.TrainNumber.Length > 0)
+        var all = _players.Snapshot();
+        var snapshot = all
+            .Where(p => p.Mode == ShareMode.Shared && p.InGame && p.TrainCrewConnected && p.TrainNumber.Length > 0 && p.CoupledInto == null)
             .ToList();
 
         lock (_lock)
@@ -835,6 +836,11 @@ public sealed partial class RouteEngine
             }
 
             foreach (var run in _runs.Values) UpdatePosition(run);
+
+            // 連結: 増結車（ユーザーが運転している 連777 など）のいる軌道回路に親の列車（777）が入ったら、増結車の在線を消す
+            _couplingDone.Clear();
+            foreach (var p in all.Where(p => p.CoupledInto != null)) _couplingDone[p.ConnectionId] = p.CoupledInto!;
+            CoupleUserCars(now);
 
             // 他の列車がいる軌道回路（回路 → 列番）
             var occupied = new Dictionary<string, TrainRun>();
@@ -2841,6 +2847,32 @@ public sealed partial class RouteEngine
         }
     }
 
+    /// <summary>連結した増結車（接続ID → 親の列番）。毎周期作り直す。運転画面にその旨を出す。</summary>
+    private readonly Dictionary<string, string> _couplingDone = new();
+
+    /// <summary>
+    /// ユーザーが運転している増結車（連777 と、連777 に折り返す 回730）のいる軌道回路に、親の列車（777）が入ったら、その時点で連結したとする。
+    /// 増結車の在線を消して（PlayerRegistry.Couple）、扱いを外す。その回路には親の列番が出る。
+    /// 増結車が自動運転の列車なら、これまでどおり AiTrains が連結位置で消す
+    /// </summary>
+    private void CoupleUserCars(DateTime now)
+    {
+        foreach (var parent in _runs.Values.Where(r => r.HasPosition).ToList())
+        {
+            var numbers = CouplingPartnerNumbers(parent.Train);
+            foreach (var child in _runs.Values.Where(r => r != parent && numbers.Contains(r.Train) && !PlayerRegistry.IsVirtual(r.ConnId)).ToList())
+            {
+                if (child.Player.TrackCircuits.Count == 0 || !parent.Player.TrackCircuits.Any(child.Player.TrackCircuits.Contains)) continue;
+                if (!_players.Couple(child.ConnId, parent.Train)) continue;
+                foreach (var st in parent.Stations.Where(s => !s.Done && s.CouplePartner == child)) (st.Coupled, st.CouplePartner, st.CoupleWaiting) = (true, null, null);
+                RunLog(now, child, $"扱いを外しました（{parent.Train} に連結した）");
+                _runs.Remove(child.ConnId);
+                _couplingDone[child.ConnId] = parent.Train;
+                _log.Note($"連結: {parent.Train} が {child.Train} のいる軌道回路に入ったので、{child.Train} の在線を消しました");
+            }
+        }
+    }
+
     /// <summary>連結: 列車（接続ID）→ 駅ID → その番線で止まって待っている増結車の列番。自動運転列車が停止位置を決めるのに使う。</summary>
     public Dictionary<string, Dictionary<string, string>> CouplePartners()
     {
@@ -3465,6 +3497,8 @@ public sealed partial class RouteEngine
 
         foreach (var (conn, a) in _appear)
             _outputs[conn] = new Output(new(), new(), new(), false, "出発要求", $"出現待ち: {a.Reason}");
+        foreach (var (conn, parent) in _couplingDone)
+            _outputs[conn] = new Output(new(), new(), new(), false, "出発要求", $"{parent} に連結しました（在線は {parent} として出します）");
 
         // ほかの参加者のゲームにも設定する進路: その列車のゲームで開通を確かめ、列車がまだ入っていないもの
         // （入ったら外す。本物の信号も、列車が過ぎると停止に戻る。その先は在線による停止の上限で守る）
