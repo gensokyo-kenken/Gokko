@@ -1547,6 +1547,10 @@
         <label><input type="radio" name="${name}" value="off"> ナシ</label>
         <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
       </div>
+      <div class="row"><b>試運転</b>
+        <select data-ai="trial"><option value="">なし</option></select>
+        <span class="muted">所定の臨時列車です。普段は「なし」（1本も出しません）。運行番号を選ぶと、その運行番号の試運転を、自動運転列車アリのときに時刻に合わせて出します。再起動すると「なし」に戻ります。</span>
+      </div>
       <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は6両）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
       <div class="row">
         <input data-ai="train" placeholder="列番（例: 1651）" size="12">
@@ -1557,12 +1561,30 @@
       </div>
       <div data-ai="list"></div>`;
     const q = (k) => el.querySelector(`[data-ai="${k}"]`);
-    let last = "";
+    let last = "", lastTrials = "", trialList = [];
+
+    // 試運転のプルダウン: なし・運行番号ごと・すべて（運行番号が2つ以上のとき）
+    function showTrials(trials, on) {
+      const sel = q("trial");
+      const key = JSON.stringify(trials);
+      if (key !== lastTrials) {
+        const opts = [`<option value="">なし</option>`].concat(trials.map((t) =>
+          `<option value="${t.unyo}">運行${t.unyo}（${esc(t.trains.join("・"))}　${esc(t.from)} ${esc(t.dep || "")}発〜${esc(t.to)} ${esc(t.arr || "")}着）</option>`));
+        if (trials.length > 1) opts.push(`<option value="all">すべて</option>`);
+        sel.innerHTML = opts.join("");
+        lastTrials = key;
+      }
+      if (document.activeElement === sel) return; // 選んでいる最中は書き換えない
+      const v = on.length === 0 ? "" : on.length === 1 ? String(on[0]) : on.length === trials.length ? "all" : "";
+      if (sel.value !== v) sel.value = v;
+    }
 
     async function refresh() {
       try {
         const d = await api("GET", "/ai-trains");
         for (const r of el.querySelectorAll(`input[name="${name}"]`)) r.checked = (r.value === "on") === !!d.enabled;
+        trialList = d.trials || [];
+        showTrials(trialList, d.trialsOn || []);
         const list = d.trains || [];
         const html = list.length === 0 ? `<div class="muted">走っていません</div>`
           : `<table>${list.map((t) => `<tr><td><b>${esc(t.train)}</b>${t.auto ? ` <span class="muted">自動</span>` : ""}</td><td class="muted">${t.cars}両</td>`
@@ -1578,6 +1600,12 @@
       refresh();
     }
 
+    q("trial").addEventListener("change", async () => {
+      const v = q("trial").value;
+      const unyos = v === "" ? [] : v === "all" ? trialList.map((t) => t.unyo) : [Number(v)];
+      q("trial").blur();
+      await call("POST", "/ai-trains/trial", { unyos });
+    });
     el.addEventListener("change", async (ev) => {
       if (ev.target.name !== name) return;
       const on = ev.target.value === "on";

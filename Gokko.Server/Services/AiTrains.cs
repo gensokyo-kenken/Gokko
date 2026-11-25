@@ -137,6 +137,52 @@ public sealed class AiTrains : BackgroundService
         _log.Note(on ? "にぎやかし: 自動運転列車アリにしました（ダイヤの列車を時刻に合わせて出します）" : "にぎやかし: 自動運転列車ナシにしました（走っていた列車は消しました）");
     }
 
+    /// <summary>試運転の運行番号ごとの列車（列番・最初の駅と発車時刻・最後の駅と着時刻）。司令用管理画面などのプルダウンの項目。</summary>
+    public sealed record TrialView(int Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
+
+    public List<TrialView> Trials()
+    {
+        var list = new List<TrialView>();
+        foreach (var unyo in _rail.TrialUnyos())
+        {
+            var trains = _rail.Dia.Values.Where(d => RailData.IsTrial(d) && d.Unyo == unyo && d.Stops.Count > 0)
+                .OrderBy(d => DayTime(d.Stops[0].Dep ?? d.Stops[0].Arr) ?? TimeSpan.MaxValue).ToList();
+            if (trains.Count == 0) continue;
+            var (first, last) = (trains[0].Stops[0], trains[^1].Stops[^1]);
+            list.Add(new TrialView(unyo, trains.Select(d => d.Number).ToList(), first.Name, Hm(first.Dep ?? first.Arr), last.Name, Hm(last.Arr ?? last.Dep)));
+        }
+        return list;
+
+        static TimeSpan? DayTime(string? hms) => Time(hms) is { } t && t < TimeSpan.FromHours(4) ? t + TimeSpan.FromDays(1) : Time(hms);
+        static string? Hm(string? hms) => hms is { Length: >= 5 } ? hms[..5] : hms;
+    }
+
+    /// <summary>
+    /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
+    /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
+    /// </summary>
+    public string SetTrials(IEnumerable<int> unyos)
+    {
+        _rail.SetTrialsOn(unyos);
+        var on = _rail.TrialsOn.Order().ToList();
+        List<string> removed = new();
+        lock (_lock)
+        {
+            foreach (var t in _trains.Values.Where(t => RailData.IsTrial(t.Dia) && _rail.IsIdleTrial(t.Dia)).ToList())
+            {
+                _trains.Remove(t.Id);
+                removed.Add(t.Shown ?? t.Number);
+            }
+            // 選び直したら、時刻の範囲の中ならもう一度出せるように
+            _spawned.RemoveWhere(n => n.StartsWith("試"));
+        }
+
+        var message = on.Count == 0 ? "試運転: なし（1本も出しません）" : $"試運転: 運行 {string.Join("・", on)} を走らせます";
+        if (removed.Count > 0) message += $"（走っていた {string.Join("・", removed)} は消しました）";
+        _log.Note(message);
+        return message;
+    }
+
     public List<View> List()
     {
         lock (_lock)
@@ -152,6 +198,7 @@ public sealed class AiTrains : BackgroundService
         number = RailData.NormalizeTrain(number);
         if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
         if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
+        if (!auto && takesOver == null && _rail.IsIdleTrial(dia)) return (false, $"{number} は走らせない試運転です（試運転のプルダウンで運行 {dia.Unyo} を選んでください）");
         var dir = _routes.DirOfTrain(number);
         if (dir == null) return (false, $"{number}: 列車番号の形が違います");
         cars = Math.Clamp(cars <= 0 ? 6 : cars, 1, 10);
@@ -1534,6 +1581,7 @@ public sealed class AiTrains : BackgroundService
             {
                 var number = RailData.NormalizeTrain(dia.Number);
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
                 // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
