@@ -28,7 +28,7 @@ builder.Services.AddSingleton(options.Random); // 管理画面から書き換え
 builder.Services.AddSingleton(data);
 builder.Services.AddSingleton(rail);
 builder.Services.AddSingleton(sp => new DutyRosters(dataDir, rail, sp.GetService<ILogger<DutyRosters>>())); // 行路表（Data/Duties*.csv から勤怠管理で選ぶ。既定は Duties.csv。なければ空）
-builder.Services.AddSingleton(sp => new CrewRoster(dataDir, sp.GetService<ILogger<CrewRoster>>()) { PasswordUntil = options.Discord.PasswordUntil }); // 乗務員と行路の割り当て（Data/Crew.json）
+builder.Services.AddSingleton(sp => new CrewRoster(dataDir, sp.GetService<ILogger<CrewRoster>>()) { PasswordUntil = options.Discord.PasswordUntil }); // 乗務員と行路の割り当て（Data/Crew.db）
 builder.Services.AddSingleton<DiscordAuth>(); // 乗務員の Discord ログイン
 builder.Services.AddSingleton<PlayerRegistry>();
 builder.Services.AddSingleton<GameClock>();

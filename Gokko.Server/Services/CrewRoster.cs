@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
+using Microsoft.Data.Sqlite;
 
 namespace Gokko.Server.Services;
 
 /// <summary>
-/// 乗務員（ユーザー）と、行路への割り当て（勤怠管理）。Data/Crew.json に保存し、サーバーを再起動しても残す。
+/// 乗務員（ユーザー）と、行路への割り当て（勤怠管理）。Data/Crew.db に保存し、サーバーを再起動しても残す。
 /// ・ユーザーは社員番号（8桁）で見分ける。ログインも社員番号で、画面に出すのも社員番号（ID:10103200）。ユーザー名は名簿に載せるだけ
 ///   社員番号 = 元号（1 令和・9 平成・8 昭和）＋ 入社年度の和暦2桁 ＋ 連番5桁（01000〜99999 から空きをランダムに。所属は入社後に決まるので、番号では分けない）
 ///   例: 10103200 = 令和元年度（2019年度）入社
@@ -23,6 +25,7 @@ namespace Gokko.Server.Services;
 public sealed class CrewRoster
 {
     public const string FileName = "Crew.json";
+    public const string DatabaseFileName = "Crew.db";
 
     /// <summary>振れる役職。「司令員」は、クライアントで司令として参加できる（列車無線の応答・一斉通告・区間防護）。</summary>
     public const string DispatcherRole = "司令員";
@@ -43,8 +46,11 @@ public sealed class CrewRoster
     private const string PasswordChars = "abcdefghjkmnpqrstuvwxyz23456789"; // 見間違えやすい i l o 0 1 を除く
 
     private readonly object _lock = new();
-    private readonly string _path;
+    private readonly string _dataDir;
+    private readonly string _dbPath;
+    private readonly string _jsonPath;
     private readonly ILogger<CrewRoster>? _log;
+    private bool _loaded; // 起動時に DB（か Crew.json）を読み終えたか
     private List<CrewUser> _users = new();
     private Dictionary<string, string> _assign = new(); // 行路番号 → 社員番号
     private Dictionary<string, DateTime> _attend = new(); // 出勤した人（社員番号 → 出勤した時刻 UTC）
@@ -136,17 +142,26 @@ public sealed class CrewRoster
 
     public CrewRoster(string dataDir, ILogger<CrewRoster>? log = null)
     {
-        _path = Path.Combine(dataDir, FileName);
+        _dataDir = dataDir;
+        _jsonPath = Path.Combine(dataDir, FileName);
+        _dbPath = Path.Combine(dataDir, DatabaseFileName);
         _log = log;
         try
         {
-            if (File.Exists(_path) && JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_path), Json) is { } f)
+            // DBがない場合はテーブルを作る。既存データはJSONから初回だけ移行する。
+            InitializeDatabase();
+            if (WasMigrated())
             {
+                LoadDatabase();
+                _loaded = true;
+            }
+            else if (File.Exists(_jsonPath) && JsonSerializer.Deserialize<FileShape>(File.ReadAllText(_jsonPath), Json) is { } f)
+            {
+                // Crew.json からの初回移行。移行後は json_migrated を残す。
                 _users = f.Users.Where(u => !string.IsNullOrWhiteSpace(u.Name)).ToList();
 
                 // 社員番号のなかったころのユーザーには、作った年度・道列で番号を振る（割り当ては、ユーザー名から社員番号に置き換える）
                 var oldNames = _users.ToDictionary(u => u, u => u.Name);
-                var changed = false;
                 foreach (var u in _users)
                 {
                     if (IsEmployeeId(u.Id) && _users.Count(x => x.Id == u.Id) == 1) continue;
@@ -154,7 +169,6 @@ public sealed class CrewRoster
                     if (!Depots.Contains(u.Depot)) u.Depot = Depots[0];
                     u.Id = "";
                     u.Id = NewEmployeeId(u.JoinYear) ?? "";
-                    changed = true;
                 }
 
                 _assign = new Dictionary<string, string>();
@@ -163,7 +177,6 @@ public sealed class CrewRoster
                     var u = _users.FirstOrDefault(x => x.Id == who) ?? _users.FirstOrDefault(x => string.Equals(oldNames[x], who, StringComparison.OrdinalIgnoreCase));
                     if (u == null) continue;
                     _assign[duty] = u.Id;
-                    if (u.Id != who) changed = true;
                 }
 
                 var ids = _users.Select(u => u.Id).ToHashSet();
@@ -171,34 +184,563 @@ public sealed class CrewRoster
                 _lastDuty = f.LastDuties.Where(x => ids.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value);
                 _auto = f.AutoAssigned.Where(_assign.ContainsKey).ToHashSet();
                 _extras = f.Extras.Where(x => ids.Contains(x.User) && x.Duty.Length > 0).ToList();
-                _roleAttend = f.RoleAttendance.Where(x => RoleNames.Contains(x.Key))
+                _roleAttend = f.RoleAttendance.Where(x => AttendRoleNames.Contains(x.Key))
                     .ToDictionary(x => x.Key, x => x.Value.Where(a => _users.Any(u => u.Id == a.Key && u.Roles.Contains(x.Key))).ToDictionary(a => a.Key, a => a.Value));
                 _applications = f.Applications.Where(x => x.Key.Length > 0 && x.DiscordHash.Length > 0).ToList();
 
-                if (changed) Save();
+                _loaded = true;
+                Save();
+            }
+            else
+            {
+                _loaded = true;
+                Save();
             }
         }
         catch (Exception ex)
         {
-            _log?.LogWarning(ex, "{File} を読めませんでした（空で始めます）", FileName);
+            _log?.LogWarning(ex, "{File} を読めませんでした（空で始めます）", DatabaseFileName);
         }
     }
 
     private void Save()
     {
+        // 起動時に読み込めなかったとき（メモリが空か途中まで）は、全部の書き直しで DB を上書きしない
+        if (!_loaded)
+        {
+            _log?.LogWarning("{File} を読み込めなかったため、全部の書き直しはしません", DatabaseFileName);
+            return;
+        }
+
         try
         {
-            var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(new FileShape
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+
+            // メモリ上の現行状態をDBへ反映するため、関連テーブルを一度に置き換える。
+            // DELETEとINSERTが途中で失敗した場合も、トランザクションで元の状態を保つ。
+            Execute(connection, transaction, "DELETE FROM applications");
+            Execute(connection, transaction, "DELETE FROM role_attendance");
+            Execute(connection, transaction, "DELETE FROM extras");
+            Execute(connection, transaction, "DELETE FROM auto_assignments");
+            Execute(connection, transaction, "DELETE FROM last_duties");
+            Execute(connection, transaction, "DELETE FROM attendance");
+            Execute(connection, transaction, "DELETE FROM assignments");
+            Execute(connection, transaction, "DELETE FROM token_hashes");
+            Execute(connection, transaction, "DELETE FROM roles");
+            Execute(connection, transaction, "DELETE FROM users");
+
+            foreach (var u in _users)
             {
-                Users = _users, Assignments = _assign, Attendance = _attend, LastDuties = _lastDuty,
-                AutoAssigned = _auto.OrderBy(x => x, StringComparer.Ordinal).ToList(), Extras = _extras, RoleAttendance = _roleAttend, Applications = _applications
-            }, Json));
-            File.Move(tmp, _path, overwrite: true);
+                using var cmd = connection.CreateCommand();
+                cmd.Transaction = transaction;
+                cmd.CommandText = """
+                    INSERT INTO users
+                        (id, name, join_year, depot, salt, password_hash, discord_hash, created_utc)
+                    VALUES
+                        ($id, $name, $join_year, $depot, $salt, $password_hash, $discord_hash, $created_utc)
+                    """;
+                Add(cmd, "$id", u.Id);
+                Add(cmd, "$name", u.Name);
+                Add(cmd, "$join_year", u.JoinYear);
+                Add(cmd, "$depot", u.Depot);
+                Add(cmd, "$salt", u.Salt);
+                Add(cmd, "$password_hash", u.PasswordHash);
+                Add(cmd, "$discord_hash", u.DiscordHash);
+                Add(cmd, "$created_utc", DateTimeText(u.CreatedUtc));
+                cmd.ExecuteNonQuery();
+
+                foreach (var role in u.Roles.Distinct(StringComparer.Ordinal))
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO roles (user_id, role) VALUES ($user_id, $role)",
+                        ("$user_id", u.Id), ("$role", role));
+                }
+
+                foreach (var hash in u.TokenHashes.Distinct(StringComparer.Ordinal))
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO token_hashes (user_id, hash, pending) VALUES ($user_id, $hash, $pending)",
+                        ("$user_id", u.Id), ("$hash", hash),
+                        ("$pending", u.PendingTokenHashes.Contains(hash) ? 1 : 0));
+                }
+            }
+
+            foreach (var (duty, user) in _assign)
+                Execute(connection, transaction,
+                    "INSERT INTO assignments (duty, user_id) VALUES ($duty, $user_id)",
+                    ("$duty", duty), ("$user_id", user));
+            foreach (var (user, at) in _attend)
+                Execute(connection, transaction,
+                    "INSERT INTO attendance (user_id, utc) VALUES ($user_id, $utc)",
+                    ("$user_id", user), ("$utc", DateTimeText(at)));
+            foreach (var (user, duty) in _lastDuty)
+                Execute(connection, transaction,
+                    "INSERT INTO last_duties (user_id, duty) VALUES ($user_id, $duty)",
+                    ("$user_id", user), ("$duty", duty));
+            foreach (var duty in _auto)
+                Execute(connection, transaction,
+                    "INSERT INTO auto_assignments (duty) VALUES ($duty) ON CONFLICT(duty) DO NOTHING",
+                    ("$duty", duty));
+            foreach (var extra in _extras.DistinctBy(x => (x.Duty, x.User))) // 古い Crew.json に重なりがあっても移行を止めない
+                Execute(connection, transaction,
+                    "INSERT INTO extras (duty, user_id, utc) VALUES ($duty, $user_id, $utc)",
+                    ("$duty", extra.Duty), ("$user_id", extra.User), ("$utc", DateTimeText(extra.Utc)));
+            foreach (var (role, people) in _roleAttend)
+                foreach (var (user, attendance) in people)
+                    Execute(connection, transaction,
+                        "INSERT INTO role_attendance (role, user_id, utc, station) VALUES ($role, $user_id, $utc, $station)",
+                        ("$role", role), ("$user_id", user), ("$utc", DateTimeText(attendance.Utc)), ("$station", attendance.Station));
+            foreach (var application in _applications.DistinctBy(x => x.Key))
+            {
+                Execute(connection, transaction, """
+                    INSERT INTO applications
+                        (key, discord_hash, discord_name, name, join_year, depot, existing_id, utc)
+                    VALUES
+                        ($key, $discord_hash, $discord_name, $name, $join_year, $depot, $existing_id, $utc)
+                    """,
+                    ("$key", application.Key), ("$discord_hash", application.DiscordHash),
+                    ("$discord_name", application.DiscordName), ("$name", application.Name),
+                    ("$join_year", application.JoinYear), ("$depot", application.Depot),
+                    ("$existing_id", application.ExistingId), ("$utc", DateTimeText(application.Utc)));
+            }
+
+            Execute(connection, transaction,
+                "INSERT INTO meta (key, value) VALUES ('json_migrated', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+            transaction.Commit();
         }
         catch (Exception ex)
         {
-            _log?.LogWarning(ex, "{File} に保存できませんでした", FileName);
+            _log?.LogWarning(ex, "{File} に保存できませんでした", DatabaseFileName);
+        }
+    }
+
+    private SqliteConnection OpenConnection()
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            ForeignKeys = true // ユーザーを消したら役職・合い札も消す（SQLite の既定に頼らない）
+        }.ToString());
+        connection.Open();
+        // 書き込み待ちが発生した場合に、短い競合だけは待ってから失敗させる。
+        using var pragma = connection.CreateCommand();
+        pragma.CommandText = "PRAGMA busy_timeout=5000";
+        pragma.ExecuteNonQuery();
+        return connection;
+    }
+
+    private static void Add(SqliteCommand command, string name, object? value)
+    {
+        command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+    }
+
+    private static void Execute(SqliteConnection connection, SqliteTransaction transaction, string sql,
+        params (string Name, object? Value)[] parameters)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+            Add(command, name, value);
+        command.ExecuteNonQuery();
+    }
+
+    private void ExecuteUpdate(Action<SqliteConnection, SqliteTransaction> update)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            update(connection, transaction);
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            // 部分的な更新に失敗したら、メモリの内容で全部書き直して DB をそろえる（ずれたまま再起動で消えないように）
+            _log?.LogWarning(ex, "{File} の更新に失敗したため、全部書き直します", DatabaseFileName);
+            Save();
+        }
+    }
+
+    private void UpsertUser(SqliteConnection connection, SqliteTransaction transaction, CrewUser u)
+    {
+        Execute(connection, transaction, """
+            INSERT INTO users
+                (id, name, join_year, depot, salt, password_hash, discord_hash, created_utc)
+            VALUES
+                ($id, $name, $join_year, $depot, $salt, $password_hash, $discord_hash, $created_utc)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                join_year = excluded.join_year,
+                depot = excluded.depot,
+                salt = excluded.salt,
+                password_hash = excluded.password_hash,
+                discord_hash = excluded.discord_hash,
+                created_utc = excluded.created_utc
+            """,
+            ("$id", u.Id), ("$name", u.Name), ("$join_year", u.JoinYear), ("$depot", u.Depot),
+            ("$salt", u.Salt), ("$password_hash", u.PasswordHash), ("$discord_hash", u.DiscordHash),
+            ("$created_utc", DateTimeText(u.CreatedUtc)));
+    }
+
+    private void SyncUserRelations(SqliteConnection connection, SqliteTransaction transaction, CrewUser u)
+    {
+        Execute(connection, transaction, "DELETE FROM roles WHERE user_id = $id", ("$id", u.Id));
+        Execute(connection, transaction, "DELETE FROM token_hashes WHERE user_id = $id", ("$id", u.Id));
+        foreach (var role in u.Roles.Distinct(StringComparer.Ordinal))
+            Execute(connection, transaction,
+                "INSERT INTO roles (user_id, role) VALUES ($id, $role)",
+                ("$id", u.Id), ("$role", role));
+        foreach (var hash in u.TokenHashes.Distinct(StringComparer.Ordinal))
+            Execute(connection, transaction,
+                "INSERT INTO token_hashes (user_id, hash, pending) VALUES ($id, $hash, $pending)",
+                ("$id", u.Id), ("$hash", hash),
+                ("$pending", u.PendingTokenHashes.Contains(hash) ? 1 : 0));
+    }
+
+    private void SaveUser(CrewUser u)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            UpsertUser(connection, transaction, u);
+            SyncUserRelations(connection, transaction, u);
+        });
+    }
+
+    /// <param name="duties">その人が担当していた行路（自動の印も外す。auto_assignments は users につながっていないため）</param>
+    private void DeleteUser(string id, IEnumerable<string> duties)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            foreach (var duty in duties)
+                Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty));
+            // 外部キーでも消えるが、念のため明示して消す（同じ社員番号で作り直した人に、役職や合い札が残らないように）
+            foreach (var table in new[] { "roles", "token_hashes", "assignments", "attendance", "last_duties", "extras", "role_attendance" })
+                Execute(connection, transaction, $"DELETE FROM {table} WHERE user_id = $id", ("$id", id));
+            Execute(connection, transaction, "DELETE FROM users WHERE id = $id", ("$id", id));
+        });
+    }
+
+    private void RenameUserId(string oldId, string newId, CrewUser u)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            Execute(connection, transaction, "PRAGMA defer_foreign_keys=ON");
+            Execute(connection, transaction,
+                "UPDATE users SET id = $new_id, name = $name, join_year = $join_year, depot = $depot WHERE id = $old_id",
+                ("$new_id", newId), ("$name", u.Name), ("$join_year", u.JoinYear),
+                ("$depot", u.Depot), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE roles SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE token_hashes SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE assignments SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE attendance SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE last_duties SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE extras SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+            Execute(connection, transaction, "UPDATE role_attendance SET user_id = $new_id WHERE user_id = $old_id",
+                ("$new_id", newId), ("$old_id", oldId));
+        });
+    }
+
+    private void SaveApplication(CrewApplication application)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            Execute(connection, transaction, """
+                INSERT INTO applications
+                    (key, discord_hash, discord_name, name, join_year, depot, existing_id, utc)
+                VALUES
+                    ($key, $discord_hash, $discord_name, $name, $join_year, $depot, $existing_id, $utc)
+                ON CONFLICT(key) DO UPDATE SET
+                    discord_hash = excluded.discord_hash,
+                    discord_name = excluded.discord_name,
+                    name = excluded.name,
+                    join_year = excluded.join_year,
+                    depot = excluded.depot,
+                    existing_id = excluded.existing_id,
+                    utc = excluded.utc
+                """,
+                ("$key", application.Key), ("$discord_hash", application.DiscordHash),
+                ("$discord_name", application.DiscordName), ("$name", application.Name),
+                ("$join_year", application.JoinYear), ("$depot", application.Depot),
+                ("$existing_id", application.ExistingId), ("$utc", DateTimeText(application.Utc)));
+        });
+    }
+
+    private void DeleteApplication(string key)
+    {
+        ExecuteUpdate((connection, transaction) =>
+            Execute(connection, transaction, "DELETE FROM applications WHERE key = $key", ("$key", key)));
+    }
+
+    private void SetAttendance(string id, DateTime? at)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", id));
+            if (at.HasValue)
+                Execute(connection, transaction,
+                    "INSERT INTO attendance (user_id, utc) VALUES ($id, $utc)",
+                    ("$id", id), ("$utc", DateTimeText(at.Value)));
+        });
+    }
+
+    private void SetRoleAttendance(string role, string id, RoleAttend? attendance)
+    {
+        ExecuteUpdate((connection, transaction) =>
+        {
+            Execute(connection, transaction,
+                "DELETE FROM role_attendance WHERE role = $role AND user_id = $id",
+                ("$role", role), ("$id", id));
+            if (attendance != null)
+                Execute(connection, transaction,
+                    "INSERT INTO role_attendance (role, user_id, utc, station) VALUES ($role, $id, $utc, $station)",
+                    ("$role", role), ("$id", id),
+                    ("$utc", DateTimeText(attendance.Utc)), ("$station", attendance.Station));
+        });
+    }
+
+    private static string DateTimeText(DateTime value) =>
+        value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static DateTime DateTimeValue(SqliteDataReader reader, int ordinal) =>
+        DateTime.Parse(reader.GetString(ordinal), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
+
+    private void InitializeDatabase()
+    {
+        Directory.CreateDirectory(_dataDir);
+        using var connection = OpenConnection();
+        // WALで読み取り中の書き込みを妨げにくくし、外部キー制約を有効にする。
+        using var pragma = connection.CreateCommand();
+        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON";
+        pragma.ExecuteNonQuery();
+        using var command = connection.CreateCommand();
+        // usersを軸に、役職・トークン・割り当て・出勤・申請を分けて保存する。
+        // usersを削除すると、外部キー制約により関連データも削除される。
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                join_year INTEGER NOT NULL,
+                depot TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                discord_hash TEXT NOT NULL,
+                created_utc TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS roles (
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                PRIMARY KEY (user_id, role),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS token_hashes (
+                user_id TEXT NOT NULL,
+                hash TEXT NOT NULL,
+                pending INTEGER NOT NULL,
+                PRIMARY KEY (hash),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS assignments (
+                duty TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS attendance (
+                user_id TEXT PRIMARY KEY,
+                utc TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS last_duties (
+                user_id TEXT PRIMARY KEY,
+                duty TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS auto_assignments (
+                duty TEXT PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS extras (
+                duty TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                utc TEXT NOT NULL,
+                PRIMARY KEY (duty, user_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS role_attendance (
+                role TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                utc TEXT NOT NULL,
+                station TEXT NOT NULL,
+                PRIMARY KEY (role, user_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS applications (
+                key TEXT PRIMARY KEY,
+                discord_hash TEXT NOT NULL,
+                discord_name TEXT NOT NULL,
+                name TEXT NOT NULL,
+                join_year INTEGER NOT NULL,
+                depot TEXT NOT NULL,
+                existing_id TEXT NOT NULL,
+                utc TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_token_hashes_user ON token_hashes(user_id);
+            CREATE INDEX IF NOT EXISTS idx_assignments_user ON assignments(user_id);
+            CREATE INDEX IF NOT EXISTS idx_extras_user ON extras(user_id);
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private bool WasMigrated()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM meta WHERE key = 'json_migrated'";
+        return command.ExecuteScalar()?.ToString() == "1";
+    }
+
+    private void LoadDatabase()
+    {
+        using var connection = OpenConnection();
+
+        // SQLiteから起動時のメモリ状態へ復元する。以後の更新はロック内で高速に行う。
+        _users.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT id, name, join_year, depot, salt, password_hash, discord_hash, created_utc
+                FROM users
+                """;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                _users.Add(new CrewUser
+                {
+                    Id = reader.GetString(0),
+                    Name = reader.GetString(1),
+                    JoinYear = reader.GetInt32(2),
+                    Depot = reader.GetString(3),
+                    Salt = reader.GetString(4),
+                    PasswordHash = reader.GetString(5),
+                    DiscordHash = reader.GetString(6),
+                    CreatedUtc = DateTimeValue(reader, 7)
+                });
+            }
+        }
+
+        foreach (var u in _users)
+        {
+            using var roles = connection.CreateCommand();
+            roles.CommandText = "SELECT role FROM roles WHERE user_id = $id";
+            Add(roles, "$id", u.Id);
+            using (var reader = roles.ExecuteReader())
+                while (reader.Read()) u.Roles.Add(reader.GetString(0));
+
+            using var tokens = connection.CreateCommand();
+            tokens.CommandText = "SELECT hash, pending FROM token_hashes WHERE user_id = $id ORDER BY rowid";
+            Add(tokens, "$id", u.Id);
+            using (var reader = tokens.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    var hash = reader.GetString(0);
+                    u.TokenHashes.Add(hash);
+                    if (reader.GetInt32(1) != 0) u.PendingTokenHashes.Add(hash);
+                }
+            }
+        }
+
+        _assign.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT duty, user_id FROM assignments";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) _assign[reader.GetString(0)] = reader.GetString(1);
+        }
+        _attend.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT user_id, utc FROM attendance";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) _attend[reader.GetString(0)] = DateTimeValue(reader, 1);
+        }
+        _lastDuty.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT user_id, duty FROM last_duties";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) _lastDuty[reader.GetString(0)] = reader.GetString(1);
+        }
+        _auto.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT duty FROM auto_assignments";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) _auto.Add(reader.GetString(0));
+        }
+        _extras.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT duty, user_id, utc FROM extras";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) _extras.Add(new ExtraAssign
+            {
+                Duty = reader.GetString(0),
+                User = reader.GetString(1),
+                Utc = DateTimeValue(reader, 2)
+            });
+        }
+        _roleAttend.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT role, user_id, utc, station FROM role_attendance";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var role = reader.GetString(0);
+                if (!AttendRoleNames.Contains(role)) continue; // 出勤しない役職（運転課課長代理など）は読まない
+                if (!_roleAttend.TryGetValue(role, out var people))
+                    _roleAttend[role] = people = new Dictionary<string, RoleAttend>();
+                people[reader.GetString(1)] = new RoleAttend
+                {
+                    Utc = DateTimeValue(reader, 2),
+                    Station = reader.GetString(3)
+                };
+            }
+        }
+        _applications.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT key, discord_hash, discord_name, name, join_year, depot, existing_id, utc
+                FROM applications
+                """;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                _applications.Add(new CrewApplication
+                {
+                    Key = reader.GetString(0),
+                    DiscordHash = reader.GetString(1),
+                    DiscordName = reader.GetString(2),
+                    Name = reader.GetString(3),
+                    JoinYear = reader.GetInt32(4),
+                    Depot = reader.GetString(5),
+                    ExistingId = reader.GetString(6),
+                    Utc = DateTimeValue(reader, 7)
+                });
+            }
         }
     }
 
@@ -387,7 +929,7 @@ public sealed class CrewRoster
             if (u == null) return (null, null, error);
             var pw = ResetPassword(u);
             _users.Add(u);
-            Save();
+            SaveUser(u);
             return (u.Id, pw, null);
         }
     }
@@ -411,7 +953,7 @@ public sealed class CrewRoster
 
             _failures.Remove(key);
             var token = IssueToken(u, provisional);
-            Save();
+            SaveUser(u);
             return (u.Id, token, null);
         }
     }
@@ -431,7 +973,7 @@ public sealed class CrewRoster
         {
             if (hash.Length == 0 || _users.FirstOrDefault(u => u.DiscordHash == hash) is not { } u) return (null, null);
             var token = IssueToken(u, provisional);
-            Save();
+            SaveUser(u);
             return (u.Id, token);
         }
     }
@@ -451,7 +993,11 @@ public sealed class CrewRoster
             u.PasswordHash = "";
             _failures.Remove("login:" + u.Id);
             _applications.RemoveAll(a => a.DiscordHash == hash); // 申請していたら、もう要らない
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                UpsertUser(connection, transaction, u);
+                Execute(connection, transaction, "DELETE FROM applications WHERE discord_hash = $hash", ("$hash", hash));
+            });
             return null;
         }
     }
@@ -465,7 +1011,7 @@ public sealed class CrewRoster
             u.DiscordHash = "";
             u.TokenHashes.Clear();
             u.PendingTokenHashes.Clear();
-            Save();
+            SaveUser(u);
             return null;
         }
     }
@@ -502,13 +1048,27 @@ public sealed class CrewRoster
 
             if (_applications.Count >= 50 && _applications.All(a => a.DiscordHash != hash)) return "申請が多すぎます。しばらくしてからにしてください";
             _applications.RemoveAll(a => a.DiscordHash == hash); // 出し直したら、前の申請と入れ替える
-            _applications.Add(new CrewApplication
+            var application = new CrewApplication
             {
                 Key = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)), DiscordHash = hash,
                 DiscordName = discordName.Length > 40 ? discordName[..40] : discordName,
                 Name = ex.Length > 0 ? "" : n, JoinYear = ex.Length > 0 ? 0 : year, Depot = ex.Length > 0 ? "" : depot!, ExistingId = ex, Utc = DateTime.UtcNow
+            };
+            _applications.Add(application);
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM applications WHERE discord_hash = $hash", ("$hash", hash));
+                Execute(connection, transaction, """
+                    INSERT INTO applications
+                        (key, discord_hash, discord_name, name, join_year, depot, existing_id, utc)
+                    VALUES
+                        ($key, $discord_hash, $discord_name, $name, $join_year, $depot, $existing_id, $utc)
+                    """,
+                    ("$key", application.Key), ("$discord_hash", application.DiscordHash),
+                    ("$discord_name", application.DiscordName), ("$name", application.Name),
+                    ("$join_year", application.JoinYear), ("$depot", application.Depot),
+                    ("$existing_id", application.ExistingId), ("$utc", DateTimeText(application.Utc)));
             });
-            Save();
             return null;
         }
     }
@@ -529,7 +1089,12 @@ public sealed class CrewRoster
         lock (_lock)
         {
             if (_applications.FirstOrDefault(a => a.Key == key) is not { } a) return (null, "その申請はありません");
-            if (_users.Any(u => u.DiscordHash == a.DiscordHash)) { _applications.Remove(a); Save(); return (null, "この Discord は、もうほかの社員番号に紐づいています"); }
+            if (_users.Any(u => u.DiscordHash == a.DiscordHash))
+            {
+                _applications.Remove(a);
+                DeleteApplication(a.Key);
+                return (null, "この Discord は、もうほかの社員番号に紐づいています");
+            }
             CrewUser u;
             if (a.ExistingId.Length > 0)
             {
@@ -549,7 +1114,11 @@ public sealed class CrewRoster
 
             u.DiscordHash = a.DiscordHash;
             _applications.Remove(a);
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                UpsertUser(connection, transaction, u);
+                Execute(connection, transaction, "DELETE FROM applications WHERE key = $key", ("$key", a.Key));
+            });
             return (u.Id, null);
         }
     }
@@ -560,7 +1129,7 @@ public sealed class CrewRoster
         lock (_lock)
         {
             if (_applications.RemoveAll(a => a.Key == key) == 0) return false;
-            Save();
+            DeleteApplication(key ?? "");
             return true;
         }
     }
@@ -592,7 +1161,7 @@ public sealed class CrewRoster
                 return (null, null, "この QR コードは使えません（5分で切れ、1回しか使えません）。もう一度出してください");
             if (Find(q.User) is not { } u) return (null, null, "ユーザーがいません");
             var token = IssueToken(u);
-            Save();
+            SaveUser(u);
             return (u.Id, token, null);
         }
     }
@@ -651,8 +1220,19 @@ public sealed class CrewRoster
         lock (_lock)
         {
             var changed = false;
-            foreach (var u in _users) changed |= u.PendingTokenHashes.Remove(h);
-            if (changed) Save();
+            CrewUser? changedUser = null;
+            foreach (var u in _users)
+            {
+                if (u.PendingTokenHashes.Remove(h))
+                {
+                    changed = true;
+                    changedUser = u;
+                }
+            }
+            if (changed)
+            {
+                SaveUser(changedUser!);
+            }
         }
     }
 
@@ -663,8 +1243,12 @@ public sealed class CrewRoster
         var h = TokenHash(token);
         lock (_lock)
         {
-            foreach (var u in _users.Where(u => u.TokenHashes.Remove(h))) u.PendingTokenHashes.Remove(h);
-            Save();
+            var changedUser = _users.FirstOrDefault(u => u.TokenHashes.Remove(h));
+            if (changedUser != null)
+            {
+                changedUser.PendingTokenHashes.Remove(h);
+                SaveUser(changedUser);
+            }
         }
     }
 
@@ -685,6 +1269,7 @@ public sealed class CrewRoster
             if (!IsEmployeeId(nid)) return "社員番号は、0 で始まらない8桁の数字にしてください";
             if (_users.Any(x => x != u && x.Id == nid)) return $"ID:{nid} はもう使われています";
 
+            var oldId = u.Id;
             if (nid != u.Id)
             {
                 foreach (var d in _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList()) _assign[d] = nid;
@@ -692,6 +1277,9 @@ public sealed class CrewRoster
                 if (_attend.Remove(u.Id, out var at)) _attend[nid] = at;
                 if (_lastDuty.Remove(u.Id, out var ld)) _lastDuty[nid] = ld;
                 foreach (var x in _extras.Where(x => x.User == u.Id)) x.User = nid;
+                foreach (var people in _roleAttend.Values)
+                    if (people.Remove(u.Id, out var roleAttendance))
+                        people[nid] = roleAttendance;
                 _failures.Remove("login:" + u.Id);
                 u.Id = nid;
             }
@@ -699,7 +1287,8 @@ public sealed class CrewRoster
             u.Name = n;
             u.JoinYear = year;
             u.Depot = depot!;
-            Save();
+            if (nid != oldId) RenameUserId(oldId, nid, u);
+            else SaveUser(u);
             return null;
         }
     }
@@ -712,7 +1301,7 @@ public sealed class CrewRoster
             if (Find(id) is not { } u) return (null, "その人はいません");
             var pw = ResetPassword(u);
             _failures.Remove("login:" + u.Id);
-            Save();
+            SaveUser(u);
             return (pw, null);
         }
     }
@@ -747,7 +1336,14 @@ public sealed class CrewRoster
             if (on == u.Roles.Contains(role!)) return null;
             if (on) u.Roles.Add(role!); else u.Roles.Remove(role!);
             if (!on && _roleAttend.TryGetValue(role!, out var att)) att.Remove(u.Id); // 役職を外したら、その役職の出勤も外す
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                UpsertUser(connection, transaction, u);
+                SyncUserRelations(connection, transaction, u);
+                if (!on) Execute(connection, transaction,
+                    "DELETE FROM role_attendance WHERE role = $role AND user_id = $id",
+                    ("$role", role), ("$id", u.Id));
+            });
             return null;
         }
     }
@@ -765,13 +1361,14 @@ public sealed class CrewRoster
         {
             if (Find(id) is not { } u) return false;
             _users.Remove(u);
-            foreach (var d in _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList()) { _assign.Remove(d); _auto.Remove(d); }
+            var mine = _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList();
+            foreach (var d in mine) { _assign.Remove(d); _auto.Remove(d); }
             _seen.Remove(u.Id);
             _attend.Remove(u.Id);
             _lastDuty.Remove(u.Id);
             foreach (var att in _roleAttend.Values) att.Remove(u.Id);
             _extras.RemoveAll(x => x.User == u.Id);
-            Save();
+            DeleteUser(u.Id, mine);
             return true;
         }
     }
@@ -781,6 +1378,7 @@ public sealed class CrewRoster
     {
         lock (_lock)
         {
+            string? resolvedUser = null;
             if (string.IsNullOrWhiteSpace(user))
             {
                 _assign.Remove(duty);
@@ -788,6 +1386,7 @@ public sealed class CrewRoster
             else
             {
                 if (Find(user) is not { } u) return $"{user} という社員番号の人はいません";
+                resolvedUser = u.Id;
                 _assign[duty] = u.Id;
                 _lastDuty[u.Id] = duty;
                 _extras.RemoveAll(x => x.Duty == duty && x.User == u.Id); // 担当になったら臨変ではなくなる
@@ -795,7 +1394,22 @@ public sealed class CrewRoster
 
             _auto.Remove(duty); // 手で選んだら、自動の印を外す
 
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM assignments WHERE duty = $duty", ("$duty", duty));
+                Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty));
+                if (resolvedUser != null)
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO assignments (duty, user_id) VALUES ($duty, $user)",
+                        ("$duty", duty), ("$user", resolvedUser));
+                    Execute(connection, transaction,
+                        "INSERT INTO last_duties (user_id, duty) VALUES ($user, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                        ("$user", resolvedUser), ("$duty", duty));
+                    Execute(connection, transaction, "DELETE FROM extras WHERE duty = $duty AND user_id = $user",
+                        ("$duty", duty), ("$user", resolvedUser));
+                }
+            });
         }
 
         return null;
@@ -850,7 +1464,11 @@ public sealed class CrewRoster
     {
         lock (_lock)
         {
-            if (_extras.RemoveAll(x => x.Duty == duty && x.User == NormalizeId(user)) > 0) Save();
+            if (_extras.RemoveAll(x => x.Duty == duty && x.User == NormalizeId(user)) > 0)
+                ExecuteUpdate((connection, transaction) =>
+                    Execute(connection, transaction,
+                        "DELETE FROM extras WHERE duty = $duty AND user_id = $user",
+                        ("$duty", duty), ("$user", NormalizeId(user))));
         }
     }
 
@@ -861,7 +1479,7 @@ public sealed class CrewRoster
         {
             if (Find(id) is not { } u) return "その人はいません";
             if (on) _attend.TryAdd(u.Id, DateTime.UtcNow); else _attend.Remove(u.Id);
-            Save();
+            SetAttendance(u.Id, _attend.TryGetValue(u.Id, out var at) ? at : null);
             return null;
         }
     }
@@ -876,10 +1494,18 @@ public sealed class CrewRoster
         {
             if (Find(id) is not { } u) return (null, "ユーザーがいません");
             var released = DutiesOfLocked(u.Id);
-            foreach (var d in _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList()) { _assign.Remove(d); _auto.Remove(d); }
+            var owned = _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList(); // 臨変の行路は、本来の担当者のものなので外さない
+            foreach (var d in owned) { _assign.Remove(d); _auto.Remove(d); }
             _extras.RemoveAll(x => x.User == u.Id);
             _attend.Remove(u.Id);
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
+                Execute(connection, transaction, "DELETE FROM extras WHERE user_id = $id", ("$id", u.Id));
+                Execute(connection, transaction, "DELETE FROM assignments WHERE user_id = $id", ("$id", u.Id));
+                foreach (var duty in owned)
+                    Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty));
+            });
             return (released, null);
         }
     }
@@ -892,7 +1518,11 @@ public sealed class CrewRoster
             var n = _attend.Count + _roleAttend.Values.Sum(x => x.Count);
             _attend.Clear();
             _roleAttend.Clear();
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM attendance");
+                Execute(connection, transaction, "DELETE FROM role_attendance");
+            });
             return n;
         }
     }
@@ -920,7 +1550,7 @@ public sealed class CrewRoster
             if (!on)
             {
                 if (!att.Remove(u.Id)) return null;
-                Save();
+                SetRoleAttendance(role, u.Id, null);
                 return null;
             }
 
@@ -935,7 +1565,7 @@ public sealed class CrewRoster
             _lastAction[u.Id] = DateTime.UtcNow;
             if (att.TryGetValue(u.Id, out var cur) && cur.Station == st) return null;
             att[u.Id] = new RoleAttend { Utc = cur?.Utc ?? DateTime.UtcNow, Station = st };
-            Save();
+            SetRoleAttendance(role, u.Id, att[u.Id]);
             return null;
         }
     }
@@ -991,7 +1621,14 @@ public sealed class CrewRoster
             att.Remove(id);
             _log?.LogInformation("司令員 ID:{Id} を自動で退勤させました（{Minutes}分操作なし）", id, (int)DispatcherIdleLimit.TotalMinutes);
         }
-        Save();
+        // DB からも消す（再起動で出勤中に戻らないように）。_lock の中なので、ほかの更新と順番は入れ替わらない
+        ExecuteUpdate((connection, transaction) =>
+        {
+            foreach (var id in gone)
+                Execute(connection, transaction,
+                    "DELETE FROM role_attendance WHERE role = $role AND user_id = $id",
+                    ("$role", DispatcherRole), ("$id", id));
+        });
         if (DispatcherAutoLeft is { } h) ThreadPool.QueueUserWorkItem(_ => { foreach (var id in gone) h(id); });
     }
 
@@ -1004,7 +1641,12 @@ public sealed class CrewRoster
             _assign.Clear();
             _auto.Clear();
             _extras.Clear();
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM assignments");
+                Execute(connection, transaction, "DELETE FROM auto_assignments");
+                Execute(connection, transaction, "DELETE FROM extras");
+            });
             return n;
         }
     }
@@ -1018,7 +1660,7 @@ public sealed class CrewRoster
             if (_auto.Remove(from)) _auto.Add(to);
             foreach (var x in _extras.Where(x => x.Duty == from)) x.Duty = to;
             foreach (var k in _lastDuty.Where(x => x.Value == from).Select(x => x.Key).ToList()) _lastDuty[k] = to;
-            Save();
+            Save(); // たまにしかしない操作で、移し先がもうある場合などの食い違いを避けるため、全部書き直す
         }
     }
 
@@ -1035,10 +1677,12 @@ public sealed class CrewRoster
             if (Find(id) is not { } u) return null;
             var mine = DutiesOfLocked(u.Id).Select(roster.DutyById).OfType<Duty>().ToList();
             if (mine.Any(d => d.Items.Any(x => x.Kind != "休憩" && x.Train == key))) return null;
-            foreach (var d in _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList()) { _assign.Remove(d); _auto.Remove(d); }
+            var owned = _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList(); // 臨変の行路の自動の印は、本来の担当者のもの
+            foreach (var d in owned) { _assign.Remove(d); _auto.Remove(d); }
             _extras.RemoveAll(x => x.User == u.Id);
+            var now = DateTime.UtcNow;
             if (_assign.TryGetValue(duty.Id, out var other) && other != u.Id)
-                _extras.Add(new ExtraAssign { Duty = duty.Id, User = u.Id, Utc = DateTime.UtcNow });
+                _extras.Add(new ExtraAssign { Duty = duty.Id, User = u.Id, Utc = now });
             else
             {
                 _assign[duty.Id] = u.Id;
@@ -1046,7 +1690,31 @@ public sealed class CrewRoster
             }
 
             _lastDuty[u.Id] = duty.Id;
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM assignments WHERE user_id = $id", ("$id", u.Id));
+                Execute(connection, transaction, "DELETE FROM extras WHERE user_id = $id", ("$id", u.Id));
+                foreach (var oldDuty in owned)
+                    Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", oldDuty));
+                if (_assign.TryGetValue(duty.Id, out var other) && other != u.Id)
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO extras (duty, user_id, utc) VALUES ($duty, $id, $utc)",
+                        ("$duty", duty.Id), ("$id", u.Id), ("$utc", DateTimeText(now)));
+                }
+                else
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO assignments (duty, user_id) VALUES ($duty, $id)",
+                        ("$duty", duty.Id), ("$id", u.Id));
+                    Execute(connection, transaction,
+                        "INSERT INTO auto_assignments (duty) VALUES ($duty) ON CONFLICT(duty) DO NOTHING",
+                        ("$duty", duty.Id));
+                }
+                Execute(connection, transaction,
+                    "INSERT INTO last_duties (user_id, duty) VALUES ($id, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                    ("$id", u.Id), ("$duty", duty.Id));
+            });
             return duty.Id;
         }
     }
@@ -1106,7 +1774,27 @@ public sealed class CrewRoster
             string? picked = null;
             var has = HasDuty(u.Id, roster);
             if (!has) picked = PickFor(u, roster);
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                var at = _attend.TryGetValue(u.Id, out var attendance) ? attendance : (DateTime?)null;
+                Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
+                if (at.HasValue)
+                    Execute(connection, transaction,
+                        "INSERT INTO attendance (user_id, utc) VALUES ($id, $utc)",
+                        ("$id", u.Id), ("$utc", DateTimeText(at.Value)));
+                if (picked != null)
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO assignments (duty, user_id) VALUES ($duty, $id) ON CONFLICT(duty) DO UPDATE SET user_id = excluded.user_id",
+                        ("$duty", picked), ("$id", u.Id));
+                    Execute(connection, transaction,
+                        "INSERT INTO auto_assignments (duty) VALUES ($duty) ON CONFLICT(duty) DO NOTHING",
+                        ("$duty", picked));
+                    Execute(connection, transaction,
+                        "INSERT INTO last_duties (user_id, duty) VALUES ($id, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                        ("$id", u.Id), ("$duty", picked));
+                }
+            });
             var duties = DutiesOfLocked(u.Id);
             var msg = picked != null ? $"出勤しました。行路 {picked} が割り当てられました"
                 : has ? $"出勤しました（行路 {string.Join("・", duties)}）"
@@ -1159,7 +1847,33 @@ public sealed class CrewRoster
                 msg = $"{key} の行路 {picked} はほかの人が持っているため、臨変として割り当てました";
             }
 
-            Save();
+            ExecuteUpdate((connection, transaction) =>
+            {
+                var at = _attend.TryGetValue(u.Id, out var attendance) ? attendance : (DateTime?)null;
+                Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
+                if (at.HasValue)
+                    Execute(connection, transaction,
+                        "INSERT INTO attendance (user_id, utc) VALUES ($id, $utc)",
+                        ("$id", u.Id), ("$utc", DateTimeText(at.Value)));
+                if (free.Count > 0)
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO assignments (duty, user_id) VALUES ($duty, $id)",
+                        ("$duty", picked), ("$id", u.Id));
+                    Execute(connection, transaction,
+                        "INSERT INTO auto_assignments (duty) VALUES ($duty) ON CONFLICT(duty) DO NOTHING",
+                        ("$duty", picked));
+                    Execute(connection, transaction,
+                        "INSERT INTO last_duties (user_id, duty) VALUES ($id, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                        ("$id", u.Id), ("$duty", picked));
+                }
+                else
+                {
+                    Execute(connection, transaction,
+                        "INSERT INTO extras (duty, user_id, utc) VALUES ($duty, $id, $utc)",
+                        ("$duty", picked), ("$id", u.Id), ("$utc", DateTimeText(_extras[^1].Utc)));
+                }
+            });
             return (new AttendResult(u.Id, DutiesOfLocked(u.Id), picked, msg), null);
         }
     }
@@ -1177,7 +1891,23 @@ public sealed class CrewRoster
                 result.Add((u.Id, PickFor(u, roster)));
             }
 
-            if (result.Count > 0) Save();
+            if (result.Count > 0)
+                ExecuteUpdate((connection, transaction) =>
+                {
+                    foreach (var (uid, duty) in result)
+                    {
+                        if (duty == null) continue;
+                        Execute(connection, transaction,
+                            "INSERT INTO assignments (duty, user_id) VALUES ($duty, $id) ON CONFLICT(duty) DO UPDATE SET user_id = excluded.user_id",
+                            ("$duty", duty), ("$id", uid));
+                        Execute(connection, transaction,
+                            "INSERT INTO auto_assignments (duty) VALUES ($duty) ON CONFLICT(duty) DO NOTHING",
+                            ("$duty", duty));
+                        Execute(connection, transaction,
+                            "INSERT INTO last_duties (user_id, duty) VALUES ($id, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                            ("$id", uid), ("$duty", duty));
+                    }
+                });
             return result;
         }
     }
