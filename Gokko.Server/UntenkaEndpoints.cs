@@ -168,7 +168,7 @@ public static class UntenkaEndpoints
     private static TempTrains.TrainSpec Copy(TempTrains.TrainSpec t) => new()
     {
         Unyo = t.Unyo ?? "", Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
-        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "",
+        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "", Cars = t.Cars,
         Stops = (t.Stops ?? new()).Take(80).Select(s => new TempTrains.StopSpec { St = s.St ?? "", Stop = s.Stop ?? "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
     };
 }

@@ -445,7 +445,7 @@ public sealed class AiTrains : BackgroundService
                         var childCars = CarsOf(child);
                         foreach (var p in _trains.Values.Where(x => x.Number == parent))
                         {
-                            p.Cars = Math.Max(CarsOf(parent), p.Cars - childCars);
+                            p.Cars = p.Dia.Cars != null ? Math.Max(1, p.Cars - childCars) : Math.Max(CarsOf(parent), p.Cars - childCars);
                             p.Length = p.Cars * CarLength;
                         }
                         if (users.Contains(RailData.NormalizeTrain(child)) || _trains.Values.Any(x => x.Number == child)) continue;
@@ -771,7 +771,7 @@ public sealed class AiTrains : BackgroundService
         if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
         {
             // 連結: 停B で一度止まり（完全に止まってから）、連結位置まで進む
-            if (t.CoupleStage < 2 && CouplePartnerAt(t, next) != null && CoupleSpec(t, next) != null)
+            if (t.CoupleStage < 2 && CouplePartnerAt(t, next) != null && CouplePos(t, next) != null)
             {
                 if (t.CoupleStage == 0) (t.CoupleStage, t.CoupleStopUtc) = (1, utcNow);
                 else if ((utcNow - t.CoupleStopUtc).TotalSeconds * _clock.Speed >= CoupleStopB.TotalSeconds) t.CoupleStage = 2;
@@ -1263,8 +1263,8 @@ public sealed class AiTrains : BackgroundService
         if (spec != null && BoundaryOf(t, spec.Signal) is { } b)
         {
             // 連結: 番線に増結車がいれば、停B（4両停目の4m手前）、そのあと連結位置（増結車の後ろ）
-            if (spec.CoupleBefore is { } cb && CouplePartnerAt(t, p) != null)
-                return t.CoupleStage >= 2 ? b - cb : b - (spec.StopBBefore ?? cb);
+            if (CouplePartnerAt(t, p) != null && CouplePos(t, p) is { } cp)
+                return t.CoupleStage >= 2 ? b - cp.Couple : b - cp.StopB;
             var x = spec.After is { } after ? b + after : b - spec.Before;
             // 表の位置だと最後尾が番線の回路の手前（分岐の回路）に残るなら、番線の回路に収まるところまで前へ出す（番線の回路の終わりは越えない）。
             // 残したままだと、分岐を通るほかの進路（日野森で 2番線に着いた上りの最後尾が 22T に残り、3番線の下りの 4L が出られなかった）をふさぐ
@@ -1300,9 +1300,20 @@ public sealed class AiTrains : BackgroundService
     private string? CouplePartnerAt(Train t, PlanStop p) =>
         _couplePartners.TryGetValue(t.Id, out var m) && m.TryGetValue(p.StationId, out var partner) ? partner : null;
 
-    /// <summary>連結の位置が書いてある停止位置の表（AiTrains.json の stops の couple）。</summary>
-    private StopSpec? CoupleSpec(Train t, PlanStop p) =>
-        _stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.CoupleBefore != null && s.Track == (p.Track ?? -1));
+    /// <summary>
+    /// 連結位置と停B（信号機の手前 m）。AiTrains.json の stops に couple があればそれ。書いていなければ（臨時増結の新野崎など）、
+    /// その番線の停止位置から増結車の長さぶん手前（大道寺の測った値と同じ考え方）、停B はさらに 9.3m 手前。停止位置の表がなければ null
+    /// </summary>
+    private (double Couple, double StopB)? CouplePos(Train t, PlanStop p)
+    {
+        var spec = _stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == (p.Track ?? -1));
+        if (spec == null) return null;
+        if (spec.CoupleBefore is { } cb) return (cb, spec.StopBBefore ?? cb);
+        if (spec.After != null || CouplePartnerAt(t, p) is not { } partner) return null;
+        var cars = _trains.Values.FirstOrDefault(x => x.Number == partner)?.Cars ?? CarsOf(partner);
+        var c = spec.Before + cars * CarLength;
+        return (c, c + 9.3);
+    }
 
     /// <summary>
     /// 連結位置に着いた: 増結車（自動運転）を消し、両数を足す。先頭は増結車の先頭まで進める（連結位置は増結車の最後尾）。
@@ -1333,7 +1344,8 @@ public sealed class AiTrains : BackgroundService
         if (_rail.DiaOf("解" + t.Number) is not { } child || child.Stops.FirstOrDefault(s => s.StationId != null) is not { } cs
             || cs.StationId != p.StationId || _trains.Values.Any(x => x.Number == child.Number) || _userTrains.Contains(child.Number)) return;
         var cars = CarsOf(child.Number);
-        t.Cars = Math.Max(CarsOf(t.Number), t.Cars - cars);
+        // 臨時列車で両数を決めた列車は、決めた両数から切り離した分を引く（運行番号の既定の両数で下を止めると、減らなくなる）
+        t.Cars = t.Dia.Cars != null ? Math.Max(1, t.Cars - cars) : Math.Max(CarsOf(t.Number), t.Cars - cars);
         t.Length = t.Cars * CarLength;
         _pendingSplits.Add((child.Number, cars, p.Name, cs.Track ?? p.Track ?? -1, t.Number));
     }
@@ -1832,8 +1844,12 @@ public sealed class AiTrains : BackgroundService
     // 距離の表
     // =========================================================================================
 
-    /// <summary>自動で出す列車の両数。列番の表（Data/TrainCars.csv）にあればそれ、なければダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。</summary>
-    private int CarsOf(string number) => _unyoCars.Of(number, _rail.DiaOf(number)?.Unyo);
+    /// <summary>
+    /// 自動で出す列車の両数。ダイヤに両数が書いてあれば（運転課の臨時列車）それ。なければ列番の表（Data/TrainCars.csv）、
+    /// それもなければダイヤの運行番号から両数の表（Data/UnyoCars.csv）で引く（ない運行は6両）。
+    /// </summary>
+    private int CarsOf(string number) =>
+        _rail.DiaOf(number) is { Cars: { } dc } ? dc : _unyoCars.Of(number, _rail.DiaOf(number)?.Unyo);
 
     /// <summary>両数の表を読んだときのおかしな所（管理画面に出す）。</summary>
     public IReadOnlyList<string> CarsProblems => _unyoCars.Problems;
