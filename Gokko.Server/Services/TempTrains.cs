@@ -276,7 +276,7 @@ public sealed class TempTrains
         var extra = new List<DiaTrain>();
         foreach (var g in _groups.Where(g => g.Applied))
             extra.AddRange(Build(g.Trains));
-        var skipped = _rail.SetExtraTrains(extra);
+        var skipped = _rail.SetExtraTrains("催物", extra);
         return skipped.Count > 0 ? $"所定のダイヤにある列番は足せませんでした: {string.Join("、", skipped)}" : null;
     }
 
