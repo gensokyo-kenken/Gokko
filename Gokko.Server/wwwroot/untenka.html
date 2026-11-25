@@ -397,6 +397,19 @@
     const end = t.stops[t.stops.length - 1], nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
     if (end && nx && nx.stops[0] && end.track != null) nx.stops[0].track = end.track;
   }
+  // 入換で入る線の名前 → 図の段のキー（「5番線（引上線）」→ 5、「入換Y線」「E線」→ "via:Y" "via:E"。どちらでもなければ null）
+  function viaKey(label) {
+    const n = /^(\d+)番線/.exec(label || "");
+    if (n) return +n[1];
+    const m = /([A-Z])線/.exec(label || "");
+    return m ? `via:${m[1]}` : null;
+  }
+  // 選ぶ欄に出す名前（「入換Y線」→「Y線入換」）
+  function viaName(label) {
+    const m = /^(?:入換)?([A-Z])線$/.exec(label || "");
+    return m ? `${m[1]}線入換` : `${label}へ入換`;
+  }
+  const rowLabel = (k) => (k === "main" ? "本線" : String(k).startsWith("via:") ? `${String(k).slice(4)}線` : `${k}番線`);
   // 入換で入れる線: 終点の着いた番線から（その向きの shuntOut）
   function shuntOutsOf(t) {
     const end = t.stops[t.stops.length - 1], dir = dirOf(t);
@@ -413,8 +426,8 @@
       return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${x ? ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行` : "（終点から出ない列車）"}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
-    $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(outs[0])}）` : "入換できる線がありません"}</option>`
-      + outs.map((o) => `<option ${o === t.turnVia ? "selected" : ""}>${esc(o)}</option>`).join("");
+    $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(viaName(outs[0]))}）` : "入換できる線がありません"}</option>`
+      + outs.map((o) => `<option value="${esc(o)}" ${o === t.turnVia ? "selected" : ""}>${esc(viaName(o))}</option>`).join("");
     $("tTurnTime").value = short(t.turnTime);
     $("tTurnNextBox").hidden = !(how === "発" || how === "入換" || how === "種別変更");
     $("tTurnShuntBox").hidden = how !== "入換";
@@ -743,7 +756,9 @@
       const rows = {};
       // 番線を使わずに通れる本線のある駅（江ノ原信号場など）は、いちばん上に「本線」の段（番線のない通過はここ）
       const main = tracks.length && s.rules && Object.values(s.rules).some((r) => r.through);
-      const keys = main ? ["main", ...tracks] : tracks;
+      // 入換で入る線（大道寺の Y線・E線・X線など）も段にする（番線の名前の線は番線の段）
+      const vias = [...new Set(Object.values(s.rules || {}).flatMap((r) => r.shuntOuts.map((o) => viaKey(o.label))).filter((k) => typeof k === "string"))].sort();
+      const keys = [...(main ? ["main"] : []), ...tracks, ...(tracks.length ? vias : [])];
       keys.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
       const bottom = keys.length ? y + (keys.length - 1) * dv.trackPx : y;
       band[s.zone] = { s, y: keys.length ? (y + bottom) / 2 : y, rows, top: y, bottom };
@@ -794,7 +809,7 @@
           `<line x1="${L.left - 42}" x2="${L.left - 42}" y1="${b.top - pad + 2}" y2="${b.bottom + pad - 2}" stroke="#9aa3ae"/>`);
         for (const t of rows) {
           P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.rows[t]}" y2="${b.rows[t]}" stroke="#4a505a" stroke-width="0.8"/>`);
-          labels.push(`<text x="${L.left - 6}" y="${b.rows[t] + 3.5}" text-anchor="end" font-size="10" fill="#9aa3ae">${t === "main" ? "本線" : t + "番線"}</text>`);
+          labels.push(`<text x="${L.left - 6}" y="${b.rows[t] + 3.5}" text-anchor="end" font-size="10" fill="#9aa3ae">${rowLabel(t)}</text>`);
         }
       } else {
         P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.y}" y2="${b.y}" stroke="#4a505a" stroke-width="${s.control ? 1.4 : 0.6}"/>`);
@@ -840,7 +855,7 @@
       if (how === "入換") {
         const via = m.t.turnVia || shuntOutsOf(m.t)[0] || "";
         const vt = /^(\d+)番線/.exec(via);
-        shunt = { t: sec(m.t.turnTime) ?? b.t - 120, track: vt ? +vt[1] : null, label: via };
+        shunt = { t: sec(m.t.turnTime) ?? b.t - 120, track: viaKey(via), label: via };
       }
       mineP.push(link(L, a, b, DC[m.type] || "#e6e8eb", 1.4, shunt));
     }
@@ -929,7 +944,7 @@
     let best = null;
     for (const s of base.stations) {
       const b = L.band[s.zone];
-      const cands = Object.keys(b.rows).length ? Object.entries(b.rows).map(([t, ry]) => ({ track: t === "main" ? null : +t, y: ry })) : [{ track: null, y: b.y }];
+      const cands = Object.keys(b.rows).length ? Object.entries(b.rows).filter(([t]) => !t.startsWith("via:")).map(([t, ry]) => ({ track: t === "main" ? null : +t, y: ry })) : [{ track: null, y: b.y }];
       for (const c of cands) if (!best || Math.abs(c.y - y) < Math.abs(best.y - y)) best = { z: s.zone, s, ...c };
     }
     return best && Math.abs(best.y - y) <= Math.max(dv.stationPx / 2, dv.trackPx) ? best : null;
@@ -1090,7 +1105,7 @@
       // 本線の段（番線を使わない通過）は、通過する途中の駅で、その向きに本線を通れるときだけ
       const mainOk = s.stop === "通" && !first && !last && !!stById[s.st]?.rules?.[dirOf(t)]?.through;
       const okRow = (tr) => (tr === "main" ? mainOk : ok.includes(+tr));
-      const rowName = (tr) => (tr === "main" ? "本線" : `${tr}番線`);
+      const rowName = rowLabel;
       let best = null, near = null;
       for (const [tr, ry] of Object.entries(b.rows)) {
         if (!near || Math.abs(ry - p.y) < Math.abs(near.y - p.y)) near = { key: tr, y: ry };
