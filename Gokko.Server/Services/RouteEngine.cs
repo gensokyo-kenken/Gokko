@@ -3005,6 +3005,29 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
+    /// 単線区間の先の駅 next で自分が入る番線を、対向列車がふさいでいるか、ふさぎに来ているか。
+    /// ふさいでいる: 対向列車がその番線にいる（まだその駅を出ていない）。ふさぎに来ている: 対向列車が反対側の駅間を next に向かって走っている、
+    /// または反対側の隣の駅で next へ向かう出発進路がもう出ている。対向列車は、自分が入ろうとしている区間を通らないと出られないので、待つ。
+    /// </summary>
+    private (TrainRun Run, string Why)? NextTrackBlocker(TrainRun run, string next)
+    {
+        if (run.Stations.FirstOrDefault(s => s.St.Id == next && !s.Done) is not { Track: { } track }) return null;
+        var nextZone = _data.Line.ZoneOfStation(next);
+        var nextName = _data.Line.StationName(next);
+        foreach (var o in _runs.Values.Where(o => o != run && o.HasPosition && o.Dir != run.Dir))
+        {
+            var rest = o.Stations.Where(s => !s.Done).ToList();
+            var i = rest.FindIndex(s => s.St.Id == next);
+            if (i < 0 || rest[i].Track != track || IsCutOff(o, rest[i])) continue;
+            var oStep = o.Dir.Step();
+            if ((o.Front - nextZone) * oStep >= 0) return (o, $"{nextName}{track}番線に対向列車（{o.Train}）");
+            if (i == 0 && o.Front == nextZone - oStep || i == 1 && rest[0].Depart == GroupState.Requested)
+                return (o, $"{nextName}{track}番線に対向列車（{o.Train}）が向かっている");
+        }
+        return null;
+    }
+
+    /// <summary>
     /// 単線区間の出発（交換の判断）。駅間ごとに判断する。
     /// ・出発を決めるのは、列車がその駅に着いているか、その手前の駅間まで来てから（何駅も先の単線区間を先取りしない）。
     ///   これで、大道寺と水越に対向する列車がいれば藤江で、藤江と高見沢にいれば水越で行き違う
@@ -3013,6 +3036,7 @@ public sealed partial class RouteEngine
     /// ・なければダイヤグラムの見込みで、自分が相手の駅に着くより先に相手の駅に着く対向列車を、早い順に最大2本まで先に通す
     ///   （例: 1040 に対して 1051・903A・1041 が来るなら、903A まで待って出る）。待ち合いは、着くのが早い方が待つ（デッドロックしない）
     /// ・単線区間の駅は2線あるので、対向列車はもう片方の番線に入れる（AvoidTakenTrack）
+    /// ・相手の駅で自分が入る番線を対向列車がふさいでいる・ふさぎに来ているなら、走行順で先でも待つ（NextTrackBlocker）
     /// </summary>
     private string? SingleTrackHold(TrainRun run, StationRun st, DateTime now)
     {
@@ -3054,6 +3078,10 @@ public sealed partial class RouteEngine
         if (_levers.TryGetValue(section, out var lever) && lever.Locked && lever.Dir != run.Dir)
             return $"方向てこが{lever.Dir.Label()}向き（{st.St.Name}〜{nextName}）";
 
+        // ---- 相手の駅の番線: 自分が入る番線を対向列車がふさいでいる・ふさぎに来るなら待つ（走行順で先でも） ----
+        // 対向列車は、この区間を通らないとその番線から出られない。入っていくと、お互いに動けなくなる
+        if (NextTrackBlocker(run, next) is { } blocker) return blocker.Why;
+
         // ---- 走行順（集中扱い）: 区間ごとに決めた順で流す ----
         // ダイヤ運転中（手で決めていなければ）は、いまサーバー上で走っているダイヤの列車だけで、区間に入るダイヤの時刻の順に並べる。
         // 交換の相手が走っていれば（参加していれば）その列車を待つ。走っていなければ待たない（上の「必ず待つ」で、区間と相手の駅の出発に
@@ -3066,7 +3094,9 @@ public sealed partial class RouteEngine
             // 同じ番線で後ろにいる同じ向きの列車も待たない（追い越せないので、順が先でも実際には後から出る。待つとお互いに動けなくなる）
             var before = order.TakeWhile(t => t != run.Train)
                 .Where(t => RunByTrain(t) is { } p && !SectionCleared(p, st.St.Id, next) && !(p.Dir == run.Dir && EnteredSection(p, st))
-                            && !SameTrackBehind(run, st, p))
+                            && !SameTrackBehind(run, st, p)
+                            // 先の対向列車が、この駅で自分のいる番線に入れずに待っているなら、自分が先（待つとお互いに動けない）
+                            && !(p.Dir != run.Dir && NextTrackBlocker(p, st.St.Id)?.Run == run))
                 .ToList();
             return before.Count > 0 ? $"走行順待ち（{st.St.Name}〜{nextName}: {string.Join("・", before)} が先）" : null;
         }
