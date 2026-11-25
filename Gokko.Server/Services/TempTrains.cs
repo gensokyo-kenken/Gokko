@@ -558,7 +558,16 @@ public sealed class TempTrains
                         if (trainDir is { } td2 && _rail.Stations.TryGetValue(end.St, out var es) && es.RouteControl)
                         {
                             var outs = es.Routes[td2].ShuntOuts.Where(o => o.From == end.Track).Select(o => o.Label).Distinct().ToList();
-                            if (outs.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線がありません");
+                            // 引上線がなければ、着いた番線から後運用の発車の番線へ、そのまま入換で移る（駒野 1番線 → 5番線など。後運用の始発の入換）
+                            var nd = td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            var moves = es.Routes[nd].Shunts.Where(s => s.From == end.Track).Select(s => s.To).Distinct().Order().ToList();
+                            if (outs.Count == 0)
+                            {
+                                if (moves.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線・番線がありません");
+                                else if (t.TurnVia.Length > 0) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
+                                else if (next.Stops[0].Track is not { } mt || !moves.Contains(mt))
+                                    errors.Add($"{n}: {endName} {end.Track}番線からは {string.Join("・", moves.Select(x => x + "番線"))}へ入換できます。{next.Number} の発車の番線をそのどれかにしてください");
+                            }
                             else if (t.TurnVia.Length > 0 && !outs.Contains(t.TurnVia)) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
                             // 入換した線から、後運用の発車の番線へ入れるか（知らせるだけ）
                             var via = t.TurnVia.Length > 0 ? t.TurnVia : outs.FirstOrDefault();

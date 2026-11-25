@@ -190,7 +190,7 @@
             <option value="連結">増結車（この駅で待って、後運用の列車に連結）</option>
           </select>
           <span id="tTurnNextBox">後運用: <select id="tTurnNext"></select></span>
-          <span id="tTurnShuntBox">入換の線: <select id="tTurnVia"></select>
+          <span id="tTurnShuntBox">入換の線・番線: <select id="tTurnVia"></select>
             入換の時刻: <input id="tTurnTime" class="t-in" placeholder="自動" title="空なら後運用の発車の2分前"></span>
         </div>
         <div class="list" style="max-height:none">
@@ -423,6 +423,15 @@
     return m ? `${m[1]}線入換` : `${label}へ入換`;
   }
   const rowLabel = (k) => (k === "main" ? "本線" : String(k).startsWith("via:") ? `${String(k).slice(4)}線` : `${k}番線`);
+  // そのまま番線を移る入換の行き先: 着いた番線から、後運用の向きの始発の入換で入れる番線（駒野 1番線 → 4・5・6番線）
+  function directMoves(t) {
+    const end = t.stops[t.stops.length - 1];
+    if (!end || end.track == null) return [];
+    const nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
+    const nd = (nx && dirOf(nx)) || (dirOf(t) === "下り" ? "上り" : dirOf(t) === "上り" ? "下り" : null);
+    const r = nd && stById[end.st]?.rules?.[nd];
+    return r ? [...new Set(r.shunts.filter((s) => s.from === `${end.track}番線`).map((s) => s.to))].sort((a, b) => a - b) : [];
+  }
   // 入換で入れる線: 終点の着いた番線から（その向きの shuntOut）
   function shuntOutsOf(t) {
     const end = t.stops[t.stops.length - 1], dir = dirOf(t);
@@ -442,8 +451,15 @@
       return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${info}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
-    $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(viaName(outs[0]))}）` : "入換できる線がありません"}</option>`
-      + outs.map((o) => `<option value="${esc(o)}" ${o === t.turnVia ? "selected" : ""}>${esc(viaName(o))}</option>`).join("");
+    // 引上線がなければ、着いた番線から後運用の発車の番線へそのまま移る入換（駒野 1番線 → 5番線など）を選ぶ
+    const moves = outs.length ? [] : directMoves(t);
+    const nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
+    const nxTrack = nx && nx.stops[0] ? nx.stops[0].track : null;
+    $("tTurnVia").innerHTML = outs.length
+      ? `<option value="">既定（${esc(viaName(outs[0]))}）</option>` + outs.map((o) => `<option value="${esc(o)}" ${o === t.turnVia ? "selected" : ""}>${esc(viaName(o))}</option>`).join("")
+      : moves.length
+        ? `<option value="" ${moves.includes(nxTrack) ? "" : "selected"}>（入換先の番線を選ぶ）</option>` + moves.map((n) => `<option value="@${n}" ${n === nxTrack ? "selected" : ""}>${n}番線へ入換</option>`).join("")
+        : `<option value="">入換できる線・番線がありません</option>`;
     $("tTurnTime").value = short(t.turnTime);
     $("tTurnNextBox").hidden = !(how === "発" || how === "入換" || how === "種別変更" || how === "連結");
     $("tTurnShuntBox").hidden = how !== "入換";
@@ -452,6 +468,12 @@
     $(id).onchange = () => {
       const t = cur.trains[curTrain];
       t[key] = $(id).value.trim() || (key === "turnTime" ? null : "");
+      // 番線を移る入換（"@5"）: 入換の線は空にし、後運用の発車の番線をその番線にする
+      if (key === "turnVia" && t.turnVia.startsWith("@")) {
+        const to = +t.turnVia.slice(1), nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
+        t.turnVia = "";
+        if (nx && nx.stops[0]) nx.stops[0].track = to;
+      }
       if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換" || t.turnHow === "種別変更" || t.turnHow === "連結") && !turnCandidates(t).some((x) => x.number === t.turnNext)) t.turnNext = turnCandidates(t)[0]?.number || "";
       sameTrack(t);
       // 増結車: 列番は「連＋連結する列車の列番」、種別は回送、待つ番線は連結する列車が着く番線に合わせる
@@ -922,7 +944,9 @@
       if (how === "入換") {
         const via = m.t.turnVia || shuntOutsOf(m.t)[0] || "";
         const vt = /^(\d+)番線/.exec(via);
-        shunt = { t: sec(m.t.turnTime) ?? b.t - 120, track: viaKey(via), label: via };
+        // 引上線がなければ（駒野 1番線 → 5番線など）、後運用の発車の番線へそのまま移る
+        shunt = via ? { t: sec(m.t.turnTime) ?? b.t - 120, track: viaKey(via), label: via }
+          : { t: sec(m.t.turnTime) ?? b.t - 120, track: b.track, label: b.track != null ? `${b.track}番線` : "" };
       }
       mineP.push(link(L, a, b, DC[m.type] || "#e6e8eb", 1.4, shunt));
     }
