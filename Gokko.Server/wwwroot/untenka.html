@@ -153,6 +153,7 @@
           <button id="dgIn" class="small" title="拡大">拡大</button>
           <button id="dgOut" class="small" title="縮小">縮小</button>
           <button id="dgGo" class="small" title="このグループの列車の所まで動かす">このグループへ</button>
+          <label title="所定の試運転の線を出す（ふだんは出さない）"><input type="checkbox" id="dgTrial"> 試運転を表示</label>
         </div>
         <div class="note">このグループの列車を濃く、所定の列車を薄く描き、運行番号ごとに折返をつなぎます。関係する列車（追い越す・追い越される、単線で交換する、続行で間隔が詰まる、同じ番線を同じ時間に使う）は少し濃く描き、下に一覧を出します。<br>
           ◆を横にずらすと、その駅から先の時刻をまとめてずらします（Shift を押しながらだとその駅だけ）。詳細表示で縦にずらすと番線を変えます。◆をダブルクリックすると停車・通過を切り替えます。何もない所をつかむと横に動きます。</div>
@@ -175,13 +176,24 @@
           発車: <input id="tDep" class="t-in" placeholder="10:00">
           終点: <select id="tTo"></select>
           <button id="lay">駅を並べる</button>
-          <button id="fill" title="発駅の発車時刻から、標準運転時分で各駅の時刻を入れる（停車駅は30秒停車）">標準運転時分で埋める</button>
+          <button id="fill" title="発駅の発車時刻から、標準運転時分で各駅の時刻を入れる（停車駅は、指定がなければ20秒停車）">標準運転時分で埋める</button>
           <span class="muted" id="tDir"></span>
+        </div>
+        <div class="row">
+          終点のあと: <select id="tTurnHow">
+            <option value="">自動（同じ運行の次の列車へ折返）</option>
+            <option value="なし">折り返さない</option>
+            <option value="発">そのまま折返</option>
+            <option value="入換">入換して折返</option>
+          </select>
+          <span id="tTurnNextBox">後運用: <select id="tTurnNext"></select></span>
+          <span id="tTurnShuntBox">入換の線: <select id="tTurnVia"></select>
+            入換の時刻: <input id="tTurnTime" class="t-in" placeholder="自動" title="空なら後運用の発車の2分前"></span>
         </div>
         <div class="list" style="max-height:none">
           <table><thead><tr><th>駅</th><th>番線</th><th>停車</th><th>着</th><th>発（通過）</th></tr></thead><tbody id="stops"></tbody></table>
         </div>
-        <div class="note">時刻は 10:05 か 10:05:30 の形で入れます。発駅の発車時刻を入れると、標準運転時分（停車駅は30秒停車）でほかの駅の時刻をざっと入れます。途中の時刻を手で直したあとは自動では入れ直しません（［標準運転時分で埋める］で入れ直します）。<br>
+        <div class="note">時刻は 10:05 か 10:05:30 の形で入れます。発駅の発車時刻を入れると、標準運転時分（停車駅は、指定がなければ20秒停車）でほかの駅の時刻をざっと入れます。途中の時刻を手で直したあとは自動では入れ直しません（［標準運転時分で埋める］で入れ直します）。<br>
           番線は、同じ向きのいつもの番線を最初に入れています。</div>
       </fieldset>
     </div>
@@ -361,9 +373,52 @@
     $("tFrom").innerHTML = stationOpts(t.stops[0]?.st);
     $("tTo").innerHTML = stationOpts(t.stops[t.stops.length - 1]?.st || base.stations[base.stations.length - 1].id);
     $("tDep").value = short(t.stops[0]?.dep);
-    for (const id of ["tUnyo", "tNumber", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill"]) $(id).disabled = !ed;
+    for (const id of ["tUnyo", "tNumber", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill", "tTurnHow", "tTurnNext", "tTurnVia", "tTurnTime"]) $(id).disabled = !ed;
     drawHint(t);
+    drawTurn(t);
     drawStops(t);
+  }
+
+  // ---- 終点のあと（後運用・入換） ----
+  // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）
+  function turnCandidates(t) {
+    const end = t.stops[t.stops.length - 1];
+    if (!end) return [];
+    const arr = sec(end.arr || end.dep);
+    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr))
+      .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
+  }
+  // 入換で入れる線: 終点の着いた番線から（その向きの shuntOut）
+  function shuntOutsOf(t) {
+    const end = t.stops[t.stops.length - 1], dir = dirOf(t);
+    const r = end && stById[end.st]?.rules?.[dir];
+    return r ? [...new Set(r.shuntOuts.filter((o) => o.from === end.track).map((o) => o.label))] : [];
+  }
+  function drawTurn(t) {
+    const how = t.turnHow || "";
+    $("tTurnHow").value = how;
+    const cands = turnCandidates(t);
+    const nexts = [...cands.map((x) => x.number || ""), ...(t.turnNext && !cands.some((x) => x.number === t.turnNext) ? [t.turnNext] : [])];
+    $("tTurnNext").innerHTML = `<option value="">（選ぶ）</option>` + nexts.filter((n) => n).map((n) => {
+      const x = cands.find((y) => y.number === n);
+      return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${x ? ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行` : "（終点から出ない列車）"}</option>`;
+    }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
+    const outs = shuntOutsOf(t);
+    $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(outs[0])}）` : "入換できる線がありません"}</option>`
+      + outs.map((o) => `<option ${o === t.turnVia ? "selected" : ""}>${esc(o)}</option>`).join("");
+    $("tTurnTime").value = short(t.turnTime);
+    $("tTurnNextBox").hidden = !(how === "発" || how === "入換");
+    $("tTurnShuntBox").hidden = how !== "入換";
+  }
+  for (const [id, key] of [["tTurnHow", "turnHow"], ["tTurnNext", "turnNext"], ["tTurnVia", "turnVia"], ["tTurnTime", "turnTime"]]) {
+    $(id).onchange = () => {
+      const t = cur.trains[curTrain];
+      t[key] = $(id).value.trim() || (key === "turnTime" ? null : "");
+      if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換") && !t.turnNext) t.turnNext = turnCandidates(t)[0]?.number || "";
+      dirty = true;
+      drawTurn(t);
+      drawTrains();
+    };
   }
 
   function drawLabels(t) {
@@ -386,9 +441,11 @@
     $("stops").innerHTML = t.stops.map((s, i) => {
       const st = stById[s.st] || { name: s.st, tracks: [], control: false };
       const first = i === 0, last = i === t.stops.length - 1;
-      const tracks = [...new Set([...(st.tracks || []), ...(s.track != null ? [s.track] : [])])].sort((a, b) => a - b);
+      // 選べるのは入れる番線だけ（入れない番線が入っていれば、そうと書いて残す）
+      const okTracks = allowedTracks(s.st, dirOf(t), first, last);
+      const tracks = [...new Set([...okTracks, ...(s.track != null ? [s.track] : [])])].sort((a, b) => a - b);
       const trackSel = st.control || s.track != null
-        ? `<select data-k="track" data-i="${i}" ${dis}><option value="">${s.stop === "停" ? "－" : "所定"}</option>${tracks.map((n) => `<option value="${n}" ${n === s.track ? "selected" : ""}>${n}番線</option>`).join("")}</select>` : "";
+        ? `<select data-k="track" data-i="${i}" ${dis}><option value="">${s.stop === "停" ? "－" : st.rules && st.rules[dirOf(t)] && st.rules[dirOf(t)].through ? "本線通過" : "所定"}</option>${tracks.map((n) => `<option value="${n}" ${n === s.track ? "selected" : ""}>${n}番線${okTracks.includes(n) ? "" : "（入れない）"}</option>`).join("")}</select>` : "";
       return `<tr class="${s.stop === "停" ? "" : "pass"}">
         <td>${esc(st.name)}</td>
         <td>${trackSel}</td>
@@ -405,7 +462,38 @@
     return s.def[k] ?? null;
   }
 
+  // 入れる番線（運転整理用のダイヤグラムと同じ決まり: その向きの場内で入れる＝発駅は不要、出発できる＝終点は不要・行き止まりは可）。
+  // 進路のデータがない駅（路線の外）は、時刻表にある番線ならどれでも
+  function allowedTracks(stId, dir, first, last) {
+    const s = stById[stId];
+    if (!s) return [];
+    const r = s.rules && dir ? s.rules[dir] : null;
+    if (!r) return s.tracks || [];
+    const all = [...new Set([...(s.tracks || []), ...r.arr, ...r.dep])].sort((a, b) => a - b);
+    return all.filter((t) => (first || r.arr.includes(t)) && (last || r.dep.includes(t) || r.turn.includes(t)));
+  }
+  const trackOk = (t, i) => {
+    const s = t.stops[i];
+    return s.track == null || allowedTracks(s.st, dirOf(t), i === 0, i === t.stops.length - 1).includes(s.track);
+  };
+  // 入れない番線になっている駅を、入れる番線（いつもの番線を先に）に直す。通過で番線を使わずに通れる駅は「所定」に戻す
+  function fixTracks(t) {
+    const dir = dirOf(t);
+    t.stops.forEach((s, i) => {
+      // 進路を扱う駅で、停車する（発駅を含む）のに番線が空なら、入れる番線を入れる
+      const needs = s.track == null && stById[s.st]?.control && (s.stop === "停" || i === 0);
+      if (!needs && trackOk(t, i)) return;
+      const ok = allowedTracks(s.st, dir, i === 0, i === t.stops.length - 1);
+      const st = stById[s.st], def = defTrack(s.st, dir, s.stop);
+      if (s.stop === "通" && st && st.rules && st.rules[dir] && st.rules[dir].through) s.track = null;
+      else s.track = ok.includes(def) ? def : ok[0] ?? null;
+    });
+  }
+
   // その種別が、その駅にふだん止まるか（所定の時刻表で半分以上が止まる）
+  // 停車時間の初期値（秒）。標準運転時分で埋めるとき・線を引いたとき・通過を停車に変えたときに使う
+  const DWELL = 20;
+
   const usualStop = (st, type) => !!(stById[st] && (stById[st].stopTypes || []).includes(type));
 
   // 種別を選んだとき: 途中の駅の停車・通過を、その種別の所定停車にそろえ、時刻を入れ直す
@@ -421,6 +509,7 @@
       const st = stById[s.st];
       if (st && (s.track == null || !st.control)) s.track = st.control || stop === "停" ? defTrack(s.st, dir, stop) : null;
     });
+    fixTracks(t);
     manual.delete(t);
     autoFill(t);
   }
@@ -465,6 +554,7 @@
     t.stops[t.stops.length - 1].dep = null;
     if (!t.dest) t.dest = b.name;
     dirty = true;
+    fixTracks(t);
     manual.delete(t);
     autoFill(t);
     drawTrain(); drawTrains();
@@ -502,7 +592,7 @@
       if (!row) { missing.push(`${stById[a.st]?.name}→${stById[b.st]?.name}`); now += 120; }
       else now += row.seconds;
       const last = i === t.stops.length - 1;
-      if (bStop) { b.arr = fmt(now); if (!last) { now += 30; b.dep = fmt(now); } else b.dep = null; }
+      if (bStop) { b.arr = fmt(now); if (!last) { now += DWELL; b.dep = fmt(now); } else b.dep = null; }
       else { b.arr = null; b.dep = fmt(now); }
     }
     dirty = true;
@@ -641,16 +731,19 @@
       prev = s;
       const tracks = dv.split && s.tracks.length ? s.tracks : []; // 番線のある駅（路線の外の駅も、時刻表に番線があれば）は段に分ける
       const rows = {};
-      tracks.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
-      const bottom = tracks.length ? y + (tracks.length - 1) * dv.trackPx : y;
-      band[s.zone] = { s, y: tracks.length ? (y + bottom) / 2 : y, rows, top: y, bottom };
+      // 番線を使わずに通れる本線のある駅（江ノ原信号場など）は、いちばん上に「本線」の段（番線のない通過はここ）
+      const main = tracks.length && s.rules && Object.values(s.rules).some((r) => r.through);
+      const keys = main ? ["main", ...tracks] : tracks;
+      keys.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
+      const bottom = keys.length ? y + (keys.length - 1) * dv.trackPx : y;
+      band[s.zone] = { s, y: keys.length ? (y + bottom) / 2 : y, rows, top: y, bottom };
       y = bottom + dv.stationPx;
     }
     const height = y - dv.stationPx + BOTTOM;
     const zones = stations.map((s) => s.zone);
     const yOf = (z, track) => {
       const b = band[z];
-      if (b) return track != null && b.rows[track] != null ? b.rows[track] : b.y;
+      if (b) return track != null && b.rows[track] != null ? b.rows[track] : track == null && b.rows.main != null ? b.rows.main : b.y;
       const i = zones.findIndex((x) => x > z);
       if (i <= 0) return band[zones[i < 0 ? zones.length - 1 : 0]].y;
       const a = band[zones[i - 1]], c = band[zones[i]];
@@ -670,10 +763,11 @@
       i, t, name: t.number || "（列番なし）", type: t.type, unyo: t.unyo,
       sh: shape(t.stops.filter((s) => zoneOf(s.st) != null).map((s) => ({ y: zoneOf(s.st), stop: s.stop, arr: s.arr, dep: s.dep, track: s.track })))
     })).filter((m) => m.sh.pts.length >= 2);
+    const shownPlan = plan.filter((p) => dv.trial || !p.trial); // 試運転は「試運転を表示」のときだけ
     // 関係する列車（このグループのほかの列車も相手にする）
     const rel = new Set(); const lines = [];
     for (const m of mine) {
-      for (const r of relations(m, [...plan, ...mine.filter((x) => x !== m)])) {
+      for (const r of relations(m, [...shownPlan, ...mine.filter((x) => x !== m)])) {
         rel.add(r.o.name);
         for (const w of r.why) lines.push({ me: m.name, o: r.o, w });
       }
@@ -690,7 +784,7 @@
           `<line x1="${L.left - 42}" x2="${L.left - 42}" y1="${b.top - pad + 2}" y2="${b.bottom + pad - 2}" stroke="#9aa3ae"/>`);
         for (const t of rows) {
           P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.rows[t]}" y2="${b.rows[t]}" stroke="#4a505a" stroke-width="0.8"/>`);
-          labels.push(`<text x="${L.left - 6}" y="${b.rows[t] + 3.5}" text-anchor="end" font-size="10" fill="#9aa3ae">${t}番線</text>`);
+          labels.push(`<text x="${L.left - 6}" y="${b.rows[t] + 3.5}" text-anchor="end" font-size="10" fill="#9aa3ae">${t === "main" ? "本線" : t + "番線"}</text>`);
         }
       } else {
         P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.y}" y2="${b.y}" stroke="#4a505a" stroke-width="${s.control ? 1.4 : 0.6}"/>`);
@@ -706,9 +800,9 @@
       if (m % every === 0) P.push(`<text x="${L.x(t)}" y="${L.height - 4}" text-anchor="middle" font-size="10" fill="#9aa3ae">${fmt(t).slice(0, 5)}</text>`);
     }
     // 所定の列車: 薄く。関係する列車は少し濃く。運行は折返でつなぐ
-    const byNo = new Map(plan.map((p) => [p.name, p]));
+    const byNo = new Map(shownPlan.map((p) => [p.name, p]));
     const faint = [], strong = [];
-    for (const p of plan) {
+    for (const p of shownPlan) {
       if (p.sh.pts.length < 2) continue;
       const out = rel.has(p.name) ? strong : faint, color = DC[p.type] || "#e6e8eb";
       out.push(`<polyline points="${ptsStr(L, p.sh.pts)}" fill="none" stroke="${color}" stroke-width="${rel.has(p.name) ? 1.3 : 1.1}"/>`);
@@ -721,12 +815,24 @@
     P.push(`<g clip-path="url(#dgClip)" pointer-events="none" opacity="0.9">${strong.join("")}</g>`);
     // このグループの列車（運行番号ごとに折返でつなぐ）
     const mineP = [];
+    // 後運用: 手で決めたもの（そのまま折返・入換して折返）、自動なら同じ運行番号の次の列車、「折り返さない」ならつながない
     const byUnyo = new Map();
     for (const m of mine) { if (!byUnyo.has(m.unyo)) byUnyo.set(m.unyo, []); byUnyo.get(m.unyo).push(m); }
-    for (const list of byUnyo.values()) {
-      list.sort((a, b) => a.sh.pts[0].t - b.sh.pts[0].t);
-      for (let k = 0; k + 1 < list.length; k++)
-        mineP.push(link(L, list[k].sh.pts[list[k].sh.pts.length - 1], list[k + 1].sh.pts[0], DC[list[k].type] || "#e6e8eb", 1.4));
+    for (const list of byUnyo.values()) list.sort((a, b) => a.sh.pts[0].t - b.sh.pts[0].t);
+    for (const m of mine) {
+      const how = m.t.turnHow || "";
+      let nx = null;
+      if (how === "発" || how === "入換") nx = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext);
+      else if (how === "") { const list = byUnyo.get(m.unyo); nx = list[list.indexOf(m) + 1] || null; }
+      if (!nx) continue;
+      const a = m.sh.pts[m.sh.pts.length - 1], b = nx.sh.pts[0];
+      let shunt = null;
+      if (how === "入換") {
+        const via = m.t.turnVia || shuntOutsOf(m.t)[0] || "";
+        const vt = /^(\d+)番線/.exec(via);
+        shunt = { t: sec(m.t.turnTime) ?? b.t - 120, track: vt ? +vt[1] : null, label: via };
+      }
+      mineP.push(link(L, a, b, DC[m.type] || "#e6e8eb", 1.4, shunt));
     }
     const ed = editable();
     for (const m of mine) {
@@ -736,19 +842,31 @@
       mineP.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 5}" font-size="11" font-weight="600" fill="${color}" paint-order="stroke" stroke="#2b2f36" stroke-width="3">${esc(m.name)}</text>`);
     }
     P.push(`<g clip-path="url(#dgClip)" pointer-events="none">${mineP.join("")}</g>`);
-    // ◆（このグループの列車の駅ごと。発の時刻、終点は着）
+    // ◆（このグループの列車の駅ごと）。途中の停車駅は着（左半分）と発（右半分）に分ける（離せば長く停車できる）。
+    // 通過駅・発駅は発の◆、終点は着の◆
     for (const m of mine) {
       m.t.stops.forEach((s, si) => {
-        const z = zoneOf(s.st), last = si === m.t.stops.length - 1;
-        const tm = sec(last ? s.arr || s.dep : s.dep || s.arr);
-        if (z == null || tm == null) return;
-        const x = L.x(tm), y = L.y(z, s.track);
-        const fill = s.stop === "停" ? "#3aa0d8" : "#2b2f36";
-        const tip = `${m.name} ${stById[s.st]?.name}: ${s.stop === "停" ? "停車" : "通過"}${s.track != null ? ` ${s.track}番線` : ""} ${fmt(tm)}${last ? "着" : s.stop === "停" ? "発" : "通過"}`
-          + (ed ? "　横にずらすと時刻（Shift でこの駅だけ）・ダブルクリックで停車／通過" + (dv.split ? "・縦にずらすと番線" : "") : "");
-        P.push(`<g data-ti="${m.i}" data-si="${si}" data-x="${x}" data-y="${y}" data-tip="${esc(tip)}" style="cursor:${ed ? (dv.split ? "move" : "ew-resize") : "pointer"}">`
-          + `<path d="M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z" fill="transparent"/>`
-          + `<path d="M${x},${y - 4} L${x + 3.4},${y} L${x},${y + 4} L${x - 3.4},${y} Z" fill="${fill}" stroke="${s.stop === "停" ? "#2b2f36" : "#3aa0d8"}" stroke-width="0.9" pointer-events="none"/></g>`);
+        const z = zoneOf(s.st), first = si === 0, last = si === m.t.stops.length - 1;
+        if (z == null) return;
+        const marks = last ? [{ k: "a", tm: sec(s.arr || s.dep), shape: "full" }]
+          : s.stop === "停" && !first ? [{ k: "a", tm: sec(s.arr || s.dep), shape: "left" }, { k: "d", tm: sec(s.dep), shape: "right" }]
+          : [{ k: "d", tm: sec(s.dep || s.arr), shape: "full" }];
+        const y = L.y(z, s.track), stopFill = s.stop === "停";
+        for (const mk of marks) {
+          if (mk.tm == null) continue;
+          const x = L.x(mk.tm);
+          const what = mk.k === "a" ? "着" : s.stop === "停" ? "発" : "通過";
+          const tip = `${m.name} ${stById[s.st]?.name}: ${s.stop === "停" ? "停車" : "通過"}${s.track != null ? ` ${s.track}番線` : ""} ${fmt(mk.tm)}${what}`
+            + (ed ? (mk.k === "a" && !last ? "　横にずらすと着の時刻（停車時間が変わる）" : "　横にずらすと時刻（この先もまとめて。Shift でこの駅だけ）")
+              + (first || last ? "" : "・ダブルクリックで停車／通過") + (dv.split ? "・縦にずらすと番線" : "") : "");
+          const hit = mk.shape === "left" ? `M${x},${y - 7} L${x},${y + 7} L${x - 7},${y} Z` : mk.shape === "right" ? `M${x},${y - 7} L${x + 7},${y} L${x},${y + 7} Z`
+            : `M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z`;
+          const vis = mk.shape === "left" ? `M${x},${y - 4.5} L${x},${y + 4.5} L${x - 3.8},${y} Z` : mk.shape === "right" ? `M${x},${y - 4.5} L${x + 3.8},${y} L${x},${y + 4.5} Z`
+            : `M${x},${y - 4} L${x + 3.4},${y} L${x},${y + 4} L${x - 3.4},${y} Z`;
+          P.push(`<g data-ti="${m.i}" data-si="${si}" data-k="${mk.k}" data-x="${x}" data-y="${y}" data-tip="${esc(tip)}" style="cursor:${ed ? (dv.split ? "move" : "ew-resize") : "pointer"}">`
+            + `<path d="${hit}" fill="transparent"/>`
+            + `<path d="${vis}" fill="${stopFill ? (mk.k === "a" && !last ? "#7cc4ea" : "#3aa0d8") : "#2b2f36"}" stroke="${stopFill ? "#2b2f36" : "#3aa0d8"}" stroke-width="0.9" pointer-events="none"/></g>`);
+        }
       });
     }
     // 線を引いている途中
@@ -774,12 +892,19 @@
       : `<li class="muted">関係する列車はありません</li>`;
   }
 
-  // 運行のつなぎ線: 着いた駅で、次の列車が出るまで横に引く（番線が変わるなら、出る1分前に移る）。駅が違えば点線でつなぐ
-  function link(L, a, b, color, width) {
+  // 運行のつなぎ線: 着いた駅で、次の列車が出るまで横に引く（番線が変わるなら、出る1分前に移る）。駅が違えば点線でつなぐ。
+  // 入換（shunt）なら、入換の時刻に引上線などの段（詳細表示で段があれば）へ移り、出る1分前に発車の番線へ移る
+  function link(L, a, b, color, width, shunt) {
     if (b.t < a.t) return "";
     if (a.z !== b.z) return `<line x1="${L.x(a.t)}" y1="${L.y(a.z, a.track)}" x2="${L.x(b.t)}" y2="${L.y(b.z, b.track)}" stroke="${color}" stroke-width="${width}" stroke-dasharray="3 3"/>`;
-    const ya = L.y(a.z, a.track), yb = L.y(b.z, b.track), xm = Math.max(L.x(a.t), L.x(b.t - 60));
-    return `<polyline points="${L.x(a.t)},${ya} ${xm},${ya} ${L.x(b.t)},${yb}" fill="none" stroke="${color}" stroke-width="${width}"/>`;
+    const ya = L.y(a.z, a.track), yb = L.y(b.z, b.track);
+    let pts;
+    if (shunt) {
+      const ts = Math.max(a.t, Math.min(b.t, shunt.t)), yv = shunt.track != null ? L.y(a.z, shunt.track) : ya;
+      const t2 = Math.min(b.t, ts + 60), t3 = Math.max(t2, b.t - 60);
+      pts = [[a.t, ya], [ts, ya], [t2, yv], [t3, yv], [b.t, yb]];
+    } else pts = [[a.t, ya], [Math.max(a.t, b.t - 60), ya], [b.t, yb]];
+    return `<polyline points="${pts.map(([t, y]) => `${L.x(t).toFixed(1)},${y.toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="${width}"${shunt ? ` stroke-dasharray="6 2"` : ""}><title>${shunt ? `入換（${esc(shunt.label || "")}）` : "折返"}</title></polyline>`;
   }
 
   function svgPoint(ev) {
@@ -794,7 +919,7 @@
     let best = null;
     for (const s of base.stations) {
       const b = L.band[s.zone];
-      const cands = Object.keys(b.rows).length ? Object.entries(b.rows).map(([t, ry]) => ({ track: +t, y: ry })) : [{ track: null, y: b.y }];
+      const cands = Object.keys(b.rows).length ? Object.entries(b.rows).map(([t, ry]) => ({ track: t === "main" ? null : +t, y: ry })) : [{ track: null, y: b.y }];
       for (const c of cands) if (!best || Math.abs(c.y - y) < Math.abs(best.y - y)) best = { z: s.zone, s, ...c };
     }
     return best && Math.abs(best.y - y) <= Math.max(dv.stationPx / 2, dv.trackPx) ? best : null;
@@ -838,17 +963,18 @@
     const list = base.stations.filter((s) => inc ? s.zone >= pts[0].z && s.zone <= pts[pts.length - 1].z : s.zone <= pts[0].z && s.zone >= pts[pts.length - 1].z);
     if (!inc) list.reverse();
     const at = new Map(pts.map((p) => [p.z, p]));
-    // 打った駅は停車（途中の駅は30秒停車）。打っていない駅は通過で、前後の打った駅の間を駅の位置で割り振る
+    // 打った駅は停車（途中の駅は DWELL 秒停車）。打っていない駅は通過で、前後の打った駅の間を駅の位置で割り振る
     const stops = list.map((s, i) => {
       const p = at.get(s.zone), first = i === 0, last = i === list.length - 1;
-      if (p) return { st: s.id, stop: "停", arr: first ? null : fmt(p.t), dep: last ? null : fmt(first ? p.t : p.t + 30), track: p.track ?? defTrack(s.id, dir, "停") };
+      if (p) return { st: s.id, stop: "停", arr: first ? null : fmt(p.t), dep: last ? null : fmt(first ? p.t : p.t + DWELL), track: p.track ?? defTrack(s.id, dir, "停") };
       const a = [...pts].reverse().find((q) => inc ? q.z < s.zone : q.z > s.zone), b = pts.find((q) => inc ? q.z > s.zone : q.z < s.zone);
-      const ta = a.t + (a === pts[0] ? 0 : 30), tb = b.t;
+      const ta = a.t + (a === pts[0] ? 0 : DWELL), tb = b.t;
       const t = ta + (tb - ta) * (s.zone - a.z) / (b.z - a.z);
       return { st: s.id, stop: "通", arr: null, dep: fmt(snap(t)), track: s.control ? defTrack(s.id, dir, "通") : null };
     });
     const prev = cur.trains[curTrain];
     const t = { unyo: prev ? prev.unyo : (base.freeUnyo || 0), number: "", type: prev ? prev.type : "普通", label: "", dest: list[list.length - 1].name, stops };
+    fixTracks(t); // 打った番線が入れない番線なら、入れる番線に直す
     cur.trains.push(t);
     curTrain = cur.trains.length - 1;
     manual.add(t);
@@ -861,16 +987,29 @@
   }
 
   // ---- ◆をずらす（時刻・番線）・ダブルクリックで停車／通過 ----
-  function shiftTimes(t, si, delta, only) {
+  // k: "a" は着（途中の停車駅は着だけ動かす＝停車時間が変わる。終点は着）、"d" は発・通過（only でなければこの先もまとめて）
+  function shiftTimes(t, si, delta, only, k) {
     const st = t.stops, last = si === st.length - 1;
     const add = (v) => (v ? fmt(sec(v) + delta) : v);
     const s = st[si];
-    if (last) s.arr = add(s.arr || s.dep);
-    else {
-      s.dep = add(s.dep);
-      if (s.arr && sec(s.dep) < sec(s.arr)) s.arr = s.dep;
-    }
+    if (k === "a") { s.arr = add(s.arr || s.dep); if (last) s.dep = null; return; }
+    s.dep = add(s.dep);
     if (!only) for (let j = si + 1; j < st.length; j++) { st[j].arr = add(st[j].arr); st[j].dep = add(st[j].dep); }
+  }
+  // ずらせる幅（時刻が前の駅より前・次の駅より後にならないように。着は発を越えない、発は着より前にしない）
+  function shiftRange(t, si, k, only) {
+    const st = t.stops, s = st[si], last = si === st.length - 1;
+    const p = st[si - 1], n = st[si + 1];
+    // 駅と駅の間は少なくとも SNAP 秒（走る時間が0の、縦の線にならないように）
+    const prevT = p ? Math.max(sec(p.arr) ?? -Infinity, sec(p.dep) ?? -Infinity) + SNAP : null;
+    const nextT = n ? (sec(n.arr) ?? sec(n.dep)) - SNAP : null;
+    const arr = sec(s.arr), dep = sec(s.dep);
+    if (k === "a") {
+      const b = arr ?? dep;
+      return { min: prevT != null ? prevT - b : -Infinity, max: !last && dep != null ? dep - b : Infinity };
+    }
+    const lo = Math.max(prevT ?? -Infinity, arr ?? -Infinity);
+    return { min: lo - dep, max: only && nextT != null ? nextT - dep : Infinity };
   }
   function toggleStop(t, si) {
     const st = t.stops, s = st[si];
@@ -878,8 +1017,9 @@
     const dir = dirOf(t);
     if (s.stop === "通") {
       s.stop = "停"; s.arr = s.dep;
-      shiftTimes(t, si, 30, false);
+      shiftTimes(t, si, DWELL, false, "d");
       if (s.track == null) s.track = defTrack(s.st, dir, "停");
+      fixTracks(t);
     } else {
       const d = sec(s.dep) - sec(s.arr || s.dep);
       s.stop = "通"; s.dep = s.arr || s.dep; s.arr = null;
@@ -899,7 +1039,7 @@
     }
     ev.preventDefault();
     try { diaEl.setPointerCapture(ev.pointerId); } catch (e) {}
-    drag = { g, ti: +g.dataset.ti, si: +g.dataset.si, x0: +g.dataset.x, y0: +g.dataset.y, cx: ev.clientX, cy: ev.clientY, mode: null, shift: ev.shiftKey };
+    drag = { g, ti: +g.dataset.ti, si: +g.dataset.si, k: g.dataset.k, x0: +g.dataset.x, y0: +g.dataset.y, cx: ev.clientX, cy: ev.clientY, mode: null, shift: ev.shiftKey };
   });
   diaEl.addEventListener("pointermove", (ev) => {
     if (panning) { diaEl.scrollLeft = panning.left - (ev.clientX - panning.x); return; }
@@ -923,18 +1063,34 @@
     }
     const t = cur.trains[d.ti], s = t.stops[d.si], name = `${t.number || "（列番なし）"} ${stById[s.st]?.name}`;
     if (d.mode === "time") {
-      const delta = snap((p.x - d.x0) / dv.minPx * 60);
-      d.delta = delta;
+      const only = d.shift || ev.shiftKey;
+      const r = shiftRange(t, d.si, d.k, only);
+      const raw = snap((p.x - d.x0) / dv.minPx * 60);
+      const delta = Math.max(r.min, Math.min(r.max, raw)); // 前の駅より前・次の駅より後にはしない
+      d.delta = delta; d.only = only;
       d.g.setAttribute("transform", `translate(${delta / 60 * dv.minPx},0)`);
-      const last = d.si === t.stops.length - 1, base0 = sec(last ? s.arr || s.dep : s.dep);
-      $("diaTip").textContent = `${name} → ${fmt(base0 + delta)}${last ? "着" : "発"}（${delta >= 0 ? "+" : ""}${delta}秒${d.shift || ev.shiftKey ? "・この駅だけ" : "・この先もまとめて"}。離すと決定）`;
+      const base0 = sec(d.k === "a" ? s.arr || s.dep : s.dep);
+      const what = d.k === "a" ? "着" : s.stop === "停" ? "発" : "通過";
+      $("diaTip").textContent = `${name} → ${fmt(base0 + delta)}${what}（${delta >= 0 ? "+" : ""}${delta}秒${d.k === "a" ? "・着だけ" : only ? "・この駅だけ" : "・この先もまとめて"}`
+        + `${raw !== delta ? "・これより先には動かせません" : ""}。離すと決定）`;
     } else {
-      const b = L.band[zoneOf(s.st)];
-      let best = null;
-      for (const [tr, ry] of Object.entries(b.rows)) if (!best || Math.abs(ry - p.y) < Math.abs(best.y - p.y)) best = { track: +tr, y: ry };
-      d.track = best.track;
-      d.g.setAttribute("transform", `translate(0,${best.y - d.y0})`);
-      $("diaTip").textContent = `${name} → ${best.track}番線（離すと決定）`;
+      // 縦: 入れる番線の段にだけ動かす
+      const b = L.band[zoneOf(s.st)], first = d.si === 0, last = d.si === t.stops.length - 1;
+      const ok = allowedTracks(s.st, dirOf(t), first, last);
+      // 本線の段（番線を使わない通過）は、通過する途中の駅で、その向きに本線を通れるときだけ
+      const mainOk = s.stop === "通" && !first && !last && !!stById[s.st]?.rules?.[dirOf(t)]?.through;
+      const okRow = (tr) => (tr === "main" ? mainOk : ok.includes(+tr));
+      const rowName = (tr) => (tr === "main" ? "本線" : `${tr}番線`);
+      let best = null, near = null;
+      for (const [tr, ry] of Object.entries(b.rows)) {
+        if (!near || Math.abs(ry - p.y) < Math.abs(near.y - p.y)) near = { key: tr, y: ry };
+        if (okRow(tr) && (!best || Math.abs(ry - p.y) < Math.abs(best.y - p.y))) best = { key: tr, y: ry };
+      }
+      d.target = best ? { track: best.key === "main" ? null : +best.key } : null;
+      if (best) d.g.setAttribute("transform", `translate(0,${best.y - d.y0})`);
+      $("diaTip").textContent = near && !okRow(near.key)
+        ? `${name}: ${dirOf(t) || ""}は${rowName(near.key)}に${near.key === "main" ? "入りません（停車する駅・発駅・終点は番線に入ります）" : "入れません"}（入れる番線: ${ok.map((x) => x + "番線").join("・") || "なし"}${mainOk ? "・本線" : ""}）`
+        : best ? `${name} → ${rowName(best.key)}（離すと決定）` : "";
     }
   });
   function endPointer(ev) {
@@ -944,8 +1100,8 @@
     const t = cur.trains[d.ti];
     if (!d.mode) { if (curTrain !== d.ti) { curTrain = d.ti; drawEditor(); } return; } // 押しただけ: その列車を選ぶ
     if (!t) return;
-    if (d.mode === "time" && d.delta) { shiftTimes(t, d.si, d.delta, d.shift || ev.shiftKey); changed(t); }
-    else if (d.mode === "track" && d.track != null && d.track !== t.stops[d.si].track) { t.stops[d.si].track = d.track; changed(t); }
+    if (d.mode === "time" && d.delta) { shiftTimes(t, d.si, d.delta, d.only, d.k); changed(t); }
+    else if (d.mode === "track" && d.target && d.target.track !== t.stops[d.si].track) { t.stops[d.si].track = d.target.track; changed(t); }
     else drawDia();
   }
   diaEl.addEventListener("pointerup", endPointer);
@@ -983,13 +1139,15 @@
   $("dgSplit").classList.toggle("on", dv.split);
   $("dgDraw").onclick = () => (drawing ? stopDrawing("") : startDrawing());
   $("dgGo").onclick = () => { scrolledFor = null; drawDia(); };
+  $("dgTrial").checked = !!dv.trial;
+  $("dgTrial").onchange = () => { dv.trial = $("dgTrial").checked; saveDv(); drawDia(); };
 
   async function loadPlan() {
     if (plan) return;
     try {
       const j = await api("GET", "/plan");
       singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
-      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, sh: shape(t.stops) }));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, trial: !!t.trial, sh: shape(t.stops) }));
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
   }

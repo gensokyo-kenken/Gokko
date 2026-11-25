@@ -58,7 +58,21 @@ public static class UntenkaEndpoints
                 tracks = byStation[st.Id].Select(u => u.Track)
                     .Concat(rail.Stations.TryGetValue(st.Id, out var def) ? def.TrackCircuit.Keys : Enumerable.Empty<int>()).Distinct().Order().ToList(),
                 def = byStation[st.Id].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key),
-                stopTypes = stopTypes[st.Id].ToList()
+                stopTypes = stopTypes[st.Id].ToList(),
+                // 向きごとに入れる番線（進路のデータから。運転整理用のダイヤグラムの番線の選び方と同じ材料）。
+                // arr: 場内で入れる番線、dep: 出発できる番線、turn: 行き止まり（打ち切りに使える）、through: 番線を使わずに通過できるか
+                rules = rail.Stations.TryGetValue(st.Id, out var sd) && sd.RouteControl
+                    ? new[] { Dir.Down, Dir.Up }.ToDictionary(d => d == Dir.Down ? "下り" : "上り", d => new
+                    {
+                        arr = sd.Routes[d].Arrive.Keys.Order().ToList(),
+                        dep = sd.Routes[d].Depart.Keys.Order().ToList(),
+                        turn = sd.Routes[d].Turnback.Order().ToList(),
+                        through = sd.Routes[d].Through.Count > 0,
+                        // 終点で入換するとき: 着いた番線（from）から入れる線（label）。その線から出る向きの入換で入れる番線は shunts
+                        shuntOuts = sd.Routes[d].ShuntOuts.Select(o => new { from = o.From, label = o.Label }).Distinct().ToList(),
+                        shunts = sd.Routes[d].Shunts.Select(s => new { from = s.FromLabel, to = s.To }).Distinct().ToList()
+                    })
+                    : null
             }).ToList();
             var types = TempTrains.Types.Select(t => new
             {
@@ -91,6 +105,7 @@ public static class UntenkaEndpoints
             {
                 train = t.Number,
                 type = t.Type,
+                trial = RailData.IsTrial(t), // 試運転（画面では「試運転を表示」のときだけ出す）
                 turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
                 // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
                 stops = t.Stops.Where(s => temp.ZoneOf(s.StationId) != null && (s.Arr != null || s.Dep != null))
@@ -153,6 +168,7 @@ public static class UntenkaEndpoints
     private static TempTrains.TrainSpec Copy(TempTrains.TrainSpec t) => new()
     {
         Unyo = t.Unyo, Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
+        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "",
         Stops = (t.Stops ?? new()).Take(80).Select(s => new TempTrains.StopSpec { St = s.St ?? "", Stop = s.Stop ?? "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
     };
 }
