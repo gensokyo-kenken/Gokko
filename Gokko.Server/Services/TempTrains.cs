@@ -485,6 +485,25 @@ public sealed class TempTrains
                     errors.Add($"{n} {name}: {(td == Dir.Down ? "下り" : "上り")}は{tk}番線に入れません");
             }
 
+            // 解放（列番が「解」＋元の列車の列番。時刻表の 解2076C と同じ）: 発駅で元の列車から切り離して出る。
+            // 元の列車がこのグループにあれば、その駅に停車し、同じ番線で、元の列車が着いたあとに出るか
+            if (n.StartsWith("解") && trains.FirstOrDefault(x => x.Number == n[1..]) is { } src)
+            {
+                var first = t.Stops[0];
+                var fname = StationName(first.St);
+                var ss = src.Stops.FirstOrDefault(s => s.St == first.St);
+                if (ss == null || ss.Stop != "停") errors.Add($"{n}: 元の列車 {src.Number} は{fname}に停車しません（切り離す駅に停車させてください）");
+                else
+                {
+                    if (first.Track != null && ss.Track != null && first.Track != ss.Track)
+                        errors.Add($"{n}: {src.Number} は{fname} {ss.Track}番線に着きます。切り離した車両も {ss.Track}番線から出してください");
+                    if (DaySec(first.Dep) is { } cd && DaySec(ss.Arr ?? ss.Dep) is { } sa && cd < sa)
+                        errors.Add($"{n}: {src.Number} が{fname}に着くより前に出ることになっています");
+                    if (t.Cars > 0 && src.Cars > 0 && t.Cars >= src.Cars)
+                        errors.Add($"{n}: 切り離す両数（{t.Cars}両）が、{src.Number} の両数（{src.Cars}両）以上です");
+                }
+            }
+
             // 増結車（連結）: 待つ駅（終点）に止まる後運用の列車に、あとから入ってきてもらって連結する（増結車が先に番線で待つ）
             if (t.TurnHow == "連結")
             {

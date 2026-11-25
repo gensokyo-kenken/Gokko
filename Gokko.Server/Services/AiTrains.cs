@@ -411,7 +411,7 @@ public sealed class AiTrains : BackgroundService
                         var childCars = CarsOf(child);
                         foreach (var p in _trains.Values.Where(x => x.Number == parent))
                         {
-                            p.Cars = Math.Max(CarsOf(parent), p.Cars - childCars);
+                            p.Cars = p.Dia.Cars != null ? Math.Max(1, p.Cars - childCars) : Math.Max(CarsOf(parent), p.Cars - childCars);
                             p.Length = p.Cars * CarLength;
                         }
                         if (users.Contains(RailData.NormalizeTrain(child)) || _trains.Values.Any(x => x.Number == child)) continue;
@@ -1265,7 +1265,8 @@ public sealed class AiTrains : BackgroundService
         if (_rail.DiaOf("解" + t.Number) is not { } child || child.Stops.FirstOrDefault(s => s.StationId != null) is not { } cs
             || cs.StationId != p.StationId || _trains.Values.Any(x => x.Number == child.Number) || _userTrains.Contains(child.Number)) return;
         var cars = CarsOf(child.Number);
-        t.Cars = Math.Max(CarsOf(t.Number), t.Cars - cars);
+        // 臨時列車で両数を決めた列車は、決めた両数から切り離した分を引く（運行番号の既定の両数で下を止めると、減らなくなる）
+        t.Cars = t.Dia.Cars != null ? Math.Max(1, t.Cars - cars) : Math.Max(CarsOf(t.Number), t.Cars - cars);
         t.Length = t.Cars * CarLength;
         _pendingSplits.Add((child.Number, cars, p.Name, cs.Track ?? p.Track ?? -1, t.Number));
     }
