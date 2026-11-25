@@ -81,6 +81,9 @@
     <h2>接続待ち</h2>
     <div id="connections"></div>
   </section>
+  <section class="wide" id="rinjiSection">
+    <div id="rinji"></div>
+  </section>
   <section class="wide">
     <h2>手動進路構成</h2>
     <iframe id="circuitMap" src="tid.html?names=1&embed=1" title="軌道回路名つきの配線" style="width:100%; height:320px; border:1px solid var(--line); border-radius:6px; margin-bottom:8px; background:#fff"></iframe>
@@ -133,6 +136,7 @@
 </script>
 <script src="diapanel.js"></script>
 <script src="tokuhatsu-chime.js"></script>
+<script src="tokuhatsu-rinji.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -318,6 +322,9 @@
     if (ev.origin === location.origin && ev.data && ev.data.gokkoTidHeight) $("circuitMap").style.height = ev.data.gokkoTidHeight + "px";
     if (ev.origin === location.origin && ev.data && ev.data.gokkoDiagramHeight) $("diagramFrame").style.height = ev.data.gokkoDiagramHeight + "px"; // ダイヤグラム（diagrammarker.html）
   });
+
+  // 特発臨（運転整理のために、その場で立てる臨時列車。tokuhatsu-rinji.js）
+  GokkoRinji.panel({ el: $("rinji"), api, act, onMessage: (m) => { $("error").textContent = m; } });
 
   // 自動運転列車（にぎやかし）。速さは管理画面だけに出す
   GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, onMessage: (m) => { $("error").textContent = m; } });
