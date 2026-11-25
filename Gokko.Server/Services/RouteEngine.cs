@@ -1165,7 +1165,7 @@ public sealed partial class RouteEngine
     /// ・種別: 接頭辞が「回」（定期回送）「試」（試運転）なら回送。それ以外（「臨」を含む）は、数字のあとの文字の最後（社局 T・S の後ろ）
     ///   A＝特急、B＝急行、C＝準急、D＝区急、K＝快急、なし（社局 T・S だけも）＝普通
     /// </summary>
-    private static (string Type, Dir Dir)? TrainInfo(string train)
+    internal static (string Type, Dir Dir)? TrainInfo(string train)
     {
         var body = Regex.Replace(train.Trim(), @"#\d+$", "");
         body = Regex.Replace(body, "[XYZ]$", "", RegexOptions.IgnoreCase);
@@ -3974,16 +3974,17 @@ public sealed partial class RouteEngine
     }
 
     private sealed record PassengerDeparture(string Train, string Kind, string Dest, string Time, int? Track, Dir Direction, double Seconds);
-    private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+    private ILookup<string, PassengerDeparture>? _departuresByStation; // 時刻表が変わったとき（臨時列車の適用・取消）だけ作り直す
+    private object? _departuresDia; // _departuresByStation を作ったときのダイヤの表
 
     private static readonly string[] PassengerKindOrder = ["特急", "快急", "急行", "区急", "準急", "普通"];
-    private ILookup<string, string>? _passengerKinds; // 時刻表は起動のときに読んだまま変わらないので、一度だけ作る
+    private ILookup<string, string>? _passengerKinds; // 所定の時刻表から一度だけ作る
 
     /// <summary>
     /// 駅に「普段」止まる種別（駅 → 種別）: その駅を走るその種別の列車のうち、1割以上が止まるもの。
     /// 浜園の特急のように、臨時停車のときだけ止まるものは入らない（発車案内では「臨時停車」と出す）。
     /// </summary>
-    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.Dia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
+    private ILookup<string, string> PassengerKinds() => _passengerKinds ??= _data.BaseDia.Values.Where(t => PassengerKindOrder.Contains(t.Type))
         .SelectMany(t => t.Stops.Where(s => s.StationId != null).Select(s => (Id: s.StationId!, Kind: t.Type, Stop: s.Stop == "停")))
         .GroupBy(x => (x.Id, x.Kind))
         .Where(g => g.Count(x => x.Stop) * 10 >= g.Count())
@@ -4018,7 +4019,11 @@ public sealed partial class RouteEngine
     {
         lock (_lock)
         {
-            _departuresByStation ??= BuildPassengerDepartures();
+            if (_departuresByStation == null || !ReferenceEquals(_departuresDia, _data.Dia))
+            {
+                _departuresDia = _data.Dia;
+                _departuresByStation = BuildPassengerDepartures();
+            }
             var now = NowSec();
             var advisories = _central.PassengerAdvisoryTrains();
             var zone = _data.Line.ZoneOfStation(id);
