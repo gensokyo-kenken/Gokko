@@ -86,13 +86,15 @@ public static class AdminEndpoints
 
     /// <summary>
     /// 終点で入換して折り返す列車の、引上線などの段の名前（ダイヤグラムの段。"5番線（引上線）" → "5"、"入換Y線" → "Y"）。
-    /// 着いた番線からの shuntOut の最初のもの。本線への入換など、段にならないものは null
+    /// 着いた番線からの shuntOut の最初のもの（折返に Via があればその線）。本線への入換など、段にならないものは null
     /// </summary>
     private static string? ShuntRow(RailData rail, DiaTrain t)
     {
         var end = t.Stops.LastOrDefault(s => s.StationId != null);
         if (end?.StationId is not { } sid || end.Track is not { } track || !rail.Stations.TryGetValue(sid, out var st)) return null;
-        var label = st.Routes.Values.SelectMany(r => r.ShuntOuts).FirstOrDefault(s => s.From == track)?.Label;
+        // ダイヤの折返に引き上げる線（X線など）が書かれていれば、その線
+        var outs = st.Routes.Values.SelectMany(r => r.ShuntOuts).Where(s => s.From == track).ToList();
+        var label = (rail.Turns.TurnOf(t)?.Via is { } via && outs.Any(s => s.Label == via) ? via : null) ?? outs.FirstOrDefault()?.Label;
         if (label == null) return null;
         var m = System.Text.RegularExpressions.Regex.Match(label, @"^(\d+)番線");
         if (m.Success) return m.Groups[1].Value;
