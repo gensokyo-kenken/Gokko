@@ -83,6 +83,8 @@ public sealed class TempTrains
         public string? TurnTime { get; set; }
         /// <summary>入換で入る線（TrackRoutes.json の shuntOut の名前。空なら着いた番線からの最初のもの）。</summary>
         public string TurnVia { get; set; } = "";
+        /// <summary>両数（0 なら運行番号ごとの既定。自動運転の列車の長さ・連結の位置に使う）。</summary>
+        public int Cars { get; set; }
     }
 
     /// <summary>1駅。Stop は「停」か「通」。時刻は "HH:mm:ss"（"HH:mm" でもよい）。Track は番線。</summary>
@@ -394,8 +396,9 @@ public sealed class TempTrains
             t.Type = (t.Type ?? "").Trim();
             t.Label = (t.Label ?? "").Trim();
             t.Dest = (t.Dest ?? "").Trim();
-            t.TurnHow = t.TurnHow is "なし" or "発" or "入換" or "種別変更" ? t.TurnHow : "";
-            t.TurnNext = t.TurnHow is "発" or "入換" or "種別変更" ? RailData.NormalizeTrain(t.TurnNext) : "";
+            t.TurnHow = t.TurnHow is "なし" or "発" or "入換" or "種別変更" or "連結" ? t.TurnHow : "";
+            t.Cars = Math.Clamp(t.Cars, 0, 10);
+            t.TurnNext = t.TurnHow is "発" or "入換" or "種別変更" or "連結" ? RailData.NormalizeTrain(t.TurnNext) : "";
             t.TurnTime = t.TurnHow == "入換" ? NormTime(t.TurnTime) ?? (string.IsNullOrWhiteSpace(t.TurnTime) ? null : t.TurnTime) : null;
             t.TurnVia = t.TurnHow == "入換" ? (t.TurnVia ?? "").Trim() : "";
             t.Stops ??= new();
@@ -441,7 +444,8 @@ public sealed class TempTrains
             if (t.Unyo <= 0) errors.Add($"{n}: 運行番号を入れてください");
             if (!types.Contains(t.Type)) { errors.Add($"{n}: 種別を選んでください"); continue; }
             if (NumberTypeError(t) is { } te) errors.Add(te);
-            if (t.Stops.Count < 2) { errors.Add($"{n}: 駅を2つ以上入れてください"); continue; }
+            // 増結車（連結）は、待つ駅の1駅だけでよい
+            if (t.Stops.Count < (t.TurnHow == "連結" ? 1 : 2)) { errors.Add($"{n}: 駅を{(t.TurnHow == "連結" ? 1 : 2)}つ以上入れてください"); continue; }
 
             // 駅は路線の駅で、向きに沿って並んでいること
             var zs0 = t.Stops.Select(s => ZoneOf(s.St)).ToList();
@@ -451,7 +455,7 @@ public sealed class TempTrains
             Dir? trainDir = downUp is { } du0 ? (inc == du0 ? Dir.Down : Dir.Up) : null;
             for (var i = 1; i < zones.Count; i++)
                 if ((zones[i] > zones[i - 1]) != inc || zones[i] == zones[i - 1]) { errors.Add($"{n}: 駅の並びが逆になっている所があります"); break; }
-            if (RouteEngine.TrainInfo(n) is { } info && downUp is { } du && (info.Dir == Dir.Down) != (inc == du))
+            if (zones.Count >= 2 && RouteEngine.TrainInfo(n) is { } info && downUp is { } du && (info.Dir == Dir.Down) != (inc == du))
                 errors.Add($"{n}: 列番の数字の最後が{(info.Dir == Dir.Down ? "奇数（下り）" : "偶数（上り）")}ですが、駅の並びは{(info.Dir == Dir.Down ? "上り" : "下り")}です");
             if (t.Stops[0].Stop != "停" || t.Stops[^1].Stop != "停") errors.Add($"{n}: 発駅と終点は停車にしてください");
 
@@ -479,6 +483,26 @@ public sealed class TempTrains
                 if (s.Track is { } tk && trainDir is { } td && _rail.Stations.TryGetValue(s.St, out var sr) && sr.RouteControl
                     && !TrackAllowed(sr.Routes[td], tk, first, i == t.Stops.Count - 1))
                     errors.Add($"{n} {name}: {(td == Dir.Down ? "下り" : "上り")}は{tk}番線に入れません");
+            }
+
+            // 増結車（連結）: 待つ駅（終点）に止まる後運用の列車に、あとから入ってきてもらって連結する（増結車が先に番線で待つ）
+            if (t.TurnHow == "連結")
+            {
+                var end = t.Stops[^1];
+                var endName = StationName(end.St);
+                var parent = trains.FirstOrDefault(x => x.Number == t.TurnNext);
+                var ps = parent?.Stops.FirstOrDefault(s => s.St == end.St);
+                if (t.TurnNext.Length == 0 || parent == null || parent == t) errors.Add($"{n}: 連結する列車{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}がこのグループにありません");
+                else if (ps == null || ps.Stop != "停") errors.Add($"{n}: 連結する列車 {parent.Number} は{endName}に停車しません");
+                else
+                {
+                    if (n != "連" + parent.Number) errors.Add($"{n}: 増結車の列番は「連{parent.Number}」にしてください（連結する列車の列番に「連」を付ける）");
+                    if (end.Track != null && ps.Track != null && end.Track != ps.Track) errors.Add($"{n}: {parent.Number} は{endName} {ps.Track}番線に着きます。増結車も {ps.Track}番線で待ってください");
+                    double? ready = DaySec(end.Arr ?? end.Dep), parr = DaySec(ps.Arr ?? ps.Dep);
+                    if (ready != null && parr != null && parr < ready) errors.Add($"{n}: {parent.Number} が{endName}に着くのは、増結車が番線に入るより前です（増結車が先に入って待ちます）");
+                    if (trains.Count(x => x != t && x.TurnHow == "連結" && x.TurnNext == parent.Number) > 0) errors.Add($"{n}: {parent.Number} には、ほかの増結車も連結します");
+                    if (t.Cars > 0 && parent.Cars > 0 && t.Cars + parent.Cars > 10) errors.Add($"{n}: 連結すると {t.Cars + parent.Cars}両になります（10両まで）");
+                }
             }
 
             // 終点のあと（そのまま折返・入換して折返）
@@ -543,7 +567,7 @@ public sealed class TempTrains
     /// その番線に入れるか（RouteEngine の番線の選び方と同じ）: 場内で入れる（発駅は不要）、かつ出発できる（終点は不要。行き止まりは打ち切りとして可）。
     /// </summary>
     public static bool TrackAllowed(StationDirRoutes r, int track, bool first, bool last) =>
-        (first || r.Arrive.ContainsKey(track)) && (last || r.Depart.ContainsKey(track) || r.Turnback.Contains(track));
+        (first || r.Arrive.ContainsKey(track)) && (last || r.Depart.ContainsKey(track) || (!first && r.Turnback.Contains(track)));
 
     /// <summary>下り（列番が奇数）は、路線の駅の並び（ゾーン）が増える向きか。所定のダイヤから読む。</summary>
     public bool? DownIncreasing()
@@ -588,7 +612,7 @@ public sealed class TempTrains
                 var d = new DiaTrain
                 {
                     Number = t.Number, Type = t.Type, TypeLabel = t.Label.Length > 0 ? t.Label : t.Type,
-                    Dest = t.Dest.Length > 0 ? t.Dest : StationName(t.Stops[^1].St), Unyo = t.Unyo
+                    Dest = t.Dest.Length > 0 ? t.Dest : StationName(t.Stops[^1].St), Unyo = t.Unyo, Cars = t.Cars > 0 ? t.Cars : null
                 };
                 foreach (var s in t.Stops)
                 {
@@ -600,6 +624,9 @@ public sealed class TempTrains
                 // 種別変更: 時刻表の「途中駅で列番が変わる列車」と同じく、次の列番と変わる駅（Next）にする
                 if (t.TurnHow == "種別変更" && trains.FirstOrDefault(x => x.Number == t.TurnNext) is { } chg && chg != t)
                     d.Next = (chg.Number, last);
+                // 増結車: 時刻表の 連777 と同じく、終点（待つ駅）で後運用の列車に「併結」する
+                else if (t.TurnHow == "連結" && t.TurnNext.Length > 0)
+                    d.Turn = new DiaTurn("併結", t.TurnNext, NormTime(trains.FirstOrDefault(x => x.Number == t.TurnNext)?.Stops.FirstOrDefault(s => s.St == last)?.Dep), null);
                 else d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
                     ? new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発") : null);
                 list.Add(d);

@@ -189,6 +189,9 @@ public sealed class DiaTrain
     /// <summary>運行番号（列番の付け方から求めたもの。<see cref="Gokko.Common.Unyo"/>）。読めなければ null。</summary>
     public int? Unyo { get; set; }
 
+    /// <summary>両数（臨時列車で決めたときだけ。null なら自動運転は運行番号ごとの両数）。</summary>
+    public int? Cars { get; set; }
+
     /// <summary>終点のあと（スタフの「折返」「引継」「滞泊」）。書かれていなければ null。</summary>
     public DiaTurn? Turn { get; set; }
 
