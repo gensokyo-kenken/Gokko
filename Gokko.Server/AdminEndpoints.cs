@@ -25,7 +25,7 @@ public static class AdminEndpoints
 
     /// <param name="Train">後運用を差し替える列車。</param>
     /// <param name="Next">新しい後運用の列番。null なら、その列車が関わるいちばん新しい差し替えを取り消す。</param>
-    public sealed record TurnRequest(string Train, string? Next, int? Direct = null);
+    public sealed record TurnRequest(string Train, string? Next, int? Direct = null, string? Station = null);
 
     /// <param name="Id">社員番号。</param>
     public sealed record CrewLoginRequest(string? Id, string? Password, string? Passphrase = null, bool? Client = null);
@@ -992,7 +992,19 @@ public static class AdminEndpoints
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { message = "列車を指定してください" });
             string? error;
-            if (req.Direct is { } track)
+            // 途中折返し（station と next と direct）: train を station で打ち切り、direct 番線で next に折り返す。next がもう走っていれば断る
+            if (req.Station is { Length: > 0 } midSt && req.Direct is { } midTrack && !string.IsNullOrWhiteSpace(req.Next))
+            {
+                var nextNo = RailData.NormalizeTrain(req.Next);
+                if (engine.IsRunning(nextNo)) return Results.BadRequest(new { message = $"{nextNo} はもう走っています" });
+                if (rail.Turns.SetMid(req.Train, nextNo, midSt, midTrack, out error) is { } m)
+                {
+                    central.SetStop(m.Train, m.Station, "打ち切り");
+                    central.SetTrack(m.Train, m.Station, m.Track);
+                    central.SetTrack(m.Next, m.Station, m.Track);
+                }
+            }
+            else if (req.Direct is { } track)
             {
                 if (rail.Turns.SetDirect(req.Train, track, engine.DelayOf(RailData.NormalizeTrain(req.Train)),
                         (t, st) => central.TrackOverride(t, st) != null, out error) is { } d)
@@ -1007,6 +1019,7 @@ public static class AdminEndpoints
                 error = rail.Turns.Cancel(req.Train, out var undone);
                 if (undone is { } u)
                 {
+                    if (u.Midway && central.StopOverride(u.Train, u.Station) == "打ち切り") central.SetStop(u.Train, u.Station, null);
                     if (central.TrackOverride(u.Train, u.Station) == u.Track) central.SetTrack(u.Train, u.Station, null);
                     if (central.TrackOverride(u.Next, u.Station) == u.Track) central.SetTrack(u.Next, u.Station, null);
                     foreach (var (mt, mk) in u.Moved)

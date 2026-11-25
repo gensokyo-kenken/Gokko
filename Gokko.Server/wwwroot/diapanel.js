@@ -132,6 +132,23 @@
         ${t.cancelable ? `<button data-turn-cancel="1" title="いちばん新しい差し替えを取り消して、元の後運用に戻す">取消</button>` : ""}</div>`;
   }
 
+  // ---- 途中折返し（◆の窓。この駅で打ち切って、反対向きに出る列車に折り返す） ----
+  // 大道寺方面から来た下りを、新野崎 3・4番線、浜園 2番線、藤江・水越・高見沢で上りに折り返すなど。選んだ列車のこの駅より手前は走らない
+  function midTurnHtml(t, stationId, pick) {
+    if (!t) return "";
+    const mw = t.midway;
+    if (mw && mw.station === stationId)
+      return `<div class="grp"><div class="ttl">途中折返し</div><div><span style="color:#e07000">この駅で打ち切り、${mw.track}番線で <b class="mono">${esc(mw.next)}</b> に折り返します</span></div>
+        <div class="row" style="margin:4px 0 0"><button data-turn-cancel="1" title="途中折返しを取り消して、終点まで走らせる（打ち切りと番線の指定も外す）">取消</button></div></div>`;
+    const mt = (t.midTurns || []).find((x) => x.station === stationId);
+    if (!mt) return "";
+    const opts = `<option value="">折り返す列車を選ぶ</option>` + mt.candidates.map((c) =>
+      `<option value="${esc(c.train)}" ${c.train === pick ? "selected" : ""}>${esc(c.train)} ${esc(c.time || "")}発 ${esc(c.type || "")}${c.unyo != null ? `・${c.unyo}運行` : ""}</option>`).join("");
+    return `<div class="grp"><div class="ttl">途中折返し（この駅で打ち切り、反対向きの列車として出す。選んだ列車のこの駅より手前は走りません）</div>
+      <div class="row" style="margin:0"><select data-mid-pick="1">${opts}</select>${mt.tracks.map((k) =>
+        `<button data-mid-track="${k}" class="primary" ${pick ? "" : "disabled"} title="${k}番線に着けて、選んだ列車に折り返す">${k}番線で折返し</button>`).join("")}</div></div>`;
+  }
+
   async function handleTrackChange(ev, ctx) {
     const s = ev.target.closest("select[data-track-train]");
     if (!s) return false;
@@ -287,6 +304,7 @@
               ${btn(`data-pick=""`, false, "所定に戻す")}</div>`
             : `<div class="muted">${(m.options || []).length > 1 ? "列車がもうこの駅の進路に入っているので、変えられません" : "この駅で選べる番線はありません"}</div>`}</div>
         ${tr.turn ? `<div class="grp"><div class="ttl">後運用（遅れたときに、終点から別の運用につなぐ。運行番号ごと入れ替わります）</div>${turnHtml(tr.turn, tr.unyo, p.turnPick)}</div>` : ""}
+        ${midTurnHtml(tr.turn, m.stationId, p.midPick)}
         <div class="grp"><div class="ttl">停車・通過（いまは${esc(m.stopType || "")}${stopNow ? `・${esc(stopNow)}の指定中` : ""}）</div>
           <div class="row" style="margin:0">${stopBtns}</div></div>
         ${m.draggable || m.departAt ? `<div class="grp"><div class="ttl">発車時刻（この30秒前まで出発を開通させません。図の◆を横にずらしても決められます）</div>
@@ -321,6 +339,7 @@
     if (btn.dataset.turnDirect) { p.turnPick = ""; await popupRun("POST", "/route/turn", { train: p.train, next: null, direct: Number(btn.dataset.turnDirect) }); return; }
     const m = c.m;
     if (!m) return;
+    if (btn.dataset.midTrack && p.midPick) { const next = p.midPick; p.midPick = ""; await popupRun("POST", "/route/turn", { train: p.train, next, station: m.stationId, direct: Number(btn.dataset.midTrack) }); return; }
     const body = { train: p.train, station: m.stationId };
     if (btn.dataset.act === "force") await popupRun("POST", "/route/force", body);
     else if (btn.dataset.stop !== undefined) await popupRun("POST", "/route/stop", { ...body, kind: btn.dataset.stop || null });
@@ -338,6 +357,8 @@
     if (await handleTrackChange(ev, { done: () => {}, act: popupRun })) return;
     const tp = ev.target.closest("select[data-turn-pick]");
     if (tp) { p.turnPick = tp.value; tp.blur(); updatePopup(p.diagram, true); return; }
+    const mp = ev.target.closest("select[data-mid-pick]");
+    if (mp) { p.midPick = mp.value; mp.blur(); updatePopup(p.diagram, true); return; }
     // 発車時刻: この◆の駅（data-depart）か、出発順序の表の列車（data-depart-train）
     const inp = ev.target.closest("input[data-depart], input[data-depart-train]");
     if (!inp) return;

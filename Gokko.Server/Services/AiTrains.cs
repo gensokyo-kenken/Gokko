@@ -544,6 +544,7 @@ public sealed class AiTrains : BackgroundService
         if (!_clock.IsRunning) dt = 0; // ロープレ時刻が止まっている間は止まる
         Extend(t);
         if (!t.Shunting) RefreshEventStops(t);
+        if (!t.Shunting) ApplyCut(t);
         var nowGame = _clock.Now;
 
         // 次に止まる駅
@@ -595,7 +596,7 @@ public sealed class AiTrains : BackgroundService
             {
                 // ダイヤではまだ先へ行く（線区の外へ出ていく）: 出発の進路が開いたら出ていく（赤山町は 9LT に入って20秒で消える）。
                 // 進路が開かないまま発車時刻から60秒たったら消す
-                if (t.Dia.Stops.LastOrDefault()?.StationId != stopNow.StationId)
+                if (t.Dia.Stops.LastOrDefault()?.StationId != stopNow.StationId && t.CutStation != stopNow.StationId)
                 {
                     if (ready && !t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; }
                     if (ready && t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
@@ -614,7 +615,7 @@ public sealed class AiTrains : BackgroundService
                 }
 
                 // 折返が「入換」: 自動進路構成が開ける入換（引上げ）の進路で引上線へ入り、そこで折り返しの列番になる
-                if (_rail.Turns.TurnOf(t.Dia) is { Kind: "折返", How: "入換", Number: { Length: > 0 } sn } && _rail.DiaOf(sn) != null)
+                if (t.CutStation != stopNow.StationId && _rail.Turns.TurnOf(t.Dia) is { Kind: "折返", How: "入換", Number: { Length: > 0 } sn } && _rail.DiaOf(sn) != null)
                 {
                     if (IsUserTrain(sn)) { HandOver(t, sn); return; }
 
@@ -818,6 +819,7 @@ public sealed class AiTrains : BackgroundService
         _spawned.Add(RailData.NormalizeTrain(number));
         t.Number = number;
         t.Dia = nd;
+        (t.CutStation, t.CutRest, t.CutWasStop) = (null, null, false);
         t.Dir = dir;
         t.Shown = null;
         t.StartTrack = -1;
@@ -898,6 +900,9 @@ public sealed class AiTrains : BackgroundService
     private bool TurnBack(Train t, DateTime utcNow)
     {
         var here = t.Plan[t.DwellIndex];
+        // 途中折返し・直接折返の指定があれば、その駅でだけ折り返す。打ち切りの駅で、そこでの折返しの指定がなければ、ここで終わり
+        var turnAt = _rail.Turns.DirectOf(t.Dia.Number)?.Station;
+        if (t.CutStation == here.StationId ? turnAt != here.StationId : turnAt != null && turnAt != here.StationId) return false;
         if (_rail.Turns.TurnOf(t.Dia) is not { Kind: "折返", Number: { Length: > 0 } number } || _rail.DiaOf(number) is not { } nd) return false;
         if (IsUserTrain(number)) { HandOver(t, number); return false; }
         if (_routes.DirOfTrain(number) is not { } dir || !_rail.Stations.TryGetValue(here.StationId, out var st)) return false;
@@ -995,6 +1000,7 @@ public sealed class AiTrains : BackgroundService
     private void ChainNext(Train t)
     {
         var here = t.Plan[t.DwellIndex];
+        if (t.CutStation == here.StationId) return;
         if (t.Dia.Next is not { } nx || nx.StationId != here.StationId || _rail.DiaOf(nx.Number) is not { } nd) return;
         if (IsUserTrain(nx.Number)) { HandOver(t, nx.Number); return; }
         var i = nd.Stops.FindIndex(s => s.StationId == here.StationId);
@@ -1963,6 +1969,48 @@ public sealed class AiTrains : BackgroundService
             : new PlanStop(s.Name, s.StationId!, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep), dia, s);
 
     /// <summary>
+    /// 打ち切り（列車別設定の「打ち切り」。途中折返しでも入る）: その駅を終着にし、その先の駅を外す（通過する駅なら止まる駅にする。
+    /// もう止まりきれなければ、そのまま）。打ち切りを外したら、外した駅を戻す。
+    /// </summary>
+    private void ApplyCut(Train t)
+    {
+        var from = t.Dwelling ? t.DwellIndex : t.PlanIndex;
+        if (t.CutStation is { } cs)
+        {
+            if (_central.StopOverride(t.Number, cs) == "打ち切り") return;
+            var ci = t.Plan.FindIndex(p => p.StationId == cs);
+            if (ci >= 0 && t.CutRest != null)
+            {
+                t.Plan[ci] = t.Plan[ci] with { Stops = t.CutWasStop };
+                t.Plan.AddRange(t.CutRest);
+                _log.Note($"にぎやかし: {t.Number} の {t.Plan[ci].Name} での打ち切りを外しました");
+            }
+            (t.CutStation, t.CutRest, t.CutWasStop) = (null, null, false);
+            t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
+            return;
+        }
+        for (var i = Math.Max(0, from); i < t.Plan.Count - 1; i++)
+        {
+            var p = t.Plan[i];
+            if (_central.StopOverride(t.Number, p.StationId) != "打ち切り") continue;
+            if (!p.Stops && !(t.Dwelling && i == t.DwellIndex))
+            {
+                var braking = t.Speed * t.Speed / (2 * Decel) + 10;
+                if ((StopX(t, p with { Stops = true }) is { } x ? x - t.Head : EstimateDistance(t, p)) is { } dist && dist < braking) continue;
+            }
+            t.CutRest = t.Plan.Skip(i + 1).ToList();
+            t.CutWasStop = p.Stops;
+            t.CutStation = p.StationId;
+            t.Plan.RemoveRange(i + 1, t.Plan.Count - i - 1);
+            t.Plan[i] = p with { Stops = true };
+            if (t.Info != null)
+                t.Info.Stops = t.Plan.Select(q => new StopInfo { Name = q.Name, StopType = q.Stops ? "StopForPassenger" : "Passing" }).ToList();
+            _log.Note($"にぎやかし: {t.Number} は {p.Name} で打ち切り");
+            break;
+        }
+    }
+
+    /// <summary>
     /// 催物用臨停設定が変わったら、これから通る駅の停車・通過を作り直す（止まっている駅は変えない）。
     /// 新しく止まる駅が、今の速さではもう止まりきれない所なら、通過のままにする。
     /// </summary>
@@ -2049,5 +2097,8 @@ public sealed class AiTrains : BackgroundService
         public bool FromShunt { get; set; }       // 引上線から折り返した（ホームへの入換を待つ。発車時刻まで止まらずに番線へ入る）
         public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
         public long EventVersion { get; set; } = -1; // 停車・通過の一覧に入れた催物用臨停設定の版（EventStops.Version）
+        public string? CutStation { get; set; }   // 打ち切り（列車別設定・途中折返し）の駅。そこを終着にしている
+        public List<PlanStop>? CutRest { get; set; } // 打ち切りで外した、その先の駅（打ち切りを外したら戻す）
+        public bool CutWasStop { get; set; }      // 打ち切りの駅は、もとは止まる駅だったか
     }
 }
