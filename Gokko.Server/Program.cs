@@ -74,6 +74,7 @@ builder.Services.AddSignalR(o =>
     o.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
     o.MaximumReceiveMessageSize = 64 * 1024;
     o.AddFilter<HubTiming>(); // ハブの呼び出しごとの時間（サーバーの負荷）
+    o.AddFilter<DispatcherActivityHubFilter>(); // 司令員の操作を覚える（30分操作がなければ自動で退勤）
 });
 
 var app = builder.Build();
@@ -91,6 +92,8 @@ var incidentLog = app.Services.GetRequiredService<IncidentManager>();
 central.Changed += message => incidentLog.Note(message);
 rail.Turns.Changed += message => incidentLog.Note(message);
 app.Services.GetRequiredService<PlayerRegistry>().Changed += message => incidentLog.Note(message);
+var crewRoster = app.Services.GetRequiredService<CrewRoster>();
+crewRoster.DispatcherAutoLeft += id => incidentLog.Note($"司令員 ID:{id} を自動で退勤させました（{(int)CrewRoster.DispatcherIdleLimit.TotalMinutes}分操作なし）");
 if (string.IsNullOrEmpty(options.AdminKey))
     app.Logger.LogWarning("Gokko:AdminKey が未設定です。管理画面は使えません");
 if (string.IsNullOrEmpty(options.DiaPassword))
@@ -104,6 +107,9 @@ if (string.IsNullOrEmpty(options.Password))
 
 // 画面の API ごとの時間（サーバーの負荷）。操作のあとは、使い回している答えを捨てる
 app.UseLoadTiming(app.Services.GetRequiredService<ServerLoad>(), app.Services.GetRequiredService<ResponseCache>());
+
+// 司令員の操作（画面の GET 以外）を覚える。30分操作がなければ自動で退勤（CrewRoster.DispatcherIdleLimit）
+app.UseDispatcherActivity(crewRoster);
 
 // 管理画面・ダイヤグラムの画面は、差し替えたらすぐ反映されるように、毎回確かめさせる（古い diapanel.js が残らないように）
 app.UseStaticFiles(new StaticFileOptions
