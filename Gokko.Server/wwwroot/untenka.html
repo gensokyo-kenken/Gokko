@@ -185,6 +185,7 @@
             <option value="なし">折り返さない</option>
             <option value="発">そのまま折返</option>
             <option value="入換">入換して折返</option>
+            <option value="種別変更">種別変更（そのまま続けて走る）</option>
           </select>
           <span id="tTurnNextBox">後運用: <select id="tTurnNext"></select></span>
           <span id="tTurnShuntBox">入換の線: <select id="tTurnVia"></select>
@@ -380,13 +381,21 @@
   }
 
   // ---- 終点のあと（後運用・入換） ----
-  // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）
+  // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）。
+  // 種別変更なら同じ向き、折返（そのまま・入換）なら逆の向きの列車
   function turnCandidates(t) {
     const end = t.stops[t.stops.length - 1];
     if (!end) return [];
-    const arr = sec(end.arr || end.dep);
-    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr))
+    const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
+    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr)
+        && (!d || !dirOf(x) || (dirOf(x) === d) === same))
       .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
+  }
+  // 種別変更: 後運用は着いた番線のまま出るので、後運用の発駅の番線を合わせる
+  function sameTrack(t) {
+    if (t.turnHow !== "種別変更") return;
+    const end = t.stops[t.stops.length - 1], nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
+    if (end && nx && nx.stops[0] && end.track != null) nx.stops[0].track = end.track;
   }
   // 入換で入れる線: 終点の着いた番線から（その向きの shuntOut）
   function shuntOutsOf(t) {
@@ -407,14 +416,15 @@
     $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(outs[0])}）` : "入換できる線がありません"}</option>`
       + outs.map((o) => `<option ${o === t.turnVia ? "selected" : ""}>${esc(o)}</option>`).join("");
     $("tTurnTime").value = short(t.turnTime);
-    $("tTurnNextBox").hidden = !(how === "発" || how === "入換");
+    $("tTurnNextBox").hidden = !(how === "発" || how === "入換" || how === "種別変更");
     $("tTurnShuntBox").hidden = how !== "入換";
   }
   for (const [id, key] of [["tTurnHow", "turnHow"], ["tTurnNext", "turnNext"], ["tTurnVia", "turnVia"], ["tTurnTime", "turnTime"]]) {
     $(id).onchange = () => {
       const t = cur.trains[curTrain];
       t[key] = $(id).value.trim() || (key === "turnTime" ? null : "");
-      if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換") && !t.turnNext) t.turnNext = turnCandidates(t)[0]?.number || "";
+      if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換" || t.turnHow === "種別変更") && !turnCandidates(t).some((x) => x.number === t.turnNext)) t.turnNext = turnCandidates(t)[0]?.number || "";
+      sameTrack(t);
       dirty = true;
       drawTurn(t);
       drawTrains();
@@ -822,7 +832,7 @@
     for (const m of mine) {
       const how = m.t.turnHow || "";
       let nx = null;
-      if (how === "発" || how === "入換") nx = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext);
+      if (how === "発" || how === "入換" || how === "種別変更") nx = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext);
       else if (how === "") { const list = byUnyo.get(m.unyo); nx = list[list.indexOf(m) + 1] || null; }
       if (!nx) continue;
       const a = m.sh.pts[m.sh.pts.length - 1], b = nx.sh.pts[0];

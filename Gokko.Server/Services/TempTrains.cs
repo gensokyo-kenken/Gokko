@@ -73,7 +73,8 @@ public sealed class TempTrains
 
         /// <summary>
         /// 終点のあと。空は自動（同じ運行番号で、終点から次に出る列車へそのまま折り返す）、「なし」は折り返さない、
-        /// 「発」はそのまま（着いた番線から）TurnNext として出る、「入換」は TurnVia の線へ入換してから TurnNext として出る。
+        /// 「発」はそのまま（着いた番線から）TurnNext として出る、「入換」は TurnVia の線へ入換してから TurnNext として出る、
+        /// 「種別変更」は向きを変えずに、着いた番線から列番・種別を変えて TurnNext として続けて走る（時刻表の途中駅で列番が変わる列車と同じ）。
         /// </summary>
         public string TurnHow { get; set; } = "";
         /// <summary>後運用の列番（同じグループの列車）。</summary>
@@ -393,8 +394,8 @@ public sealed class TempTrains
             t.Type = (t.Type ?? "").Trim();
             t.Label = (t.Label ?? "").Trim();
             t.Dest = (t.Dest ?? "").Trim();
-            t.TurnHow = t.TurnHow is "なし" or "発" or "入換" ? t.TurnHow : "";
-            t.TurnNext = t.TurnHow is "発" or "入換" ? RailData.NormalizeTrain(t.TurnNext) : "";
+            t.TurnHow = t.TurnHow is "なし" or "発" or "入換" or "種別変更" ? t.TurnHow : "";
+            t.TurnNext = t.TurnHow is "発" or "入換" or "種別変更" ? RailData.NormalizeTrain(t.TurnNext) : "";
             t.TurnTime = t.TurnHow == "入換" ? NormTime(t.TurnTime) ?? (string.IsNullOrWhiteSpace(t.TurnTime) ? null : t.TurnTime) : null;
             t.TurnVia = t.TurnHow == "入換" ? (t.TurnVia ?? "").Trim() : "";
             t.Stops ??= new();
@@ -481,7 +482,7 @@ public sealed class TempTrains
             }
 
             // 終点のあと（そのまま折返・入換して折返）
-            if (t.TurnHow is "発" or "入換")
+            if (t.TurnHow is "発" or "入換" or "種別変更")
             {
                 var end = t.Stops[^1];
                 var endName = StationName(end.St);
@@ -491,10 +492,18 @@ public sealed class TempTrains
                 else if (next.Stops.Count == 0 || next.Stops[0].St != end.St) errors.Add($"{n}: 後運用 {next.Number} は{endName}から出る列車ではありません");
                 else
                 {
-                    if (trains.Count(x => x != t && x.TurnHow is "発" or "入換" && x.TurnNext == next.Number) > 0)
+                    if (trains.Count(x => x != t && x.TurnHow is "発" or "入換" or "種別変更" && x.TurnNext == next.Number) > 0)
                         errors.Add($"{n}: 後運用 {next.Number} は、ほかの列車の後運用にもなっています");
                     double? arr = DaySec(end.Arr ?? end.Dep), dep = DaySec(next.Stops[0].Dep);
                     if (arr != null && dep != null && dep < arr) errors.Add($"{n}: 後運用 {next.Number} の発車が、{endName}に着くより前です");
+                    if (t.TurnHow == "種別変更")
+                    {
+                        // 種別変更: 同じ向きに、着いた番線からそのまま続けて走る（折り返さない）
+                        var nz = next.Stops.Select(s => ZoneOf(s.St)).Where(z => z != null).Select(z => z!.Value).ToList();
+                        if (nz.Count >= 2 && (nz[^1] > nz[0]) != inc) errors.Add($"{n}: 種別変更の後運用 {next.Number} は、同じ向きに走る列車にしてください（向きが変わるなら折返）");
+                        if (end.Track != null && next.Stops[0].Track != null && end.Track != next.Stops[0].Track)
+                            errors.Add($"{n}: 種別変更は着いた番線（{end.Track}番線）のまま出ます。{next.Number} の発車の番線を {end.Track}番線にしてください");
+                    }
                     if (t.TurnHow == "入換")
                     {
                         var tt = DaySec(t.TurnTime);
@@ -588,7 +597,10 @@ public sealed class TempTrains
                 }
                 var last = t.Stops[^1].St;
                 if (_rail.Stations.TryGetValue(last, out var ts) && ts.RouteControl) d.TerminalId = last;
-                d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
+                // 種別変更: 時刻表の「途中駅で列番が変わる列車」と同じく、次の列番と変わる駅（Next）にする
+                if (t.TurnHow == "種別変更" && trains.FirstOrDefault(x => x.Number == t.TurnNext) is { } chg && chg != t)
+                    d.Next = (chg.Number, last);
+                else d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
                     ? new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発") : null);
                 list.Add(d);
             }
