@@ -1565,8 +1565,9 @@ public sealed partial class RouteEngine
             st.Locked = false;
             st.Partners.Clear();
             (st.Arrive, st.ArriveWait) = (GroupState.None, "");
-            st.ArrivePath.Clear();
-            st.DepartPath.Clear();
+            // Clear() は使わない（ResolvePaths で駅の進路の表のリストそのものを指しているので、消すとその番線の進路がどの列車でも取れなくなる）
+            st.ArrivePath = new List<RouteDef>();
+            st.DepartPath = new List<RouteDef>();
         }
         else ResolvePaths(run, st);
         _log.Note($"{(driverEnd || st.DriverEnd ? "運転士の打ち切り・入換" : byEvent ? "催物用臨停設定" : "列車別設定")}: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
