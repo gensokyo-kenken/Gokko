@@ -72,6 +72,19 @@ public sealed class TempTrains
         public string Label { get; set; } = "";
         public string Dest { get; set; } = "";
         public List<StopSpec> Stops { get; set; } = new();
+
+        /// <summary>
+        /// 終点のあと。空は自動（同じ運行番号で、終点から次に出る列車へそのまま折り返す）、「なし」は折り返さない、
+        /// 「発」はそのまま（着いた番線から）TurnNext として出る、「入換」は TurnVia の線へ入換してから TurnNext として出る、
+        /// 「種別変更」は向きを変えずに、着いた番線から列番・種別を変えて TurnNext として続けて走る（時刻表の途中駅で列番が変わる列車と同じ）。
+        /// </summary>
+        public string TurnHow { get; set; } = "";
+        /// <summary>後運用の列番（同じグループの列車）。</summary>
+        public string TurnNext { get; set; } = "";
+        /// <summary>入換の時刻（入換のときだけ。空なら後運用の発車の2分前）。</summary>
+        public string? TurnTime { get; set; }
+        /// <summary>入換で入る線（TrackRoutes.json の shuntOut の名前。空なら着いた番線からの最初のもの）。</summary>
+        public string TurnVia { get; set; } = "";
     }
 
     /// <summary>1駅。Stop は「停」か「通」。時刻は "HH:mm:ss"（"HH:mm" でもよい）。Track は番線。</summary>
@@ -384,6 +397,10 @@ public sealed class TempTrains
             t.Type = (t.Type ?? "").Trim();
             t.Label = (t.Label ?? "").Trim();
             t.Dest = (t.Dest ?? "").Trim();
+            t.TurnHow = t.TurnHow is "なし" or "発" or "入換" or "種別変更" ? t.TurnHow : "";
+            t.TurnNext = t.TurnHow is "発" or "入換" or "種別変更" ? RailData.NormalizeTrain(t.TurnNext) : "";
+            t.TurnTime = t.TurnHow == "入換" ? NormTime(t.TurnTime) ?? (string.IsNullOrWhiteSpace(t.TurnTime) ? null : t.TurnTime) : null;
+            t.TurnVia = t.TurnHow == "入換" ? (t.TurnVia ?? "").Trim() : "";
             t.Stops ??= new();
             foreach (var s in t.Stops)
             {
@@ -434,6 +451,7 @@ public sealed class TempTrains
             if (zs0.Any(z => z == null)) { errors.Add($"{n}: 路線にない駅があります"); continue; }
             var zones = zs0.Select(z => z!.Value).ToList();
             var inc = zones[^1] > zones[0];
+            Dir? trainDir = downUp is { } du0 ? (inc == du0 ? Dir.Down : Dir.Up) : null;
             for (var i = 1; i < zones.Count; i++)
                 if ((zones[i] > zones[i - 1]) != inc || zones[i] == zones[i - 1]) { errors.Add($"{n}: 駅の並びが逆になっている所があります"); break; }
             if (RouteEngine.TrainInfo(n) is { } info && downUp is { } du && (info.Dir == Dir.Down) != (inc == du))
@@ -460,6 +478,54 @@ public sealed class TempTrains
                     errors.Add($"{n} {name}: 停車する駅の番線を入れてください");
                 if (first && _rail.Stations.TryGetValue(s.St, out var st0) && st0.RouteControl && s.Track == null)
                     errors.Add($"{n} {name}: 発駅の番線を入れてください");
+                // 入れない番線（その向きの場内・出発の進路がない番線）
+                if (s.Track is { } tk && trainDir is { } td && _rail.Stations.TryGetValue(s.St, out var sr) && sr.RouteControl
+                    && !TrackAllowed(sr.Routes[td], tk, first, i == t.Stops.Count - 1))
+                    errors.Add($"{n} {name}: {(td == Dir.Down ? "下り" : "上り")}は{tk}番線に入れません");
+            }
+
+            // 終点のあと（そのまま折返・入換して折返）
+            if (t.TurnHow is "発" or "入換" or "種別変更")
+            {
+                var end = t.Stops[^1];
+                var endName = StationName(end.St);
+                var next = trains.FirstOrDefault(x => x.Number == t.TurnNext);
+                if (t.TurnNext.Length == 0 || next == null) errors.Add($"{n}: 後運用の列番{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}がこのグループにありません");
+                else if (next == t) errors.Add($"{n}: 後運用に自分は選べません");
+                else if (next.Stops.Count == 0 || next.Stops[0].St != end.St) errors.Add($"{n}: 後運用 {next.Number} は{endName}から出る列車ではありません");
+                else
+                {
+                    if (trains.Count(x => x != t && x.TurnHow is "発" or "入換" or "種別変更" && x.TurnNext == next.Number) > 0)
+                        errors.Add($"{n}: 後運用 {next.Number} は、ほかの列車の後運用にもなっています");
+                    double? arr = DaySec(end.Arr ?? end.Dep), dep = DaySec(next.Stops[0].Dep);
+                    if (arr != null && dep != null && dep < arr) errors.Add($"{n}: 後運用 {next.Number} の発車が、{endName}に着くより前です");
+                    if (t.TurnHow == "種別変更")
+                    {
+                        // 種別変更: 同じ向きに、着いた番線からそのまま続けて走る（折り返さない）
+                        var nz = next.Stops.Select(s => ZoneOf(s.St)).Where(z => z != null).Select(z => z!.Value).ToList();
+                        if (nz.Count >= 2 && (nz[^1] > nz[0]) != inc) errors.Add($"{n}: 種別変更の後運用 {next.Number} は、同じ向きに走る列車にしてください（向きが変わるなら折返）");
+                        if (end.Track != null && next.Stops[0].Track != null && end.Track != next.Stops[0].Track)
+                            errors.Add($"{n}: 種別変更は着いた番線（{end.Track}番線）のまま出ます。{next.Number} の発車の番線を {end.Track}番線にしてください");
+                    }
+                    if (t.TurnHow == "入換")
+                    {
+                        var tt = DaySec(t.TurnTime);
+                        if (t.TurnTime != null && tt == null) errors.Add($"{n}: 入換の時刻の形が違います（例 10:05）");
+                        else if (tt != null && arr != null && dep != null && (tt < arr || tt > dep)) errors.Add($"{n}: 入換の時刻は、着いてから後運用の発車までの間にしてください");
+                        if (trainDir is { } td2 && _rail.Stations.TryGetValue(end.St, out var es) && es.RouteControl)
+                        {
+                            var outs = es.Routes[td2].ShuntOuts.Where(o => o.From == end.Track).Select(o => o.Label).Distinct().ToList();
+                            if (outs.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線がありません");
+                            else if (t.TurnVia.Length > 0 && !outs.Contains(t.TurnVia)) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
+                            // 入換した線から、後運用の発車の番線へ入れるか（知らせるだけ）
+                            var via = t.TurnVia.Length > 0 ? t.TurnVia : outs.FirstOrDefault();
+                            var nextDir = td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            var tos = es.Routes[nextDir].Shunts.Where(s => s.FromLabel == via).Select(s => s.To).Distinct().ToList();
+                            if (via != null && tos.Count > 0 && next.Stops[0].Track is { } nt && !tos.Contains(nt))
+                                warnings.Add($"{n}: 「{via}」から {next.Number} の発車の {nt}番線へは入換の進路がありません（{string.Join("・", tos.Select(x => x + "番線"))}へは入れます）");
+                        }
+                    }
+                }
             }
         }
 
@@ -476,6 +542,12 @@ public sealed class TempTrains
         return (errors, warnings);
     }
 
+    /// <summary>
+    /// その番線に入れるか（RouteEngine の番線の選び方と同じ）: 場内で入れる（発駅は不要）、かつ出発できる（終点は不要。行き止まりは打ち切りとして可）。
+    /// </summary>
+    public static bool TrackAllowed(StationDirRoutes r, int track, bool first, bool last) =>
+        (first || r.Arrive.ContainsKey(track)) && (last || r.Depart.ContainsKey(track) || r.Turnback.Contains(track));
+
     /// <summary>下り（列番が奇数）は、路線の駅の並び（ゾーン）が増える向きか。所定のダイヤから読む。</summary>
     public bool? DownIncreasing()
     {
@@ -490,6 +562,22 @@ public sealed class TempTrains
     }
 
     /// <summary>入力した列車を、ダイヤの列車に直す。同じ運行番号で、終点から次の列車が出るなら折返でつなぐ。</summary>
+    /// <summary>手で決めた終点のあと（発・入換）。自動・なし・後運用がないときは null。</summary>
+    private static DiaTurn? TurnOf(TrainSpec t, List<TrainSpec> trains)
+    {
+        if (t.TurnHow is not ("発" or "入換") || trains.FirstOrDefault(x => x.Number == t.TurnNext) is not { } next || next.Stops.Count == 0) return null;
+        var dep = NormTime(next.Stops[0].Dep);
+        if (t.TurnHow == "発") return new DiaTurn("折返", next.Number, dep, "発");
+        var time = NormTime(t.TurnTime) ?? (DaySec(dep) is { } ds ? NormTime(TimeOfDay(ds - 120)) : null);
+        return new DiaTurn("折返", next.Number, time, "入換", t.TurnVia.Length > 0 ? t.TurnVia : null);
+    }
+
+    private static string TimeOfDay(double sec)
+    {
+        var v = ((int)Math.Round(sec) % 86400 + 86400) % 86400;
+        return $"{v / 3600:00}:{v / 60 % 60:00}:{v % 60:00}";
+    }
+
     private List<DiaTrain> Build(List<TrainSpec> trains)
     {
         var list = new List<DiaTrain>();
@@ -512,8 +600,11 @@ public sealed class TempTrains
                 }
                 var last = t.Stops[^1].St;
                 if (_rail.Stations.TryGetValue(last, out var ts) && ts.RouteControl) d.TerminalId = last;
-                if (i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last)
-                    d.Turn = new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発");
+                // 種別変更: 時刻表の「途中駅で列番が変わる列車」と同じく、次の列番と変わる駅（Next）にする
+                if (t.TurnHow == "種別変更" && trains.FirstOrDefault(x => x.Number == t.TurnNext) is { } chg && chg != t)
+                    d.Next = (chg.Number, last);
+                else d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
+                    ? new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発") : null);
                 list.Add(d);
             }
         }
