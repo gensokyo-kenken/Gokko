@@ -86,6 +86,31 @@ public sealed class AiTrains : BackgroundService
     private HashSet<string> _userInGame = new();       // 運転画面に出ているユーザーの列番
     private DateTime _lastSpawnUtc;
     private TimeSpan? _lastGame;
+    /// <summary>
+    /// 途中の駅から出してよい列車の目安のロープレ時刻（自動運転列車をアリにした・ロープレ時刻を飛ばしたときの時刻）。
+    /// このとき、もう始発駅を出ているはずの列車だけ、このとき走っているはずの所から出す。それ以外の列車は始発駅にだけ出す
+    /// </summary>
+    private TimeSpan? _catchUpAt;
+    private bool _catchUpNext = true; // 次に AutoSpawn をまわすときに _catchUpAt を決める
+    /// <summary>始発駅で出せないまま、発車時刻をこれだけ過ぎたら出すのをやめる。</summary>
+    private static readonly TimeSpan SpawnLateLimit = TimeSpan.FromMinutes(10);
+    /// <summary>出現前の列車として、ダイヤグラムに出す先の長さ（始発駅の発車時刻まで）。</summary>
+    private static readonly TimeSpan PendingHorizon = TimeSpan.FromMinutes(60);
+    private readonly Dictionary<string, TimeSpan> _heldSeen = new(); // 出現前に抑止されていた列番 → 最後に抑止を見たロープレ時刻
+    private volatile IReadOnlyList<PendingTrain> _pending = [];
+
+    /// <summary>
+    /// 出現前の列車（これから始発駅に自動で出す列車）。Station・Track は出す駅と番線、Due は出すときの発車時刻（ロープレ時刻。
+    /// ダイヤグラムの◆で発車時刻を決めていれば、その時刻）、Held は抑止中で出さない、Late は時刻を過ぎても出せていない
+    /// </summary>
+    public sealed record PendingTrain(string Number, string Station, int? Track, bool TrackFixed, TimeSpan Due, bool Held, bool Late);
+
+    /// <summary>出現前の列車（AutoSpawn が2秒ごとに作り直す。ロックを取らずに読める）。</summary>
+    public IReadOnlyList<PendingTrain> Pending => _pending;
+
+    /// <summary>実際の時刻（UTC）を、そのときのロープレ時刻にする（now は今のロープレ時刻）。</summary>
+    private TimeSpan GameAt(DateTime utc, TimeSpan now) =>
+        now + TimeSpan.FromTicks((long)((utc - DateTime.UtcNow).Ticks * (_clock.Speed > 0 ? _clock.Speed : 1)));
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
@@ -108,6 +133,7 @@ public sealed class AiTrains : BackgroundService
         _routesBySignal = rail.Routes.Values.Where(r => r.Signal.Length > 0).GroupBy(r => r.Signal).ToDictionary(g => g.Key, g => g.ToList());
         LoadDistances(Path.Combine(dataDir, "AiTrains.json"));
         players.VirtualTrains = Snapshot;
+        routes.PendingTrains = () => _pending;
         players.GhostDeleted += OnGhostDeleted;
     }
 
@@ -134,6 +160,7 @@ public sealed class AiTrains : BackgroundService
             if (_enabled == on) return;
             _enabled = on;
             _spawned.Clear();
+            _catchUpNext = on;
             if (!on) _trains.Clear();
         }
 
@@ -1592,9 +1619,11 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>
-    /// ダイヤの列車のうち、進路を扱う駅の発車時刻が近い（2分前〜30秒過ぎ）ものを、その駅に出す。
+    /// ダイヤの列車のうち、始発駅（進路を扱う駅で最初の駅）の発車時刻が近い（2分前から）ものを、その駅に出す。
     /// 出さないもの: ユーザーの列車、もう出した・走っている列番、走っている列車がこのあと続けて・折り返して走る列番。
-    /// 番線にほかの列車がいるなどで出せなければ、時刻の範囲の間は2秒ごとに試し直す。
+    /// 番線にほかの列車がいるなどで出せなければ、始発駅で2秒ごとに試し直す（発車時刻から SpawnLateLimit まで。先の駅には出さない）。
+    /// 司令員がダイヤグラムの◆で入れた指示に従う: 発車時刻を決めていればその時刻に合わせて出し、抑止していれば外すまで出さない、番線を決めていればその番線に出す。
+    /// これから出す列車の一覧（Pending）も、ここで作り直す（ダイヤグラムに出現前の列車として出す）。
     /// </summary>
     private void AutoSpawn(HashSet<string> users, List<PlayerInfo> snapshot)
     {
@@ -1611,9 +1640,16 @@ public sealed class AiTrains : BackgroundService
         }
         lock (_lock)
         {
+            if (!_enabled || now is null) _pending = [];
             if (!_enabled || now is not { } n || !_clock.IsRunning) return;
             // ロープレ時刻を戻したら、出した記録を消す（もう一度出せるように）
-            if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) _spawned.Clear();
+            if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) { _spawned.Clear(); _heldSeen.Clear(); }
+            // アリにした直後と、ロープレ時刻を飛ばした（2分より大きく進めた・戻した）ときだけ、途中を走っているはずの列車を途中の駅から出す
+            if (_catchUpNext || _lastGame is { } lg2 && (n < lg2 - TimeSpan.FromMinutes(2) || n > lg2 + TimeSpan.FromMinutes(2)))
+            {
+                _catchUpAt = n;
+                _catchUpNext = false;
+            }
             _lastGame = n;
 
             // 走っている列車が、このあと続けて・折り返して走る列番
@@ -1635,6 +1671,7 @@ public sealed class AiTrains : BackgroundService
             foreach (var u in users)
                 if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
 
+            var pending = new List<PendingTrain>();
             foreach (var dia in _rail.Dia.Values)
             {
                 var number = RailData.NormalizeTrain(dia.Number);
@@ -1643,23 +1680,37 @@ public sealed class AiTrains : BackgroundService
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
-                // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
+                // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
+                // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、
+                // ほかの列車との順番が崩れて詰まる。
+                // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 var startDir = _routes.DirOfTrain(number);
-                var start = stops.Take(stops.Count - 1).FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= n - TimeSpan.FromSeconds(30)
-                    && !(startDir is { } sd2 && PassesWithoutTrack(s, sd2)));
-                if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > n + TimeSpan.FromMinutes(2)) continue;
-                if (dep < n - TimeSpan.FromSeconds(30)) continue; // 時刻を過ぎた駅には出さない（遅れて出すと、ほかの列車との順番が崩れる）
+                var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
+                if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                    ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
+                    : cands[0];
+                if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
                 if (dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車
-                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
-                if (start.StationId == EntryStation && start.Stop != "停" && start.Track == 2 && _routes.DirOfTrain(number) == Dir.Down)
-                {
-                    if (dep - n > TimeSpan.FromSeconds(EntryLeadSeconds)) continue;
-                    todo.Add((number, start.Name, EntryTrack));
-                    continue;
-                }
 
-                todo.Add((number, start.Name, null));
+                // 司令員の指示（ダイヤグラムの◆）は、出現前でも列番で入れておける: 発車時刻（その時刻に合わせて出す）・抑止（外すまで出さない）・番線
+                var due = dep;
+                if (_central.OpenAt(number, startId) is { } openAt && GameAt(openAt, n) > due) due = GameAt(openAt, n);
+                var held = _central.IsHeld(number, startId);
+                if (held) _heldSeen[number] = n;
+                // 始発駅で長く出せなかった列車は、もう出さない（抑止していた間は数えない）
+                var lateFrom = _heldSeen.TryGetValue(number, out var hs) && hs > due ? hs : due;
+                if (n - lateFrom > SpawnLateLimit) continue;
+                if (due > n + PendingHorizon) continue;
+
+                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
+                var entryPass = startId == EntryStation && start.Stop != "停" && start.Track == 2 && startDir == Dir.Down;
+                var track = _central.TrackOverride(number, startId) ?? (entryPass ? EntryTrack : null);
+                pending.Add(new PendingTrain(number, startId, track ?? start.Track, track != null && !(entryPass && track == EntryTrack), due, held, n > due));
+                if (held || due - n > (entryPass ? TimeSpan.FromSeconds(EntryLeadSeconds) : TimeSpan.FromMinutes(2))) continue;
+                todo.Add((number, start.Name, track));
             }
+            _pending = pending;
         }
 
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track);
