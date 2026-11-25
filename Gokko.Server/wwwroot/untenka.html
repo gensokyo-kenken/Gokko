@@ -837,7 +837,7 @@
       return { st: s.id, stop: "通", arr: null, dep: fmt(snap(t)), track: s.control ? defTrack(s.id, dir, "通") : null };
     });
     const prev = cur.trains[curTrain];
-    const t = { unyo: prev ? prev.unyo : (base.freeUnyo || 0), number: "", type: prev ? prev.type : "普通", label: "", dest: list[list.length - 1].name, stops };
+    const t = { unyo: prev ? prev.unyo : (base.freeUnyo || ""), number: "", type: prev ? prev.type : "普通", label: "", dest: list[list.length - 1].name, stops };
     cur.trains.push(t);
     curTrain = cur.trains.length - 1;
     manual.add(t);
