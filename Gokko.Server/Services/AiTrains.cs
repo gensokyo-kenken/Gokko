@@ -67,6 +67,8 @@ public sealed class AiTrains : BackgroundService
     private readonly List<Dictionary<string, double>> _signalRuns = new();
     private readonly List<List<(double Pos, double Kmh)>> _limitRuns = new(); // _signalRuns と同じ並び。制限速度が変わった地点
     private readonly List<Dictionary<string, int>> _trackRuns = new(); // _signalRuns と同じ並び。その走りで止まった駅の番線
+    private readonly Dictionary<(string, string), double?> _chainCache = new(); // ChainDistance の答え
+    private Dictionary<string, List<(string To, double D)>>? _chainEdges; // ChainDistance の道（記録の隣どうしの信号機）
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
     private readonly Dictionary<int, int> _carsByUnyo = new(); // 運行番号ごとの両数（ない運行は6両）
@@ -619,13 +621,18 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 速さ: 次の停車駅の時刻に間に合うように
+        // 区間の中にもう停車駅がない（赤山町を通過して出ていく上りの特急など）ときは、残りの通過駅の時刻だけで決める
         var cruise = 75 / 3.6;
-        if (next != null && nowGame is { } ng && (next.Arr ?? next.Dep) is { } due)
+        if (nowGame is { } ng && (next != null ? (next.Arr ?? next.Dep) != null : !t.Shunting))
         {
-            var remain = (due - ng).TotalSeconds;
-            var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
-            if (dist is { } dd && dd > 0)
-                cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
+            if (next != null && (next.Arr ?? next.Dep) is { } due)
+            {
+                var remain = (due - ng).TotalSeconds;
+                var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
+                if (dist is { } dd && dd > 0)
+                    cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
+            }
+            else cruise = 110 / 3.6;
 
             // その手前の通過駅にも時刻があれば、そこにも早く着きすぎないように（通過の進路は、ダイヤの時刻になってから開く）
             foreach (var pass in t.Plan.Skip(t.PlanIndex).TakeWhile(p => p != next).Where(p => !p.Stops))
@@ -1217,8 +1224,54 @@ public sealed class AiTrains : BackgroundService
         if (spec == null) return null;
         var passed = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head);
         if (passed?.Signal is not { } from) return null;
-        if (Distance(from, spec.Signal) is not { } d) return null;
+        if (ChainDistance(from, spec.Signal) is not { } d) return null;
         return d - (t.Head - passed.Start) + (spec.After ?? -spec.Before);
+    }
+
+    /// <summary>
+    /// 信号機 a から b までの距離。1本の記録に両方がなくても、記録どうしを同じ信号機でつないで引く
+    /// （館浜から大道寺1番のように、1本の記録では届かない所。届かないと速さが決め打ちの 75km/h になる）。
+    /// 記録ごとに、信号機を位置の順に並べた隣どうしを道としてつなぎ、いちばん短い道のりを取る。
+    /// </summary>
+    private double? ChainDistance(string a, string b)
+    {
+        if (a == b) return 0;
+        lock (_chainCache)
+        {
+            if (_chainCache.TryGetValue((a, b), out var cached)) return cached;
+            if (_chainEdges == null)
+            {
+                _chainEdges = new Dictionary<string, List<(string To, double D)>>();
+                foreach (var run in _signalRuns)
+                {
+                    var order = run.OrderBy(x => x.Value).ToList();
+                    for (var k = 0; k + 1 < order.Count; k++)
+                    {
+                        if (!_chainEdges.TryGetValue(order[k].Key, out var list)) _chainEdges[order[k].Key] = list = new();
+                        list.Add((order[k + 1].Key, order[k + 1].Value - order[k].Value));
+                    }
+                }
+            }
+
+            double? result = null;
+            var best = new Dictionary<string, double> { [a] = 0 };
+            var queue = new PriorityQueue<string, double>();
+            queue.Enqueue(a, 0);
+            while (queue.TryDequeue(out var s, out var d))
+            {
+                if (d > best[s]) continue;
+                if (s == b) { result = d; break; }
+                if (!_chainEdges.TryGetValue(s, out var list)) continue;
+                foreach (var (to, len) in list)
+                    if (!best.TryGetValue(to, out var old) || d + len < old)
+                    {
+                        best[to] = d + len;
+                        queue.Enqueue(to, d + len);
+                    }
+            }
+            _chainCache[(a, b)] = result;
+            return result;
+        }
     }
 
     private bool Passed(Train t, PlanStop p)
@@ -1234,6 +1287,8 @@ public sealed class AiTrains : BackgroundService
     /// ・区間の最高速度: 館浜〜新野崎 110km/h、新野崎〜大路（赤山町方）100km/h
     /// ・線路の制限: 道筋の信号機を目印に、ゲームの自動運転で走ったときの記録の位置へ置き換えて、今いる所（最後尾まで）の制限と、
     ///   この先 1500m の制限の手前で減速するための速さ。記録の制限は、前の信号機が G の間の値だけ（信号の現示による制限は除いてある）
+    ///   当てはまる記録が何本もあれば、いちばん高いものを取る（同じ線路なら制限は同じはず。低い記録は、信号などで抑えられた値が残ったもの。
+    ///   羽衣橋〜江ノ原で、ある記録だけ 55km/h が続いていた）。記録の走った範囲の外は使わない
     /// ・分岐: 記録が当てはまらない駅の進路（記録の走りと違う番線に入る・出る、記録がない）は 40km/h
     /// </summary>
     private double LimitCap(Train t)
@@ -1245,38 +1300,45 @@ public sealed class AiTrains : BackgroundService
         Seg? refSeg = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head) ?? t.Path.FirstOrDefault(s => s.Signal != null);
         var refSignal = refSeg?.Signal ?? t.EndSignal;
         var refX = refSeg?.Start ?? t.PathEnd;
-        // 使う記録: 目印の信号機がある記録のうち、この先 1500m の駅の進路（番線）に当てはまるもの。なければ最初のもの
+        // 使う記録: 目印の信号機がある記録のうち、この先 1500m の駅の進路（番線）に当てはまるもの。なければ目印の信号機がある記録すべて
         var routesAhead = t.Path.Where(s => s.Route != null && s.End > t.Head - t.Length && s.Start <= t.Head + 1500).Select(s => s.Route!).ToList();
         var candidates = refSignal == null ? new List<int>()
             : Enumerable.Range(0, _signalRuns.Count).Where(i => _signalRuns[i].ContainsKey(refSignal) && _limitRuns[i].Count > 0).ToList();
-        int? run = candidates.Cast<int?>().FirstOrDefault(i => routesAhead.All(d => RecordCovers(i!.Value, d, t))) ?? candidates.Cast<int?>().FirstOrDefault();
-        if (run is { } i)
-            {
-                var at = _signalRuns[i][refSignal!];
-                var lims = _limitRuns[i];
-                var p0 = at + (t.Head - refX);
-                double LimitAt(double p)
-                {
-                    var v = double.PositiveInfinity;
-                    foreach (var (pos, kmh) in lims)
-                        if (pos <= p) v = kmh; else break;
-                    return v;
-                }
+        var covering = candidates.Where(i => routesAhead.All(d => RecordCovers(i, d, t))).ToList();
+        var use = covering.Count > 0 ? covering : candidates;
 
-                // 今の制限: 先頭から最後尾までのうち、いちばん低いもの（上がるのは最後尾が抜けてから）
-                var now = LimitAt(p0);
+        double? recordCap = null;
+        foreach (var i in use)
+        {
+            var at = _signalRuns[i][refSignal!];
+            var lims = _limitRuns[i];
+            var p0 = at + (t.Head - refX);
+            var end = Math.Max(_signalRuns[i].Values.Max(), lims[^1].Pos) + 300; // 記録の走った範囲の終わり（最後の信号機・制限の少し先まで）
+            if (p0 > end) continue;
+            double LimitAt(double p)
+            {
+                var v = double.PositiveInfinity;
                 foreach (var (pos, kmh) in lims)
-                    if (pos > p0 - t.Length && pos <= p0) now = Math.Min(now, kmh);
-                now = Math.Min(now, LimitAt(p0 - t.Length));
-                cap = Math.Min(cap, now / 3.6);
-                foreach (var (pos, kmh) in lims)
-                {
-                    if (pos <= p0) continue;
-                    if (pos > p0 + 1500) break;
-                    var l = kmh / 3.6;
-                    cap = Math.Min(cap, Math.Sqrt(l * l + 2 * Decel * (pos - p0)));
-                }
+                    if (pos <= p) v = kmh; else break;
+                return v;
             }
+
+            // 今の制限: 先頭から最後尾までのうち、いちばん低いもの（上がるのは最後尾が抜けてから）
+            var now = LimitAt(p0);
+            foreach (var (pos, kmh) in lims)
+                if (pos > p0 - t.Length && pos <= p0) now = Math.Min(now, kmh);
+            now = Math.Min(now, LimitAt(p0 - t.Length));
+            var c = now / 3.6;
+            foreach (var (pos, kmh) in lims)
+            {
+                if (pos <= p0) continue;
+                if (pos > p0 + 1500) break;
+                var l = kmh / 3.6;
+                c = Math.Min(c, Math.Sqrt(l * l + 2 * Decel * (pos - p0)));
+            }
+            recordCap = recordCap is { } rc ? Math.Max(rc, c) : c;
+        }
+        if (recordCap is { } r) cap = Math.Min(cap, r);
 
         // 分岐: 記録が当てはまらない駅の進路は 40km/h（列車がその進路にいる間と、その手前からの減速）
         foreach (var s in t.Path)
@@ -1284,7 +1346,7 @@ public sealed class AiTrains : BackgroundService
             if (s.Route is not { } def || s.End <= t.Head - t.Length || s.Start > t.Head + 1500) continue;
             // 入換の進路はいつも 25km/h
             var shunt = def.Kind.Contains("入換") || def.Category.Contains("入換");
-            if (!shunt && run is { } j && RecordCovers(j, def, t)) continue;
+            if (!shunt && use.Any(j => RecordCovers(j, def, t))) continue;
             var lim = shunt ? ShuntSpeed : Turnout;
             cap = s.Start <= t.Head ? Math.Min(cap, lim) : Math.Min(cap, Math.Sqrt(lim * lim + 2 * Decel * (s.Start - t.Head)));
         }
@@ -1302,13 +1364,17 @@ public sealed class AiTrains : BackgroundService
     /// <summary>
     /// 走ったときの記録（run）の制限が、その駅の進路に当てはまるか。記録の走りがその駅に止まっていれば、同じ番線の進路だけ。
     /// 記録の走りが通過した駅（番線の記録がない）は、こちらも通過するときだけ（どちらも本線を通ったと見なす）。
+    /// 記録の走りがその駅まで来ていなければ当てはまらない。
     /// </summary>
     private bool RecordCovers(int run, RouteDef def, Train t)
     {
         if (!_rail.Stations.TryGetValue(def.StationId, out var st)) return false;
         var m = System.Text.RegularExpressions.Regex.Match(def.To + " " + def.From, @"(\d+)番線");
         int? track = m.Success ? int.Parse(m.Groups[1].Value) : null;
-        if (_trackRuns[run].TryGetValue(st.Name, out var rt)) return track == null || track == rt;
+        // 記録の走りがその駅まで来ていない（駅の信号機が載っていない）なら当てはまらない
+        if (!_signalRuns[run].Keys.Any(k => k.StartsWith(st.Name, StringComparison.Ordinal))) return false;
+        // 番線のない進路（江ノ原信号場の本線の通過など）は、記録の走りが番線に入った（江ノ原車庫へ入った）なら当てはまらない
+        if (_trackRuns[run].TryGetValue(st.Name, out var rt)) return track == rt;
         return !t.Plan.Any(p => p.Name == st.Name && p.Stops);
     }
 
