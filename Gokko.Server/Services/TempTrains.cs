@@ -599,7 +599,9 @@ public sealed class TempTrains
                         {
                             var outs = es.Routes[td2].ShuntOuts.Where(o => o.From == end.Track).Select(o => o.Label).Distinct().ToList();
                             // 引上線がなければ、着いた番線から後運用の発車の番線へ、そのまま入換で移る（駒野 1番線 → 5番線など。後運用の始発の入換）
-                            var nd = td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            // 後運用の向き（入換は折り返しに限らない。駒野の下りで1番線に着き、5番線へ移って下りで出ることもある）
+                            var nzs = next.Stops.Select(s => ZoneOf(s.St)).Where(z => z != null).Select(z => z!.Value).ToList();
+                            var nd = nzs.Count >= 2 && downUp is { } du3 ? ((nzs[^1] > nzs[0]) == du3 ? Dir.Down : Dir.Up) : td2 == Dir.Down ? Dir.Up : Dir.Down;
                             var moves = es.Routes[nd].Shunts.Where(s => s.From == end.Track).Select(s => s.To).Distinct().Order().ToList();
                             if (outs.Count == 0)
                             {
@@ -611,7 +613,7 @@ public sealed class TempTrains
                             else if (t.TurnVia.Length > 0 && !outs.Contains(t.TurnVia)) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
                             // 入換した線から、後運用の発車の番線へ入れるか（知らせるだけ）
                             var via = t.TurnVia.Length > 0 ? t.TurnVia : outs.FirstOrDefault();
-                            var nextDir = td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            var nextDir = nd;
                             var tos = es.Routes[nextDir].Shunts.Where(s => s.FromLabel == via).Select(s => s.To).Distinct().ToList();
                             if (via != null && tos.Count > 0 && next.Stops[0].Track is { } nt && !tos.Contains(nt))
                                 warnings.Add($"{n}: 「{via}」から {next.Number} の発車の {nt}番線へは入換の進路がありません（{string.Join("・", tos.Select(x => x + "番線"))}へは入れます）");

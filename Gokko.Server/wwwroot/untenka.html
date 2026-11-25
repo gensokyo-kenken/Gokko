@@ -186,7 +186,7 @@
             <option value="">自動（同じ運行の次の列車へ折返）</option>
             <option value="なし">折り返さない</option>
             <option value="発">そのまま折返</option>
-            <option value="入換">入換して折返</option>
+            <option value="入換">入換（番線を移る・引上線へ入る）</option>
             <option value="種別変更">種別変更（そのまま続けて走る）</option>
             <option value="連結">増結車（この駅で待って、後運用の列車に連結）</option>
           </select>
@@ -390,7 +390,7 @@
 
   // ---- 終点のあと（後運用・入換） ----
   // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）。
-  // 種別変更なら同じ向き、折返（そのまま・入換）なら逆の向きの列車
+  // 種別変更なら同じ向き、そのまま折返なら逆の向き、入換なら向きを問わない（番線を移って同じ向きに出ることもある）
   // 増結車（連結）なら、その駅（終点）に停車する列車（着く順）
   function turnCandidates(t) {
     const end = t.stops[t.stops.length - 1];
@@ -402,7 +402,7 @@
     }
     const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
     return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr)
-        && (!d || !dirOf(x) || (dirOf(x) === d) === same))
+        && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same))
       .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
   }
   // 種別変更: 後運用は着いた番線のまま出るので、後運用の発駅の番線を合わせる
@@ -429,9 +429,10 @@
     const end = t.stops[t.stops.length - 1];
     if (!end || end.track == null) return [];
     const nx = cur.trains.find((x) => x !== t && x.number && x.number === t.turnNext);
-    const nd = (nx && dirOf(nx)) || (dirOf(t) === "下り" ? "上り" : dirOf(t) === "上り" ? "下り" : null);
-    const r = nd && stById[end.st]?.rules?.[nd];
-    return r ? [...new Set(r.shunts.filter((s) => s.from === `${end.track}番線`).map((s) => s.to))].sort((a, b) => a - b) : [];
+    // 後運用が決まっていればその向きの始発の入換、決まっていなければ両方の向きの入換で入れる番線（入換は折り返しに限らない）
+    const dirs = nx && dirOf(nx) ? [dirOf(nx)] : ["下り", "上り"];
+    const rules = stById[end.st]?.rules || {};
+    return [...new Set(dirs.flatMap((d) => (rules[d] ? rules[d].shunts : []).filter((s) => s.from === `${end.track}番線`).map((s) => s.to)))].sort((a, b) => a - b);
   }
   // 入換で入れる線: 終点の着いた番線から（その向きの shuntOut）
   function shuntOutsOf(t) {
@@ -729,7 +730,7 @@
     } else if (k === "track") s.track = el.value === "" ? null : +el.value;
     else {
       s[k] = el.value.trim() || null;
-      if (+el.dataset.i === 0 && k === "dep") { $("tDep").value = el.value; manual.delete(t); autoFill(t); }
+      if (+el.dataset.i === 0 && k === "dep") { $("tDep").value = el.value; manual.delete(t); autoFill(t); autoNumber(t); drawHint(t); }
       else manual.add(t);
     }
     dirty = true;
@@ -1310,15 +1311,44 @@
       + (errors || []).map((m) => `<li class="ng">✖ ${esc(m)}</li>`).join("") + (warnings || []).map((m) => `<li class="warn">⚠ ${esc(m)}</li>`).join("");
   }
 
+  // 時刻を入れていない通過駅は、前後の時刻のある駅を結ぶ線がその駅を通る時刻（駅の位置で割り振る。15秒単位）を入れる。入れた駅の数を返す
+  function fillPassTimes(t) {
+    let n = 0;
+    const timeOf = (s, first) => (first ? sec(s.arr) ?? sec(s.dep) : sec(s.dep) ?? sec(s.arr));
+    t.stops.forEach((s, i) => {
+      if (s.stop !== "通" || sec(s.dep) != null) return;
+      let p = i - 1, q = i + 1;
+      while (p >= 0 && timeOf(t.stops[p], false) == null) p--;
+      while (q < t.stops.length && timeOf(t.stops[q], true) == null) q++;
+      if (p < 0 || q >= t.stops.length) return;
+      const ta = timeOf(t.stops[p], false), tb = timeOf(t.stops[q], true);
+      const za = zoneOf(t.stops[p].st), zb = zoneOf(t.stops[q].st), z = zoneOf(s.st);
+      if (za == null || zb == null || z == null || za === zb || tb < ta) return;
+      s.dep = fmt(snap(ta + (tb - ta) * (z - za) / (zb - za)));
+      s.arr = null;
+      n++;
+    });
+    return n;
+  }
+  function fillAllPassTimes() {
+    let n = 0;
+    if (editable()) for (const t of cur.trains) n += fillPassTimes(t);
+    if (n) { dirty = true; drawTrain(); drawTrains(); }
+    return n;
+  }
+
   $("check").onclick = async () => {
     try {
+      const filled = fillAllPassTimes();
       const j = await api("POST", "/check", { id: cur.id, trains: cur.trains });
+      if (filled) j.warnings = [`時刻を入れていなかった通過駅 ${filled}駅に、線が通る時刻を入れました`, ...j.warnings];
       showMsgs(j.errors, j.warnings, j.errors.length ? "" : "入力に誤りはありません");
     } catch (e) { showMsgs([e.message]); }
   };
 
   async function save() {
     try {
+      fillAllPassTimes(); // 時刻を入れていない通過駅は、線が通る時刻を入れてから保存する
       const j = await api("POST", "/groups", { id: cur.id, name: cur.name, trains: cur.trains });
       dirty = false;
       await loadGroups(j.id);
