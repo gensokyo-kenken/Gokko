@@ -84,6 +84,12 @@ public sealed class TrainRadio(PlayerRegistry players, CrewRelay relay, CrewRost
         lock (_gate) return _dispatchers.ContainsKey(connectionId);
     }
 
+    /// <summary>その接続が司令員なら社員番号、でなければ null。</summary>
+    public string? DispatcherCrew(string connectionId)
+    {
+        lock (_gate) return _dispatchers.GetValueOrDefault(connectionId);
+    }
+
     /// <summary>参加している司令員（接続ID → 社員番号）。</summary>
     public Dictionary<string, string> Dispatchers()
     {

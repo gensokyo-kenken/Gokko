@@ -9,6 +9,8 @@ public sealed partial class RouteEngine
     /// <summary>
     /// 接続待ち: この駅で接続を受ける列車（ダイヤの「(接)…着」）が、まだ着いていなければ出発を開けない。待つ上限はない（司令が組ごとに切る）。
     /// 相手が走っていなければ（参加している運転士がいない・まだ出てきていない）待たない。相手がこの駅まで来ない（打ち切り）ときも待たない。
+    /// 詰まり: 相手の前を、この列車の番線に入る列車が走っていると、相手は着けない（前の列車は番線が空くのを待ち、相手はそれを追い越せない）。
+    ///   司令員が出勤していなければ、その組を自動で切って出す。出勤していれば待ったままにし、司令用管理画面で知らせて司令員に切ってもらう。
     /// </summary>
     private string? ConnectionHold(TrainRun run, StationRun st)
     {
@@ -17,9 +19,35 @@ public sealed partial class RouteEngine
         {
             if (_connections.IsCut(c)) continue;
             if (ConnectionFeeder(c) is not { } feeder || FeederArrived(feeder, c.StationId) != false) continue;
+            if (FeederBlockedBy(run, st, feeder) is { } blocker)
+            {
+                if (!_crew.DispatcherOnDuty())
+                {
+                    _connections.SetCut(c.Key, true);
+                    _log.Note($"接続: {c.StationName} {c.Waiter} の {c.Feeder} 待ちを自動で切りました（司令員不在。{blocker.Train} が番線に入れず、{c.Feeder} が着けないため）");
+                    continue;
+                }
+                return $"接続待ち（{feeder.Train} の{c.StationName}着を待つ。{blocker.Train} が番線に入れないため着けません。接続を切ってください）";
+            }
             return $"接続待ち（{feeder.Train} の{c.StationName}着を待つ）";
         }
         return null;
+    }
+
+    /// <summary>
+    /// 接続を受ける列車 feeder がこの駅 st に着けない理由の列車。feeder のすぐ前を同じ向きで走り、st で run と同じ番線に入る列車（追い越せない）。
+    /// どちらも次に止まる駅が st（途中に追い越せる駅がない）ときだけ。なければ null。
+    /// </summary>
+    private TrainRun? FeederBlockedBy(TrainRun run, StationRun st, TrainRun feeder)
+    {
+        if (!feeder.HasPosition || NextStation(feeder) is not { } fs || fs.St.Id != st.St.Id) return null;
+        return _runs.Values.FirstOrDefault(p => p != run && p != feeder && SameTrackBehind(run, st, p)
+            && p.Dir == feeder.Dir && NextStation(p)?.St.Id == st.St.Id && Behind(feeder, p, fs));
+
+        static StationRun? NextStation(TrainRun r) => r.Stations.FirstOrDefault(s => !s.Done);
+        // f が p の後ろか。同じ駅間（Front が同じ）にいれば、駅間の中の位置で比べる。f の場内がまだ p を待っていても後ろ
+        static bool Behind(TrainRun f, TrainRun p, StationRun fs) =>
+            (PlotY(f) - PlotY(p)) * p.Dir.Step() < 0 || fs.ArriveWait.Contains($"（{p.Train}）", StringComparison.Ordinal);
     }
 
     private TrainRun? ConnectionFeeder(ConnectionTable.Connection c) =>
@@ -68,7 +96,9 @@ public sealed partial class RouteEngine
                 var cut = _connections.IsCut(c);
                 var delay = eta is { } e ? e - c.WaiterDep : (double?)null;
                 var waiting = ws != null && ws.DepartWait.StartsWith("接続待ち", StringComparison.Ordinal) && ws.Depart != GroupState.Requested;
-                var alert = waiter != null && !cut && arrived == false && (delay > 0 || waiting && now > c.WaiterDep);
+                // 詰まり: 接続を受ける列車の前の列車が、待つ列車の番線に入れず、接続を受ける列車が着けない（切らないとお互いに動けない）
+                var blocked = waiter != null && ws != null && feeder != null && !cut && arrived == false ? FeederBlockedBy(waiter, ws, feeder)?.Train : null;
+                var alert = waiter != null && !cut && arrived == false && (delay > 0 || waiting && now > c.WaiterDep) || blocked != null;
                 if (alert && _connectionNoted.Add(c.Key))
                     _log.Note($"接続の遅れ見込み: {c.StationName} {c.Waiter}（{FormatDiaTime(c.WaiterDep)}発）が {c.Feeder} を待って"
                               + (delay is { } dl && dl > 0 ? $"約{Math.Ceiling(dl / 60)}分遅れる見込み" : "遅れています"));
@@ -89,6 +119,7 @@ public sealed partial class RouteEngine
                     feederEta = eta is { } x ? FormatDiaTime(x) : null,
                     delaySeconds = delay is { } d2 ? (int)Math.Round(Math.Max(0, d2)) : (int?)null,
                     waiting,
+                    blocked,
                     cut,
                     alert
                 });

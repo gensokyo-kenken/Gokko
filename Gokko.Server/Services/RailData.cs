@@ -278,12 +278,81 @@ public sealed class RailData
     /// <summary>単線区間に接する駅か（行き違いのために、空いている番線へ入れる駅）。</summary>
     public bool TouchesSingleTrack(string station) => SingleTrackSections.Any(p => p.Item1 == station || p.Item2 == station);
 
-    /// <summary>ダイヤ。列車番号（正規化したもの）→ 列車。</summary>
-    public Dictionary<string, DiaTrain> Dia { get; } = new();
+    // 所定のダイヤ（Timetable.json から読んだもの。起動したあとは変えない）
+    private readonly Dictionary<string, DiaTrain> _baseDia = new();
+    private volatile Dictionary<string, DiaTrain>? _dia;
+
+    /// <summary>
+    /// ダイヤ。列車番号（正規化したもの）→ 列車。読み込みが済んだあとは書き換えない（読むだけ）。
+    /// 催物用の臨時列車を適用している間は、所定のダイヤに臨時列車を足した別の表になる（<see cref="SetExtraTrains"/>）。
+    /// </summary>
+    public Dictionary<string, DiaTrain> Dia => _dia ?? _baseDia;
+
+    /// <summary>所定のダイヤ（臨時列車を足していないもの）。</summary>
+    public IReadOnlyDictionary<string, DiaTrain> BaseDia => _baseDia;
+
+    // 所定のダイヤに重ねる列車（出どころ → 列車。催物用の臨時列車・特発臨など）
+    private readonly Dictionary<string, List<DiaTrain>> _extra = new();
+    private readonly object _extraLock = new();
+
+    /// <summary>
+    /// 所定のダイヤに重ねる列車を、出どころ（source。"催物"・"特発臨" など）ごとに差し替える。extra が空なら、その出どころの列車を外す。
+    /// どの出どころにも列車がなければ、所定のダイヤに戻す。
+    /// 所定のダイヤは変えず、足した表を新しく作って参照を切り替えるだけなので、読んでいる途中の処理はそのまま古い表を読み終える。
+    /// 表は、ほかの出どころを先に足し、この出どころを最後に足す。所定のダイヤ・ほかの出どころにある列番は足さない（この出どころの足せなかった列番を返す）。
+    /// </summary>
+    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra)
+    {
+        var skipped = new List<string>();
+        lock (_extraLock)
+        {
+            if (extra.Count == 0) _extra.Remove(source);
+            else _extra[source] = extra.ToList();
+            if (_extra.Count == 0) _dia = null;
+            else
+            {
+                var d = new Dictionary<string, DiaTrain>(_baseDia);
+                foreach (var (src, list) in _extra)
+                    if (src != source)
+                        foreach (var t in list) d.TryAdd(t.Number, t);
+                if (_extra.TryGetValue(source, out var mine))
+                    foreach (var t in mine)
+                        if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
+                _dia = d;
+            }
+        }
+        Turns.DiaChanged();
+        return skipped;
+    }
 
     public static string NormalizeTrain(string? s) => (s ?? "").Normalize(NormalizationForm.FormKC).Trim().ToUpperInvariant();
 
     public DiaTrain? DiaOf(string train) => Dia.GetValueOrDefault(NormalizeTrain(train));
+
+    // ---- 試運転（所定の臨時列車）: 普段は走らせず、司令が選んだ運行番号だけ走らせる。選択は再起動で「なし」に戻る ----
+    private volatile HashSet<int> _trialsOn = new();
+
+    /// <summary>試運転か（列番が「試」で始まる。時刻表の種別は試運転）。</summary>
+    public static bool IsTrial(DiaTrain d) => d.Number.StartsWith("試");
+
+    /// <summary>試運転の運行番号（時刻表の並び）。</summary>
+    public List<int> TrialUnyos() => Dia.Values.Where(d => IsTrial(d) && d.Unyo != null).Select(d => d.Unyo!.Value).Distinct().Order().ToList();
+
+    /// <summary>走らせる試運転の運行番号。</summary>
+    public IReadOnlyCollection<int> TrialsOn => _trialsOn;
+
+    /// <summary>試運転の選択を変えると増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
+    public int TrialVersion { get; private set; }
+
+    public void SetTrialsOn(IEnumerable<int> unyos)
+    {
+        var known = TrialUnyos().ToHashSet();
+        _trialsOn = unyos.Where(known.Contains).ToHashSet();
+        TrialVersion++;
+    }
+
+    /// <summary>走らない試運転か（選ばれていない運行番号の試運転）。自動運転の列車として出さず、ダイヤグラムの計画の線も引かない。</summary>
+    public bool IsIdleTrial(DiaTrain d) => IsTrial(d) && !(d.Unyo is { } u && _trialsOn.Contains(u));
 
     private TurnChanges? _turns;
 
