@@ -2689,10 +2689,31 @@ public sealed partial class RouteEngine
     /// <summary>この列車に連結する増結車の列番（連777 と、連777 に折り返す 回730）。</summary>
     private HashSet<string> CouplingPartnerNumbers(string train)
     {
-        var set = new HashSet<string> { "連" + train };
-        foreach (var d in _data.Dia.Values)
-            if (_data.Turns.TurnOf(d) is { Kind: "折返", Number: { } n2 } && set.Contains(n2)) set.Add(d.Number);
+        var first = "連" + train;
+        var set = new HashSet<string> { first };
+        if (TurnPredecessors().TryGetValue(first, out var preds)) set.UnionWith(preds);
         return set;
+    }
+
+    // 折返のつなぎの逆引き（後運用の列番 → そこへ折り返す列車の列番）。駅・列車ごとに全ダイヤを調べ直さないよう、
+    // ダイヤ（臨時列車の足し外し）か後運用の差し替えが変わったときだけ作り直す
+    private (Dictionary<string, DiaTrain>? Dia, int Version, Dictionary<string, List<string>> Map) _turnPreds = (null, -1, new());
+
+    private Dictionary<string, List<string>> TurnPredecessors()
+    {
+        var dia = _data.Dia;
+        var version = _data.Turns.Version;
+        var cache = _turnPreds;
+        if (ReferenceEquals(cache.Dia, dia) && cache.Version == version) return cache.Map;
+        var map = new Dictionary<string, List<string>>();
+        foreach (var d in dia.Values)
+            if (_data.Turns.TurnOf(d) is { Kind: "折返", Number: { } n })
+            {
+                if (!map.TryGetValue(n, out var list)) map[n] = list = new List<string>(1);
+                list.Add(d.Number);
+            }
+        _turnPreds = (dia, version, map);
+        return map;
     }
 
     /// <summary>増結車が止まる駅: ダイヤの終着。ダイヤがなければ（手入力の 連777 など）今いる駅。</summary>
