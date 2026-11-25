@@ -183,12 +183,26 @@ public sealed class CentralControl(GameClock clock)
         lock (_lock) return _stops.GetValueOrDefault((train, station));
     }
 
+    // 打ち切りにした駅（列車がいなくなっても残す。ダイヤグラムの計画の線を、打ち切った駅で切るため）。指定を外す・ダイヤのリセットで消す
+    private readonly Dictionary<string, string> _cuts = new();
+
+    /// <summary>打ち切りを変えるたびに増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
+    public int CutVersion { get; private set; }
+
+    /// <summary>列車を打ち切りにした駅（列車がもう走り終えていても）。なければ null。</summary>
+    public string? CutStation(string train)
+    {
+        lock (_lock) return _cuts.GetValueOrDefault(train);
+    }
+
     public void SetStop(string train, string station, string? kind)
     {
         lock (_lock)
         {
             if (kind is "停車" or "通過" or "打ち切り") _stops[(train, station)] = kind;
             else _stops.Remove((train, station));
+            if (kind == "打ち切り") { _cuts[train] = station; CutVersion++; }
+            else if (_cuts.GetValueOrDefault(train) == station) { _cuts.Remove(train); CutVersion++; }
         }
 
         var label = kind switch { "停車" => "臨時停車", "通過" => "臨時通過", "打ち切り" => "打ち切り", _ => "停車・通過を元に戻す" };
@@ -402,6 +416,7 @@ public sealed class CentralControl(GameClock clock)
             _manual.Clear();
             _openAt.Clear();
             _stops.Clear();
+            if (_cuts.Count > 0) { _cuts.Clear(); CutVersion++; }
             // 順序は消したうえで更新時刻を進める（同期で古い順序から書き戻されないように）
             foreach (var k in _orders.Keys.ToList()) _orderStamps[k] = ++_stamp;
             foreach (var k in _sectionOrders.Keys.ToList()) _sectionStamps[k] = ++_stamp;
