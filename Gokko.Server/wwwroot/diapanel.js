@@ -304,8 +304,9 @@
               ${btn(`data-pick=""`, false, "所定に戻す")}</div>`
             : `<div class="muted">${(m.options || []).length > 1 ? "列車がもうこの駅の進路に入っているので、変えられません" : "この駅で選べる番線はありません"}</div>`}</div>
         ${tr.turn ? `<div class="grp"><div class="ttl">後運用（遅れたときに、終点から別の運用につなぐ。運行番号ごと入れ替わります）</div>${turnHtml(tr.turn, tr.unyo, p.turnPick)}</div>` : ""}
-        ${stopNow === "打ち切り" && window.GokkoRinji ? GokkoRinji.popupHtml(p, tr, m, () => updatePopup(p.diagram, true)) : ""}
         ${midTurnHtml(tr.turn, m.stationId, p.midPick)}
+        ${stopNow === "打ち切り" && window.GokkoRinji && !(tr.turn && tr.turn.midway && tr.turn.midway.station === m.stationId) // 途中折返しで打ち切っている駅では、特発臨は立てない
+          ? GokkoRinji.popupHtml(p, tr, m, () => updatePopup(p.diagram, true)) : ""}
         <div class="grp"><div class="ttl">停車・通過（いまは${esc(m.stopType || "")}${stopNow ? `・${esc(stopNow)}の指定中` : ""}）</div>
           <div class="row" style="margin:0">${stopBtns}</div></div>
         ${m.draggable || m.departAt ? `<div class="grp"><div class="ttl">発車時刻（この30秒前まで出発を開通させません。図の◆を横にずらしても決められます）</div>
