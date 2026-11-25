@@ -15,45 +15,54 @@
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; }
-  body { background: #ece9d8; color: #000; font: 12px/1.4 "MS UI Gothic", "Meiryo UI", Tahoma, sans-serif; display: flex; flex-direction: column; }
-  .titlebar { background: linear-gradient(#0a5fd8 0%, #3a8cf3 8%, #0f5fe0 40%, #0a4fc9 88%, #0842a6 100%); color: #fff; font: bold 13px Tahoma, "MS UI Gothic", sans-serif;
-    padding: 5px 8px; text-shadow: 1px 1px #0b2f80; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #0831a0; }
-  .titlebar .icon { width: 16px; height: 16px; background: #fff; border: 1px solid #08389c; border-radius: 2px; display: inline-grid; place-items: center; color: #0a4fc9; font-size: 10px; text-shadow: none; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #aca899; box-shadow: 0 1px #fff; }
-  .toolbar .sep { width: 1px; align-self: stretch; background: #aca899; box-shadow: 1px 0 #fff; margin: 0 2px; }
+  /* 灰色の地に、角の立った浮き出しのボタン（昔の事務用アプリ風） */
+  body { background: #c0c0c0; color: #000; font: 12px/1.4 "MS UI Gothic", "Meiryo UI", Tahoma, sans-serif; display: flex; flex-direction: column; }
+  .titlebar { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font: bold 13px Tahoma, "MS UI Gothic", sans-serif;
+    padding: 4px 6px; display: flex; align-items: center; gap: 6px; }
+  .titlebar .icon { width: 16px; height: 16px; background: #c0c0c0; display: inline-grid; place-items: center; color: #000080; font-size: 10px;
+    box-shadow: inset -1px -1px #404040, inset 1px 1px #fff; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #808080; box-shadow: 0 1px #fff; }
+  .toolbar .sep { width: 1px; align-self: stretch; background: #808080; box-shadow: 1px 0 #fff; margin: 0 2px; }
   .content { flex: 1; padding: 8px 10px; overflow: auto; }
   input[type=text], input[type=password], input:not([type]), select {
-    font: inherit; background: #fff; border: 1px solid #7f9db9; padding: 2px 3px; border-radius: 0; height: 21px; }
-  input:disabled, select:disabled { background: #f0f0ea; color: #555; }
-  button { font: inherit; color: #000; min-width: 75px; height: 23px; padding: 0 8px; border: 1px solid #003c74; border-radius: 3px;
-    background: linear-gradient(#fff, #f4f3ee 45%, #e3e0d0 90%, #d6d0bf); cursor: default; }
-  button:hover { box-shadow: inset 0 0 0 1px #f8b330; }
-  button:active { background: linear-gradient(#e3e0d0, #f4f3ee); }
-  button:disabled { color: #a0a0a0; border-color: #c0c0b8; box-shadow: none; }
-  button.small { min-width: 0; height: 19px; padding: 0 6px; font-size: 11px; }
+    font: inherit; background: #fff; border: none; padding: 2px 3px; border-radius: 0; height: 21px;
+    box-shadow: inset 1px 1px #808080, inset -1px -1px #fff, inset 2px 2px #404040, inset -2px -2px #dfdfdf; }
+  input:disabled, select:disabled { background: #e0e0e0; color: #555; }
+  button { font: inherit; color: #000; min-width: 75px; height: 24px; padding: 0 10px; border: none; border-radius: 0; background: #c0c0c0; cursor: default;
+    box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf; }
+  button:focus-visible { outline: 1px dotted #000; outline-offset: -5px; }
+  button:active:not(:disabled), button.on { box-shadow: inset -1px -1px #fff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080; padding: 1px 9px 0 11px; }
+  button.on { background: #d8d8d8; }
+  button:disabled { color: #808080; text-shadow: 1px 1px #fff; }
+  button.small { min-width: 0; height: 20px; padding: 0 6px; font-size: 11px; }
   .tabs { display: flex; gap: 2px; padding-left: 4px; position: relative; top: 1px; }
   .tab { padding: 3px 12px; border: 1px solid #919b9c; border-bottom: none; background: linear-gradient(#fff, #ecebe5); border-radius: 3px 3px 0 0; cursor: default; }
   .tab.on { background: #fcfcfe; border-top: 2px solid #ffc83c; padding-bottom: 5px; position: relative; top: -2px; }
   .sheet { border: 1px solid #919b9c; background: #fcfcfe; padding: 10px; min-height: 380px; }
-  fieldset { border: 1px solid #d0d0bf; border-radius: 3px; padding: 6px 10px 10px; margin: 0 0 10px; min-width: 0; }
-  legend { color: #0046d5; padding: 0 3px; }
+  /* 枠は溝の線（見出しの所は線を切る）。影で描くと見出しに線が重なる */
+  fieldset { border: 2px groove #f4f4f4; padding: 6px 10px 10px; margin: 4px 0 12px; min-width: 0; }
+  legend { color: #000; padding: 0 3px; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
-  .note { color: #444; margin: 2px 0 6px; }
-  .list { border: 1px solid #7f9db9; background: #fff; overflow: auto; max-height: 300px; }
+  .note { color: #202020; margin: 2px 0 6px; }
+  .list { border: none; background: #fff; overflow: auto; max-height: 300px; box-shadow: inset 1px 1px #808080, inset -1px -1px #fff, inset 2px 2px #404040, inset -2px -2px #dfdfdf; padding: 2px; }
   table { border-collapse: collapse; width: 100%; }
-  th { position: sticky; top: 0; font-weight: normal; text-align: left; white-space: nowrap; padding: 2px 6px;
-    background: linear-gradient(#fff, #ebeadb); border-right: 1px solid #c7c5b2; border-bottom: 2px solid #d6d2c2; }
-  td { padding: 2px 6px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; vertical-align: middle; }
+  th { position: sticky; top: 0; font-weight: normal; text-align: left; white-space: nowrap; padding: 2px 6px; background: #c0c0c0;
+    box-shadow: inset -1px -1px #404040, inset 1px 1px #fff, inset -2px -2px #808080; }
+  td { padding: 2px 6px; border-bottom: 1px solid #eee; white-space: nowrap; vertical-align: middle; }
   tr.pick { cursor: default; }
-  tr.pick:hover td { background: #e8eef9; }
-  tr.sel td, tr.sel:hover td { background: #316ac5; color: #fff; }
+  tr.pick:hover td { background: #e8e8f4; }
+  tr.sel td, tr.sel:hover td { background: #000080; color: #fff; }
   tr.pass td { color: #606060; }
+  /* 時刻の表は、列の間に縦の線（どの欄か見分けやすく） */
+  #trainBox td { border-right: 1px solid #c8c8c8; }
+  #trainBox td:last-child { border-right: none; }
   .mono { font-family: "MS Gothic", "Courier New", monospace; }
-  .muted { color: #808080; }
+  .muted { color: #4a4a4a; }
   .ng { color: #c00000; }
   .warn { color: #8a5a00; }
   .st { display: inline-block; padding: 0 4px; border: 1px solid; font-size: 11px; }
-  .st-下書き { color: #444; border-color: #999; }
+  .st-下書き { color: #333; border-color: #808080; background: #e8e8e8; }
+  tr.sel .st { outline: 1px solid #fff; }
   .st-申請中 { color: #00468c; border-color: #00468c; background: #e3ecf8; }
   .st-承認 { color: #006000; border-color: #006000; background: #e4f4e4; }
   .st-差戻し { color: #a00000; border-color: #a00000; background: #fbe6e6; }
@@ -64,11 +73,16 @@
   .t-in { width: 66px; font-family: "MS Gothic", "Courier New", monospace; }
   .msgs { margin: 6px 0 0; padding: 0; list-style: none; }
   .msgs li { padding: 1px 0; white-space: pre-wrap; }
-  .statusbar { display: flex; gap: 2px; padding: 2px; border-top: 1px solid #aca899; background: #ece9d8; }
-  .statusbar span { border: 1px solid; border-color: #aca899 #fff #fff #aca899; padding: 1px 6px; }
+  .statusbar { display: flex; gap: 2px; padding: 2px; border-top: 1px solid #fff; background: #c0c0c0; }
+  .statusbar span { padding: 1px 6px; box-shadow: inset 1px 1px #808080, inset -1px -1px #fff; }
   .statusbar span.grow { flex: 1; }
   /* ログインの小窓（crewlogin.js） */
-  #login { display: none; position: fixed; right: 10px; top: 60px; z-index: 5; background: #ece9d8; border: 1px solid #0831a0; box-shadow: 2px 2px 6px rgba(0, 0, 0, .4); padding: 10px 12px; max-width: 92vw; }
+  #login { display: none; position: fixed; right: 10px; top: 60px; z-index: 5; background: #c0c0c0; padding: 10px 12px; max-width: 92vw;
+    box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf, 2px 2px 6px rgba(0, 0, 0, .4); }
+  /* ダイヤグラム（運転整理用のダイヤグラムと同じ描き方） */
+  #dia { max-height: none; overflow-x: auto; overflow-y: hidden; padding: 0; background: #2b2f36; user-select: none; touch-action: pan-y; }
+  #dia.draw { cursor: crosshair; }
+  #diaTip { min-height: 1.4em; color: #202020; }
   #login.open { display: block; }
   #login input { margin: 0 6px 0 2px; }
   #loginMsg { color: #c00000; margin: 6px 0 0; }
@@ -133,8 +147,17 @@
       </fieldset>
 
       <fieldset id="diaBox"><legend>ダイヤグラム</legend>
-        <div class="note">このグループの列車を太く、所定の列車を薄く描きます。入れた列車に関係する列車（追い越す・追い越される、単線で交換する、続行で間隔が詰まる、同じ番線を同じ時間に使う）は濃く描き、下に一覧を出します。</div>
-        <div class="list" id="dia" style="max-height:none; overflow-x:auto"></div>
+        <div class="row">
+          <button id="dgDraw" title="図をクリックして止まる駅を順に打ち、最後の駅でダブルクリック（または Enter）すると列車を作ります。Esc でやめます">線を引く</button>
+          <button id="dgSplit" title="番線ごとの段に分けて描きます。◆を縦にずらすと番線を変えられます">詳細表示</button>
+          <button id="dgIn" class="small" title="拡大">拡大</button>
+          <button id="dgOut" class="small" title="縮小">縮小</button>
+          <button id="dgGo" class="small" title="このグループの列車の所まで動かす">このグループへ</button>
+        </div>
+        <div class="note">このグループの列車を濃く、所定の列車を薄く描き、運行番号ごとに折返をつなぎます。関係する列車（追い越す・追い越される、単線で交換する、続行で間隔が詰まる、同じ番線を同じ時間に使う）は少し濃く描き、下に一覧を出します。<br>
+          ◆を横にずらすと、その駅から先の時刻をまとめてずらします（Shift を押しながらだとその駅だけ）。詳細表示で縦にずらすと番線を変えます。◆をダブルクリックすると停車・通過を切り替えます。何もない所をつかむと横に動きます。</div>
+        <div class="list" id="dia"></div>
+        <div id="diaTip"></div>
         <ul class="msgs" id="relations"></ul>
       </fieldset>
 
@@ -271,7 +294,8 @@
     $("withdraw").disabled = !cur.id || cur.applied || !(cur.status === "申請中" || cur.status === "承認") || !(mine || base.me.approver);
     $("remove").disabled = !cur.id || cur.applied || cur.status === "承認" || !(mine || base.me.approver);
     $("approveBox").hidden = !(base.me.approver && cur.status === "申請中");
-    for (const id of ["addTrain", "dupTrain", "delTrain"]) $(id).disabled = !ed;
+    for (const id of ["addTrain", "dupTrain", "delTrain", "dgDraw"]) $(id).disabled = !ed;
+    if (!ed && drawing) { drawing = null; $("dgDraw").classList.remove("on"); }
     $("dupTrain").disabled = $("delTrain").disabled = !ed || curTrain < 0;
     drawTrains();
     drawTrain();
@@ -502,6 +526,7 @@
   // ダイヤグラム（このグループの列車を太く、所定の列車を薄く、関係する列車を濃く）。計算はこの画面だけでする
   // =========================================================================================
   const TYPE_COLORS = { "特急": "#d62828", "快急": "#b04fd0", "急行": "#f08a00", "区急": "#18a33a", "準急": "#1e6fd9", "普通": "#000080", "回送": "#808080" };
+  const DC = { ...TYPE_COLORS, "普通": "#e6e8eb", "回送": "#a0a0a0" }; // ダイヤグラムの線の色（濃いグレーの地に合わせる）
   let plan = null; // 所定の列車（/plan）
   let singles = new Set();
   let diaTimer = 0;
@@ -512,8 +537,9 @@
     for (const s of stops) {
       const a = sec(s.arr), d = sec(s.dep);
       if (a == null && d == null) continue;
-      if (a != null) pts.push({ z: s.y, t: a });
-      if (d != null && d !== a) pts.push({ z: s.y, t: d });
+      const track = s.track ?? null;
+      if (a != null) pts.push({ z: s.y, t: a, track });
+      if (d != null && d !== a) pts.push({ z: s.y, t: d, track });
       st.set(s.y, { arr: a ?? d, dep: d ?? a, stop: s.stop === "停", track: s.track ?? null });
     }
     return { pts, st };
@@ -583,62 +609,376 @@
     return out;
   }
 
-  function scheduleDia() { clearTimeout(diaTimer); diaTimer = setTimeout(drawDia, 150); }
+  // ---- 描き方は運転整理用のダイヤグラム（diapanel.js）に合わせる: 4時〜27時を横に並べ、駅名の列は左に固定。詳細表示は番線ごとの段 ----
+  const DAY0 = 4 * 3600, DAY1 = 27 * 3600, SNAP = 15, TOP = 18, BOTTOM = 22, RIGHT = 10;
+  let dv = { split: false, minPx: 6, stationPx: 24, trackPx: 13 };
+  try { dv = { ...dv, ...JSON.parse(localStorage.getItem("gokkoUntenkaDia") || "{}") }; } catch (e) {}
+  const saveDv = () => { try { localStorage.setItem("gokkoUntenkaDia", JSON.stringify(dv)); } catch (e) {} };
+  let lastL = null, drag = null, panning = null, drawing = null, scrolledFor = null;
+  const snap = (v) => Math.round(v / SNAP) * SNAP;
+  const keyZ = (a, b) => `${Math.min(a, b)}-${Math.max(a, b)}`;
+
+  function scheduleDia() { clearTimeout(diaTimer); diaTimer = setTimeout(drawDia, 120); }
+
+  function layoutDia() {
+    const stations = base.stations;
+    const left = dv.split ? 128 : 84;
+    const band = {};
+    let y = TOP, prev = null;
+    for (const s of stations) {
+      if (prev && singles.has(keyZ(prev.zone, s.zone))) y += dv.split ? 2 * dv.trackPx : Math.round(dv.stationPx * 0.5); // 単線の駅間は少し空ける
+      prev = s;
+      const tracks = dv.split && s.control ? s.tracks : [];
+      const rows = {};
+      tracks.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
+      const bottom = tracks.length ? y + (tracks.length - 1) * dv.trackPx : y;
+      band[s.zone] = { s, y: tracks.length ? (y + bottom) / 2 : y, rows, top: y, bottom };
+      y = bottom + dv.stationPx;
+    }
+    const height = y - dv.stationPx + BOTTOM;
+    const zones = stations.map((s) => s.zone);
+    const yOf = (z, track) => {
+      const b = band[z];
+      if (b) return track != null && b.rows[track] != null ? b.rows[track] : b.y;
+      const i = zones.findIndex((x) => x > z);
+      if (i <= 0) return band[zones[i < 0 ? zones.length - 1 : 0]].y;
+      const a = band[zones[i - 1]], c = band[zones[i]];
+      return a.bottom + (z - zones[i - 1]) / (zones[i] - zones[i - 1]) * (c.top - a.bottom);
+    };
+    const x = (t) => left + (t - DAY0) / 60 * dv.minPx;
+    return { band, left, height, y: yOf, x, t: (px) => DAY0 + (px - left) / dv.minPx * 60, w: x(DAY1) + RIGHT };
+  }
+
+  const ptsStr = (L, pts) => pts.map((p) => `${L.x(p.t).toFixed(1)},${L.y(p.z, p.track).toFixed(1)}`).join(" ");
 
   function drawDia() {
-    if (!cur || !plan || !base) return;
+    if (!cur || !plan || !base) { if (!cur) $("dia").innerHTML = ""; return; }
+    const L = layoutDia();
     // このグループの列車（入力の途中のものも）
     const mine = cur.trains.map((t, i) => ({
-      i, name: t.number || "（列番なし）", type: t.type,
+      i, t, name: t.number || "（列番なし）", type: t.type, unyo: t.unyo,
       sh: shape(t.stops.filter((s) => zoneOf(s.st) != null).map((s) => ({ y: zoneOf(s.st), stop: s.stop, arr: s.arr, dep: s.dep, track: s.track })))
     })).filter((m) => m.sh.pts.length >= 2);
-    if (!mine.length) { $("dia").innerHTML = `<div class="note" style="padding:4px">時刻を入れた列車がまだありません。</div>`; $("relations").innerHTML = ""; return; }
-    let t0 = Math.min(...mine.map((m) => m.sh.pts[0].t)), t1 = Math.max(...mine.map((m) => m.sh.pts[m.sh.pts.length - 1].t));
-    t0 = Math.floor((t0 - 15 * 60) / 600) * 600; t1 = Math.ceil((t1 + 15 * 60) / 600) * 600;
-    if (t1 - t0 < 3600) t1 = t0 + 3600;
-    const others = plan.filter((p) => p.sh.pts.length >= 2 && p.sh.pts[p.sh.pts.length - 1].t >= t0 && p.sh.pts[0].t <= t1);
     // 関係する列車（このグループのほかの列車も相手にする）
-    const rel = new Map(); const lines = [];
+    const rel = new Set(); const lines = [];
     for (const m of mine) {
-      const res = relations(m, [...others, ...mine.filter((x) => x !== m)]);
-      for (const r of res) { rel.set(r.o.name, true); for (const w of r.why) lines.push({ me: m.name, o: r.o, w }); }
+      for (const r of relations(m, [...plan, ...mine.filter((x) => x !== m)])) {
+        rel.add(r.o.name);
+        for (const w of r.why) lines.push({ me: m.name, o: r.o, w });
+      }
     }
-    // 配置
-    const minPx = 6, stPx = 22, left = 72, top = 22;
-    const zmin = base.stations[0].zone, zmax = base.stations[base.stations.length - 1].zone;
-    const X = (t) => left + (t - t0) / 60 * minPx, Y = (z) => top + (z - zmin) / 2 * stPx;
-    const W = X(t1) + 10, H = Y(zmax) + 14;
-    const parts = [];
-    for (let t = t0; t <= t1; t += 600) {
-      const hour = t % 3600 === 0;
-      parts.push(`<line x1="${X(t)}" y1="${top - 4}" x2="${X(t)}" y2="${H - 10}" stroke="${hour ? "#a0a0a0" : "#e0e0e0"}"/>`);
-      parts.push(`<text x="${X(t) + 2}" y="${top - 8}" font-size="10" fill="#444">${fmt(t).slice(0, 5)}</text>`);
-    }
+    const P = [];
+    P.push(`<defs><clipPath id="dgClip"><rect x="${L.left}" y="0" width="${L.w - RIGHT - L.left}" height="${L.height}"/></clipPath></defs>`);
+    const labels = [];
     for (const s of base.stations) {
-      parts.push(`<line x1="${left}" y1="${Y(s.zone)}" x2="${W}" y2="${Y(s.zone)}" stroke="${s.control ? "#c8c8c8" : "#ececec"}"/>`);
-      parts.push(`<text x="4" y="${Y(s.zone) + 3}" font-size="10" fill="${s.control ? "#000" : "#888"}">${esc(s.name)}</text>`);
+      const b = L.band[s.zone], rows = Object.keys(b.rows);
+      if (rows.length) {
+        const pad = dv.trackPx / 2;
+        P.push(`<rect x="${L.left}" y="${b.top - pad}" width="${L.w - RIGHT - L.left}" height="${b.bottom - b.top + 2 * pad}" fill="#ffffff" opacity="0.05"/>`);
+        labels.push(`<text x="${L.left - 46}" y="${b.y + 4}" text-anchor="end" font-size="11" font-weight="600" fill="#e6e8eb">${esc(s.name)}</text>`,
+          `<line x1="${L.left - 42}" x2="${L.left - 42}" y1="${b.top - pad + 2}" y2="${b.bottom + pad - 2}" stroke="#9aa3ae"/>`);
+        for (const t of rows) {
+          P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.rows[t]}" y2="${b.rows[t]}" stroke="#4a505a" stroke-width="0.8"/>`);
+          labels.push(`<text x="${L.left - 6}" y="${b.rows[t] + 3.5}" text-anchor="end" font-size="10" fill="#9aa3ae">${t}番線</text>`);
+        }
+      } else {
+        P.push(`<line x1="${L.left}" x2="${L.w - RIGHT}" y1="${b.y}" y2="${b.y}" stroke="#4a505a" stroke-width="${s.control ? 1.4 : 0.6}"/>`);
+        labels.push(`<text x="${L.left - 6}" y="${b.y + 4}" text-anchor="end" font-size="11" fill="${s.control ? "#e6e8eb" : "#9aa3ae"}" font-weight="${s.control ? 600 : 400}">${esc(s.name)}</text>`);
+      }
     }
-    const poly = (sh, color, width, title, extra = "") => `<polyline fill="none" stroke="${color}" stroke-width="${width}" ${extra} points="${sh.pts.map((p) => `${X(p.t).toFixed(1)},${Y(p.z).toFixed(1)}`).join(" ")}"><title>${esc(title)}</title></polyline>`;
-    for (const o of others) if (!rel.has(o.name)) parts.push(poly(o.sh, "#d0d0d0", 1, `${o.name} ${o.type}`));
-    for (const o of others) if (rel.has(o.name)) parts.push(poly(o.sh, TYPE_COLORS[o.type] || "#333", 1.6, `${o.name} ${o.type}（関係する列車）`, 'stroke-dasharray="5 2"'));
-    for (const m of mine) parts.push(poly(m.sh, TYPE_COLORS[m.type] || "#000", m.i === curTrain ? 4 : 2.6, `${m.name} ${m.type}`));
-    // 列番の札（入れた列車と関係する列車）
-    for (const p of [...others.filter((o) => rel.has(o.name)), ...mine]) {
+    // 目盛り（1分ごと。5分ごとは少し濃く。時刻は下に）
+    const every = dv.minPx >= 10 ? 5 : 10;
+    for (let t = DAY0; t <= DAY1; t += 60) {
+      const m = Math.round(t / 60) % 60, five = m % 5 === 0;
+      if (dv.minPx < 8 && !five) continue;
+      P.push(`<line x1="${L.x(t)}" x2="${L.x(t)}" y1="${TOP - 6}" y2="${L.height - 18}" stroke="#3c414a" stroke-width="${m === 0 ? 1.4 : five ? 1 : 0.4}"/>`);
+      if (m % every === 0) P.push(`<text x="${L.x(t)}" y="${L.height - 4}" text-anchor="middle" font-size="10" fill="#9aa3ae">${fmt(t).slice(0, 5)}</text>`);
+    }
+    // 所定の列車: 薄く。関係する列車は少し濃く。運行は折返でつなぐ
+    const byNo = new Map(plan.map((p) => [p.name, p]));
+    const faint = [], strong = [];
+    for (const p of plan) {
+      if (p.sh.pts.length < 2) continue;
+      const out = rel.has(p.name) ? strong : faint, color = DC[p.type] || "#e6e8eb";
+      out.push(`<polyline points="${ptsStr(L, p.sh.pts)}" fill="none" stroke="${color}" stroke-width="${rel.has(p.name) ? 1.3 : 1.1}"/>`);
       const a = p.sh.pts[0];
-      parts.push(`<text x="${X(a.t) + 2}" y="${Y(a.z) - 3}" font-size="10" font-weight="${p.i != null ? "bold" : "normal"}" fill="${TYPE_COLORS[p.type] || "#000"}">${esc(p.name)}</text>`);
+      out.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 3}" font-size="9" fill="${color}">${esc(p.name)}</text>`);
+      const nx = p.turn && byNo.get(p.turn);
+      if (nx && nx.sh.pts.length) out.push(link(L, p.sh.pts[p.sh.pts.length - 1], nx.sh.pts[0], color, 1.1));
     }
-    $("dia").innerHTML = `<svg width="${W}" height="${H}" style="display:block; font-family:'MS UI Gothic','Meiryo UI',sans-serif">${parts.join("")}</svg>`;
-    $("relations").innerHTML = lines.length
+    P.push(`<g clip-path="url(#dgClip)" pointer-events="none" opacity="0.32">${faint.join("")}</g>`);
+    P.push(`<g clip-path="url(#dgClip)" pointer-events="none" opacity="0.9">${strong.join("")}</g>`);
+    // このグループの列車（運行番号ごとに折返でつなぐ）
+    const mineP = [];
+    const byUnyo = new Map();
+    for (const m of mine) { if (!byUnyo.has(m.unyo)) byUnyo.set(m.unyo, []); byUnyo.get(m.unyo).push(m); }
+    for (const list of byUnyo.values()) {
+      list.sort((a, b) => a.sh.pts[0].t - b.sh.pts[0].t);
+      for (let k = 0; k + 1 < list.length; k++)
+        mineP.push(link(L, list[k].sh.pts[list[k].sh.pts.length - 1], list[k + 1].sh.pts[0], DC[list[k].type] || "#e6e8eb", 1.4));
+    }
+    const ed = editable();
+    for (const m of mine) {
+      const color = DC[m.type] || "#e6e8eb", sel = m.i === curTrain;
+      mineP.push(`<polyline points="${ptsStr(L, m.sh.pts)}" fill="none" stroke="${color}" stroke-width="${sel ? 2.4 : 1.6}"/>`);
+      const a = m.sh.pts[0];
+      mineP.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 5}" font-size="11" font-weight="600" fill="${color}" paint-order="stroke" stroke="#2b2f36" stroke-width="3">${esc(m.name)}</text>`);
+    }
+    P.push(`<g clip-path="url(#dgClip)" pointer-events="none">${mineP.join("")}</g>`);
+    // ◆（このグループの列車の駅ごと。発の時刻、終点は着）
+    for (const m of mine) {
+      m.t.stops.forEach((s, si) => {
+        const z = zoneOf(s.st), last = si === m.t.stops.length - 1;
+        const tm = sec(last ? s.arr || s.dep : s.dep || s.arr);
+        if (z == null || tm == null) return;
+        const x = L.x(tm), y = L.y(z, s.track);
+        const fill = s.stop === "停" ? "#3aa0d8" : "#2b2f36";
+        const tip = `${m.name} ${stById[s.st]?.name}: ${s.stop === "停" ? "停車" : "通過"}${s.track != null ? ` ${s.track}番線` : ""} ${fmt(tm)}${last ? "着" : s.stop === "停" ? "発" : "通過"}`
+          + (ed ? "　横にずらすと時刻（Shift でこの駅だけ）・ダブルクリックで停車／通過" + (dv.split ? "・縦にずらすと番線" : "") : "");
+        P.push(`<g data-ti="${m.i}" data-si="${si}" data-x="${x}" data-y="${y}" data-tip="${esc(tip)}" style="cursor:${ed ? (dv.split ? "move" : "ew-resize") : "pointer"}">`
+          + `<path d="M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z" fill="transparent"/>`
+          + `<path d="M${x},${y - 4} L${x + 3.4},${y} L${x},${y + 4} L${x - 3.4},${y} Z" fill="${fill}" stroke="${s.stop === "停" ? "#2b2f36" : "#3aa0d8"}" stroke-width="0.9" pointer-events="none"/></g>`);
+      });
+    }
+    // 線を引いている途中
+    if (drawing) P.push(`<polyline id="dgPreview" points="${drawingPts(L)}" fill="none" stroke="#fff" stroke-width="1.2" stroke-dasharray="4 3" pointer-events="none"/>`
+      + drawing.pts.map((p) => `<circle cx="${L.x(p.t)}" cy="${L.y(p.z, p.track)}" r="3" fill="#fff" pointer-events="none"/>`).join(""));
+
+    const box = $("dia");
+    const keep = box.scrollLeft;
+    box.innerHTML = `<div style="display:flex; width:max-content">`
+      + `<svg width="${L.left}" height="${L.height}" style="display:block; flex:none; position:sticky; left:0; z-index:1; background:#2b2f36">${labels.join("")}</svg>`
+      + `<svg data-dg-main="1" width="${L.w}" height="${L.height}" viewBox="0 0 ${L.w} ${L.height}" style="display:block; flex:none; margin-left:-${L.left}px; background:#2b2f36; font-family:'Yu Gothic UI','Meiryo UI',sans-serif">${P.join("")}</svg></div>`;
+    box.classList.toggle("draw", !!drawing);
+    lastL = L;
+    // グループを開いたときは、その列車の所へ（なければ 10時）。描き直しでは見ている所のまま
+    const want = cur.id ?? "new";
+    if (scrolledFor !== want) {
+      scrolledFor = want;
+      const first = mine.length ? Math.min(...mine.map((m) => m.sh.pts[0].t)) - 15 * 60 : 10 * 3600;
+      box.scrollLeft = Math.max(0, L.x(first) - L.left);
+    } else box.scrollLeft = keep;
+    $("relations").innerHTML = !mine.length ? "" : lines.length
       ? lines.map((l) => `<li><b class="mono">${esc(l.me)}</b> × <span class="mono" style="color:${TYPE_COLORS[l.o.type] || "#000"}">${esc(l.o.name)}</span>（${esc(l.o.type)}）: ${esc(l.w)}</li>`).join("")
       : `<li class="muted">関係する列車はありません</li>`;
   }
+
+  // 運行のつなぎ線: 着いた駅で、次の列車が出るまで横に引く（番線が変わるなら、出る1分前に移る）。駅が違えば点線でつなぐ
+  function link(L, a, b, color, width) {
+    if (b.t < a.t) return "";
+    if (a.z !== b.z) return `<line x1="${L.x(a.t)}" y1="${L.y(a.z, a.track)}" x2="${L.x(b.t)}" y2="${L.y(b.z, b.track)}" stroke="${color}" stroke-width="${width}" stroke-dasharray="3 3"/>`;
+    const ya = L.y(a.z, a.track), yb = L.y(b.z, b.track), xm = Math.max(L.x(a.t), L.x(b.t - 60));
+    return `<polyline points="${L.x(a.t)},${ya} ${xm},${ya} ${L.x(b.t)},${yb}" fill="none" stroke="${color}" stroke-width="${width}"/>`;
+  }
+
+  function svgPoint(ev) {
+    const svg = $("dia").querySelector("svg[data-dg-main]");
+    const pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  // 縦の位置 → いちばん近い駅（詳細表示なら番線の段も）
+  function pickStation(L, y) {
+    let best = null;
+    for (const s of base.stations) {
+      const b = L.band[s.zone];
+      const cands = Object.keys(b.rows).length ? Object.entries(b.rows).map(([t, ry]) => ({ track: +t, y: ry })) : [{ track: null, y: b.y }];
+      for (const c of cands) if (!best || Math.abs(c.y - y) < Math.abs(best.y - y)) best = { z: s.zone, s, ...c };
+    }
+    return best && Math.abs(best.y - y) <= Math.max(dv.stationPx / 2, dv.trackPx) ? best : null;
+  }
+
+  // ---- 線を引く ----
+  function drawingPts(L) {
+    const pts = drawing.pts.map((p) => `${L.x(p.t).toFixed(1)},${L.y(p.z, p.track).toFixed(1)}`);
+    if (drawing.mouse) pts.push(`${drawing.mouse.x.toFixed(1)},${drawing.mouse.y.toFixed(1)}`);
+    return pts.join(" ");
+  }
+  function startDrawing() {
+    if (!editable()) return;
+    drawing = { pts: [], mouse: null };
+    $("dgDraw").classList.add("on");
+    $("diaTip").textContent = "線を引く: 止まる駅を順にクリックします（発駅 → … → 終点）。終点でダブルクリック（または Enter）で列車を作ります。Esc でやめます";
+    drawDia();
+  }
+  function stopDrawing(msg) {
+    drawing = null;
+    $("dgDraw").classList.remove("on");
+    $("diaTip").textContent = msg || "";
+    drawDia();
+  }
+  function addDrawPoint(ev) {
+    const L = lastL, p = svgPoint(ev), hit = pickStation(L, p.y);
+    if (!hit) { $("diaTip").textContent = "駅の線の上をクリックしてください"; return; }
+    const t = snap(L.t(p.x)), pts = drawing.pts, last = pts[pts.length - 1];
+    if (last && last.z === hit.z) { last.t = t; last.track = hit.track ?? last.track; drawDia(); return; } // 同じ駅をもう一度押したら、その駅の時刻を直す
+    if (last && t < last.t) { $("diaTip").textContent = "前の駅より前の時刻にはできません"; return; }
+    if (pts.length >= 2 && Math.sign(hit.z - last.z) !== Math.sign(pts[1].z - pts[0].z)) { $("diaTip").textContent = "向きが逆です（1本の列車は同じ向きに引きます）"; return; }
+    pts.push({ z: hit.z, track: hit.track, t });
+    $("diaTip").textContent = `${pts.map((q) => `${nameAt(q.z)} ${fmt(q.t).slice(0, 5)}`).join(" → ")}　（終点でダブルクリック／Enter で作る・Esc でやめる）`;
+    drawDia();
+  }
+  function finishDrawing() {
+    const pts = drawing.pts;
+    if (pts.length < 2) { stopDrawing("駅を2つ以上打ってください"); return; }
+    const inc = pts[pts.length - 1].z > pts[0].z;
+    const dir = base.downIncreasing == null ? null : (inc === base.downIncreasing ? "下り" : "上り");
+    const list = base.stations.filter((s) => inc ? s.zone >= pts[0].z && s.zone <= pts[pts.length - 1].z : s.zone <= pts[0].z && s.zone >= pts[pts.length - 1].z);
+    if (!inc) list.reverse();
+    const at = new Map(pts.map((p) => [p.z, p]));
+    // 打った駅は停車（途中の駅は30秒停車）。打っていない駅は通過で、前後の打った駅の間を駅の位置で割り振る
+    const stops = list.map((s, i) => {
+      const p = at.get(s.zone), first = i === 0, last = i === list.length - 1;
+      if (p) return { st: s.id, stop: "停", arr: first ? null : fmt(p.t), dep: last ? null : fmt(first ? p.t : p.t + 30), track: p.track ?? defTrack(s.id, dir, "停") };
+      const a = [...pts].reverse().find((q) => inc ? q.z < s.zone : q.z > s.zone), b = pts.find((q) => inc ? q.z > s.zone : q.z < s.zone);
+      const ta = a.t + (a === pts[0] ? 0 : 30), tb = b.t;
+      const t = ta + (tb - ta) * (s.zone - a.z) / (b.z - a.z);
+      return { st: s.id, stop: "通", arr: null, dep: fmt(snap(t)), track: s.control ? defTrack(s.id, dir, "通") : null };
+    });
+    const prev = cur.trains[curTrain];
+    const t = { unyo: prev ? prev.unyo : (base.freeUnyo || 0), number: "", type: prev ? prev.type : "普通", label: "", dest: list[list.length - 1].name, stops };
+    cur.trains.push(t);
+    curTrain = cur.trains.length - 1;
+    manual.add(t);
+    dirty = true;
+    drawing = null;
+    $("dgDraw").classList.remove("on");
+    $("diaTip").textContent = "列車を作りました。列番・種別を入れてください";
+    drawEditor();
+    $("tNumber").focus();
+  }
+
+  // ---- ◆をずらす（時刻・番線）・ダブルクリックで停車／通過 ----
+  function shiftTimes(t, si, delta, only) {
+    const st = t.stops, last = si === st.length - 1;
+    const add = (v) => (v ? fmt(sec(v) + delta) : v);
+    const s = st[si];
+    if (last) s.arr = add(s.arr || s.dep);
+    else {
+      s.dep = add(s.dep);
+      if (s.arr && sec(s.dep) < sec(s.arr)) s.arr = s.dep;
+    }
+    if (!only) for (let j = si + 1; j < st.length; j++) { st[j].arr = add(st[j].arr); st[j].dep = add(st[j].dep); }
+  }
+  function toggleStop(t, si) {
+    const st = t.stops, s = st[si];
+    if (si === 0 || si === st.length - 1) return;
+    const dir = dirOf(t);
+    if (s.stop === "通") {
+      s.stop = "停"; s.arr = s.dep;
+      shiftTimes(t, si, 30, false);
+      if (s.track == null) s.track = defTrack(s.st, dir, "停");
+    } else {
+      const d = sec(s.dep) - sec(s.arr || s.dep);
+      s.stop = "通"; s.dep = s.arr || s.dep; s.arr = null;
+      if (d) for (let j = si + 1; j < st.length; j++) { for (const k of ["arr", "dep"]) if (st[j][k]) st[j][k] = fmt(sec(st[j][k]) - d); }
+    }
+  }
+  function changed(t) { manual.add(t); dirty = true; drawTrain(); drawTrains(); }
+
+  const diaEl = $("dia");
+  diaEl.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || !lastL) return;
+    const g = ev.target.closest("g[data-ti]");
+    if (drawing) { ev.preventDefault(); return; }
+    if (!g) {
+      if (ev.target.closest("svg[data-dg-main]")) { panning = { x: ev.clientX, left: diaEl.scrollLeft }; try { diaEl.setPointerCapture(ev.pointerId); } catch (e) {} diaEl.style.cursor = "grabbing"; }
+      return;
+    }
+    ev.preventDefault();
+    try { diaEl.setPointerCapture(ev.pointerId); } catch (e) {}
+    drag = { g, ti: +g.dataset.ti, si: +g.dataset.si, x0: +g.dataset.x, y0: +g.dataset.y, cx: ev.clientX, cy: ev.clientY, mode: null, shift: ev.shiftKey };
+  });
+  diaEl.addEventListener("pointermove", (ev) => {
+    if (panning) { diaEl.scrollLeft = panning.left - (ev.clientX - panning.x); return; }
+    if (drawing && lastL) {
+      const p = svgPoint(ev);
+      drawing.mouse = { x: p.x, y: p.y };
+      const el = diaEl.querySelector("#dgPreview");
+      if (el) el.setAttribute("points", drawingPts(lastL));
+      const hit = pickStation(lastL, p.y);
+      if (hit && drawing.pts.length === 0) $("diaTip").textContent = `${hit.s.name}${hit.track != null ? ` ${hit.track}番線` : ""} ${fmt(snap(lastL.t(p.x)))} から引き始める`;
+      return;
+    }
+    if (!drag) { const g = ev.target.closest("g[data-ti]"); $("diaTip").textContent = g ? g.dataset.tip : ""; return; }
+    if (!editable()) return;
+    const L = lastL, p = svgPoint(ev), d = drag;
+    if (!d.mode) {
+      const dx = Math.abs(ev.clientX - d.cx), dy = Math.abs(ev.clientY - d.cy);
+      if (Math.max(dx, dy) < 6) return;
+      const t = cur.trains[d.ti], b = L.band[zoneOf(t.stops[d.si].st)];
+      d.mode = dy > dx && dv.split && b && Object.keys(b.rows).length ? "track" : "time";
+    }
+    const t = cur.trains[d.ti], s = t.stops[d.si], name = `${t.number || "（列番なし）"} ${stById[s.st]?.name}`;
+    if (d.mode === "time") {
+      const delta = snap((p.x - d.x0) / dv.minPx * 60);
+      d.delta = delta;
+      d.g.setAttribute("transform", `translate(${delta / 60 * dv.minPx},0)`);
+      const last = d.si === t.stops.length - 1, base0 = sec(last ? s.arr || s.dep : s.dep);
+      $("diaTip").textContent = `${name} → ${fmt(base0 + delta)}${last ? "着" : "発"}（${delta >= 0 ? "+" : ""}${delta}秒${d.shift || ev.shiftKey ? "・この駅だけ" : "・この先もまとめて"}。離すと決定）`;
+    } else {
+      const b = L.band[zoneOf(s.st)];
+      let best = null;
+      for (const [tr, ry] of Object.entries(b.rows)) if (!best || Math.abs(ry - p.y) < Math.abs(best.y - p.y)) best = { track: +tr, y: ry };
+      d.track = best.track;
+      d.g.setAttribute("transform", `translate(0,${best.y - d.y0})`);
+      $("diaTip").textContent = `${name} → ${best.track}番線（離すと決定）`;
+    }
+  });
+  function endPointer(ev) {
+    if (panning) { panning = null; diaEl.style.cursor = ""; return; }
+    if (!drag) return;
+    const d = drag; drag = null;
+    const t = cur.trains[d.ti];
+    if (!d.mode) { if (curTrain !== d.ti) { curTrain = d.ti; drawEditor(); } return; } // 押しただけ: その列車を選ぶ
+    if (!t) return;
+    if (d.mode === "time" && d.delta) { shiftTimes(t, d.si, d.delta, d.shift || ev.shiftKey); changed(t); }
+    else if (d.mode === "track" && d.track != null && d.track !== t.stops[d.si].track) { t.stops[d.si].track = d.track; changed(t); }
+    else drawDia();
+  }
+  diaEl.addEventListener("pointerup", endPointer);
+  diaEl.addEventListener("pointercancel", () => { drag = null; panning = null; diaEl.style.cursor = ""; drawDia(); });
+  diaEl.addEventListener("click", (ev) => { if (drawing && ev.detail === 1) addDrawPoint(ev); });
+  diaEl.addEventListener("dblclick", (ev) => {
+    if (drawing) { finishDrawing(); return; }
+    const g = ev.target.closest("g[data-ti]");
+    if (!g || !editable()) return;
+    const t = cur.trains[+g.dataset.ti];
+    toggleStop(t, +g.dataset.si);
+    changed(t);
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (!drawing) return;
+    if (ev.key === "Escape") stopDrawing("線を引くのをやめました");
+    if (ev.key === "Enter") { ev.preventDefault(); finishDrawing(); }
+  });
+  diaEl.addEventListener("wheel", (ev) => {
+    if (!ev.ctrlKey) return;
+    ev.preventDefault();
+    zoom(ev.deltaY < 0 ? 1.25 : 0.8, ev.clientX);
+  }, { passive: false });
+  function zoom(f, clientX) {
+    const L = lastL; if (!L) return;
+    const rect = diaEl.getBoundingClientRect(), cx = (clientX ?? rect.left + rect.width / 2) - rect.left;
+    const tc = L.t(diaEl.scrollLeft + cx);
+    dv.minPx = Math.max(2, Math.min(40, dv.minPx * f));
+    saveDv(); drawDia();
+    diaEl.scrollLeft = lastL.x(tc) - cx;
+  }
+  $("dgIn").onclick = () => zoom(1.25);
+  $("dgOut").onclick = () => zoom(0.8);
+  $("dgSplit").onclick = () => { dv.split = !dv.split; saveDv(); $("dgSplit").classList.toggle("on", dv.split); drawDia(); };
+  $("dgSplit").classList.toggle("on", dv.split);
+  $("dgDraw").onclick = () => (drawing ? stopDrawing("") : startDrawing());
+  $("dgGo").onclick = () => { scrolledFor = null; drawDia(); };
 
   async function loadPlan() {
     if (plan) return;
     try {
       const j = await api("GET", "/plan");
-      singles = new Set(j.singles.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`));
-      plan = j.trains.map((t) => ({ name: t.train, type: t.type, sh: shape(t.stops) }));
+      singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, sh: shape(t.stops) }));
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
   }

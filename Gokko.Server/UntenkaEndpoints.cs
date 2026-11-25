@@ -82,6 +82,7 @@ public static class UntenkaEndpoints
             {
                 train = t.Number,
                 type = t.Type,
+                turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
                 stops = t.Stops.Where(s => s.StationId != null && rail.Line.ZoneOfStation(s.StationId) >= 0 && (s.Arr != null || s.Dep != null))
                     .Select(s => new { y = rail.Line.ZoneOfStation(s.StationId!), stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
             }).Where(t => t.stops.Count >= 2).ToList()
