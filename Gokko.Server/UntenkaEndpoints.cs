@@ -30,7 +30,6 @@ public static class UntenkaEndpoints
         g.MapGet("/base", (HttpContext ctx, CrewRoster crew, RailData rail, TempTrains temp) =>
         {
             var id = Me(ctx, crew);
-            var line = rail.Line;
             var downInc = temp.DownIncreasing();
             // 駅ごとの番線: 所定のダイヤで使っている番線と、向き・停車/通過ごとにいちばん多い番線
             var uses = new List<(string St, string Key, int Track)>();
@@ -42,15 +41,39 @@ public static class UntenkaEndpoints
                         uses.Add((s.StationId, (info.Dir == Dir.Down ? "下" : "上") + (s.Stop == "通" ? "通" : "停"), tr));
             }
             var byStation = uses.ToLookup(u => u.St);
-            var stations = line.StationIds.Where(s => line.ZoneOfStation(s) >= 0).Select(s => new
+            // 駅ごとの所定停車の種別: その駅を通るその種別の列車のうち、半分以上が止まる種別（種別を選んだときに停車のチェックを入れる）
+            var stopTypes = rail.BaseDia.Values
+                .SelectMany(d => d.Stops.Skip(1).Take(d.Stops.Count - 2) // 始発・終点は数えない（検車区で終わる列車などで、ふだん止まらない駅が「停車」にならないように）
+                    .Where(s => s.StationId != null).Select(s => (St: s.StationId!, d.Type, Stop: s.Stop == "停")))
+                .GroupBy(x => (x.St, x.Type))
+                .Where(g => g.Count(x => x.Stop) * 2 >= g.Count())
+                .ToLookup(g => g.Key.St, g => g.Key.Type);
+            // 駅は、路線の外（大路〜三郷の手前など、時刻表に載っている駅）も含めた並び
+            var stations = temp.Stations.Select(st => new
             {
-                id = s,
-                name = line.StationName(s),
-                zone = line.ZoneOfStation(s),
-                control = rail.Stations.TryGetValue(s, out var def) && def.RouteControl,
-                tracks = byStation[s].Select(u => u.Track).Concat(def?.TrackCircuit.Keys ?? Enumerable.Empty<int>()).Distinct().Order().ToList(),
-                def = byStation[s].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key)
-            }).OrderBy(s => s.zone).ToList();
+                id = st.Id,
+                name = st.Name,
+                zone = st.Zone,
+                control = st.Control,
+                tracks = byStation[st.Id].Select(u => u.Track)
+                    .Concat(rail.Stations.TryGetValue(st.Id, out var def) ? def.TrackCircuit.Keys : Enumerable.Empty<int>()).Distinct().Order().ToList(),
+                def = byStation[st.Id].GroupBy(u => u.Key).ToDictionary(x => x.Key, x => x.GroupBy(u => u.Track).OrderByDescending(y => y.Count()).First().Key),
+                stopTypes = stopTypes[st.Id].ToList(),
+                // 向きごとに入れる番線（進路のデータから。運転整理用のダイヤグラムの番線の選び方と同じ材料）。
+                // arr: 場内で入れる番線、dep: 出発できる番線、turn: 行き止まり（打ち切りに使える）、through: 番線を使わずに通過できるか
+                rules = rail.Stations.TryGetValue(st.Id, out var sd) && sd.RouteControl
+                    ? new[] { Dir.Down, Dir.Up }.ToDictionary(d => d == Dir.Down ? "下り" : "上り", d => new
+                    {
+                        arr = sd.Routes[d].Arrive.Keys.Order().ToList(),
+                        dep = sd.Routes[d].Depart.Keys.Order().ToList(),
+                        turn = sd.Routes[d].Turnback.Order().ToList(),
+                        through = sd.Routes[d].Through.Count > 0,
+                        // 終点で入換するとき: 着いた番線（from）から入れる線（label）。その線から出る向きの入換で入れる番線は shunts
+                        shuntOuts = sd.Routes[d].ShuntOuts.Select(o => new { from = o.From, label = o.Label }).Distinct().ToList(),
+                        shunts = sd.Routes[d].Shunts.Select(s => new { from = s.FromLabel, to = s.To }).Distinct().ToList()
+                    })
+                    : null
+            }).ToList();
             var types = TempTrains.Types.Select(t => new
             {
                 type = t.Type,
@@ -60,7 +83,7 @@ public static class UntenkaEndpoints
             });
             var runTimes = rail.RunTimes.Select(r => new
             {
-                type = r.Type, dir = r.Dir == Dir.Down ? "下り" : "上り", from = line.StationIdByName(r.From), to = line.StationIdByName(r.To),
+                type = r.Type, dir = r.Dir == Dir.Down ? "下り" : "上り", from = temp.StationIdByName(r.From), to = temp.StationIdByName(r.To),
                 fromStop = r.FromStops, toStop = r.ToStops, seconds = r.Seconds
             }).Where(r => r.from != null && r.to != null);
             return Results.Ok(new
@@ -71,6 +94,24 @@ public static class UntenkaEndpoints
                 unyoUsed = rail.BaseDia.Values.Select(d => d.Unyo).Where(u => u != null).Distinct().Order()
             });
         });
+
+        // ダイヤグラムに薄く引く、所定の時刻表の線（所定のダイヤは変わらないので、最初に1回だけ作って使い回す）。
+        // y はゾーン、時刻は "HH:mm:ss"。singles は単線区間（ゾーンの組）
+        object? planCache = null;
+        g.MapGet("/plan", (RailData rail, TempTrains temp) => Results.Ok(planCache ??= new
+        {
+            singles = rail.SingleTrackSections.Select(p => new[] { rail.Line.ZoneOfStation(p.Item1), rail.Line.ZoneOfStation(p.Item2) }).Where(z => z[0] >= 0 && z[1] >= 0).ToList(),
+            trains = rail.BaseDia.Values.Select(t => new
+            {
+                train = t.Number,
+                type = t.Type,
+                trial = RailData.IsTrial(t), // 試運転（画面では「試運転を表示」のときだけ出す）
+                turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
+                // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
+                stops = t.Stops.Where(s => temp.ZoneOf(s.StationId) != null && (s.Arr != null || s.Dep != null))
+                    .Select(s => new { y = temp.ZoneOf(s.StationId)!.Value, stop = s.Stop, arr = s.Arr, dep = s.Dep, track = s.Track }).ToList()
+            }).Where(t => t.stops.Count >= 2).ToList()
+        }));
 
         g.MapGet("/groups", (TempTrains temp) => Results.Ok(new { groups = temp.Groups().OrderBy(x => x.Id.Length).ThenBy(x => x.Id) }));
 
@@ -127,6 +168,7 @@ public static class UntenkaEndpoints
     private static TempTrains.TrainSpec Copy(TempTrains.TrainSpec t) => new()
     {
         Unyo = t.Unyo, Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
+        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "",
         Stops = (t.Stops ?? new()).Take(80).Select(s => new TempTrains.StopSpec { St = s.St ?? "", Stop = s.Stop ?? "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
     };
 }
