@@ -71,6 +71,10 @@
       <button id="clockPause">停止</button>
       <button id="clockResume">再開</button>
     </div>
+    <div class="row">
+      <input id="clockHour" placeholder="時" size="3" inputmode="numeric" title="0〜23">
+      <button id="clockHourSet">時だけ設定（分・秒は今の日本時間）</button>
+    </div>
     <div class="muted">設定した時刻から実時間と同じ速さで進みます。ダイヤ運転のときに、時刻の基準として使います。</div>
     <div id="mode" style="margin-top:10px"></div>
   </section>
@@ -386,6 +390,13 @@
   $("clockSet").onclick = () => {
     if (!confirm("ロープレ時刻を設定すると、手で入れたダイヤの指示（列車ごとの指示・出発順序・走行順・後運用の差し替え）を取り消します。よろしいですか？")) return;
     act("POST", "/clock", { time: $("clockInput").value, running: true });
+  };
+  // 時だけの簡易設定: 分・秒は今の日本時間のまま、時だけをずらす（進む速さは1倍に戻す）
+  $("clockHourSet").onclick = () => {
+    const v = $("clockHour").value.trim();
+    if (!/^\d{1,2}$/.test(v) || +v > 23) { $("error").textContent = "時は 0〜23 で入力してください"; return; }
+    if (!confirm(`ロープレ時刻を ${+v}時（分・秒は今の日本時間）に設定します。手で入れたダイヤの指示（列車ごとの指示・出発順序・走行順・後運用の差し替え）を取り消します。よろしいですか？`)) return;
+    act("POST", "/clock", { hour: +v });
   };
   $("clockPause").onclick = () => act("POST", "/clock", { running: false });
   $("clockResume").onclick = () => act("POST", "/clock", { running: true });
