@@ -61,7 +61,8 @@ public static class AdminEndpoints
     public sealed record ConnectionCutRequest(string? Key, bool Cut);
     public sealed record AiTrainRequest(string? Train, int? Cars, string? Station, string? Id);
     public sealed record AiTrainModeRequest(bool On);
-    public sealed record AiTrialRequest(List<int>? Unyos);
+    /// <summary>Unyos は運行番号（"24"・"24S"。前の形の数字も受ける）。</summary>
+    public sealed record AiTrialRequest(List<System.Text.Json.JsonElement>? Unyos);
 
     /// <summary>駅の出発順序（Direction は使わない。上下まとめて1つの順序）。</summary>
     public sealed record OrderRequest(string Station, string? Direction, List<string>? Trains);
@@ -811,7 +812,7 @@ public static class AdminEndpoints
         // 試運転（所定の臨時列車）を走らせる運行番号。空なら1本も出さない
         g.MapPost("/ai-trains/trial", (AiTrialRequest req, AiTrains ai, RailData rail) =>
         {
-            var message = ai.SetTrials(req.Unyos ?? new List<int>());
+            var message = ai.SetTrials((req.Unyos ?? new()).Select(u => u.ValueKind == System.Text.Json.JsonValueKind.String ? u.GetString() : u.GetRawText()).OfType<string>());
             return Results.Ok(new { ok = true, message, trialsOn = rail.TrialsOn });
         });
         g.MapPost("/ai-trains/add", (AiTrainRequest req, AiTrains ai) =>

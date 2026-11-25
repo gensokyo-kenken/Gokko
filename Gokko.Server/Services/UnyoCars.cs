@@ -5,7 +5,8 @@ namespace Gokko.Server.Services;
 /// <summary>
 /// 編成の両数の表。自動運転の列車を出すとき・連結・解放の両数に使う。
 ///
-/// ・Data/UnyoCars.csv: 運行番号ごとの両数。1行目の見出しから「運行番号」「両数」の列を探す。表にない運行は6両
+/// ・Data/UnyoCars.csv: 運行番号ごとの両数。1行目の見出しから「運行番号」「両数」の列を探す。表にない運行は6両。
+///   運行番号は "24"・"24S" のように書く（24 と 24S は別の運行）。全角・小文字・「24S運行」も読む
 /// ・Data/TrainCars.csv（なくてよい）: 列番ごとの両数。運行の両数より優先する。運転区間の外で連結・解放して
 ///   両数が変わる列車（東井で 2+2 の4両になる 840・841・940・1747 など）に使う。見出しは「列番」「両数」
 /// どちらもスプレッドシートから書き出した CSV をそのまま置けるように、ほかの列は読まない。
@@ -17,13 +18,13 @@ public sealed class UnyoCars
     public const string TrainFileName = "TrainCars.csv";
     public const int Default = 6;
 
-    private readonly Dictionary<int, int> _cars;
+    private readonly Dictionary<string, int> _cars;
     private readonly Dictionary<string, int> _byTrain;
 
     /// <summary>読んだときに見つかったおかしな所（管理画面と記録に出す）。</summary>
     public IReadOnlyList<string> Problems { get; }
 
-    private UnyoCars(Dictionary<int, int> cars, Dictionary<string, int> byTrain, List<string> problems)
+    private UnyoCars(Dictionary<string, int> cars, Dictionary<string, int> byTrain, List<string> problems)
     {
         _cars = cars;
         _byTrain = byTrain;
@@ -31,19 +32,21 @@ public sealed class UnyoCars
     }
 
     /// <summary>その列車の両数。列番の表にあればそれ、なければ運行の両数（表にない運行・運行番号がない列車は6両）。</summary>
-    public int Of(string number, int? unyo) =>
+    public int Of(string number, string? unyo) =>
         _byTrain.TryGetValue(number, out var t) ? t
-        : unyo is { } u && _cars.TryGetValue(u, out var c) ? c : Default;
+        : unyo != null && _cars.TryGetValue(unyo, out var c) ? c : Default;
 
-    public static UnyoCars Load(string dataDir)
+    /// <param name="known">時刻表にある運行番号（渡せば、時刻表にない運行番号の行を Problems に残す）。</param>
+    public static UnyoCars Load(string dataDir, IReadOnlyCollection<string>? known = null)
     {
         var problems = new List<string>();
-        var cars = new Dictionary<int, int>();
+        var cars = new Dictionary<string, int>();
         var unyoRows = ReadTable(Path.Combine(dataDir, FileName), FileName, ["運行番号", "運行"], true, problems);
         if (unyoRows == null) problems[^1] += "（どの運行も6両で出します）";
         foreach (var (row, key, n, error) in unyoRows ?? [])
         {
-            if (!int.TryParse(key, out var unyo)) { problems.Add($"{FileName} {row}行目: 運行番号「{key}」が数字ではありません（読みません）"); continue; }
+            if (Gokko.Common.Unyo.Normalize(key) is not { } unyo) { problems.Add($"{FileName} {row}行目: 運行番号「{key}」が運行番号の形（24・24S など）ではありません（読みません）"); continue; }
+            if (known != null && !known.Contains(unyo)) problems.Add($"運行{unyo}: 時刻表にない運行番号です（24 と 24S は別の運行です）");
             var v = n ?? Default;
             if (n == null) problems.Add($"運行{unyo}: {error}（6両にします）");
             if (cars.ContainsKey(unyo)) problems.Add($"運行{unyo}: 2回書いてあります（あとの行の {v}両を使います）");

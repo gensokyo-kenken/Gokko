@@ -132,7 +132,7 @@ public sealed class AiTrains : BackgroundService
         _adj = LoadAdjacency(Path.Combine(dataDir, "TrackCircuits.json"));
         _routesBySignal = rail.Routes.Values.Where(r => r.Signal.Length > 0).GroupBy(r => r.Signal).ToDictionary(g => g.Key, g => g.ToList());
         LoadDistances(Path.Combine(dataDir, "AiTrains.json"));
-        _unyoCars = UnyoCars.Load(dataDir);
+        _unyoCars = UnyoCars.Load(dataDir, rail.BaseDia.Values.Select(d => d.Unyo).OfType<string>().ToHashSet());
         foreach (var p in _unyoCars.Problems) { _logger?.LogWarning("両数の表: {Problem}", p); _log.Note($"両数の表: {p}"); }
         players.VirtualTrains = Snapshot;
         routes.PendingTrains = () => _pending;
@@ -170,7 +170,7 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>試運転の運行番号ごとの列車（列番・最初の駅と発車時刻・最後の駅と着時刻）。司令用管理画面などのプルダウンの項目。</summary>
-    public sealed record TrialView(int Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
+    public sealed record TrialView(string Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
 
     public List<TrialView> Trials()
     {
@@ -193,10 +193,10 @@ public sealed class AiTrains : BackgroundService
     /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
     /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
     /// </summary>
-    public string SetTrials(IEnumerable<int> unyos)
+    public string SetTrials(IEnumerable<string> unyos)
     {
         _rail.SetTrialsOn(unyos);
-        var on = _rail.TrialsOn.Order().ToList();
+        var on = _rail.TrialsOn.Order(Gokko.Common.Unyo.Comparer).ToList();
         List<string> removed = new();
         lock (_lock)
         {
@@ -1634,7 +1634,7 @@ public sealed class AiTrains : BackgroundService
 
         // ユーザーが運転している列車（継続乗務で残した在線も）の運行番号と、その列車の最初の時刻。
         // 同じ運行番号で、それより後に走る列車は出さない（ユーザーの列車が遅れていても、その後の列番はユーザーが続けて走る。回1750 が遅れているのに 1751 が出た）
-        var userUnyo = new Dictionary<int, TimeSpan>();
+        var userUnyo = new Dictionary<string, TimeSpan>();
         foreach (var p in snapshot.Where(p => !p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix) && p.TrainNumber.Length > 0))
         {
             if (_rail.DiaOf(p.TrainNumber) is not { Unyo: { } u } ud || ud.Stops.Select(s => Time(s.Arr ?? s.Dep)).FirstOrDefault(t => t != null) is not { } first) continue;

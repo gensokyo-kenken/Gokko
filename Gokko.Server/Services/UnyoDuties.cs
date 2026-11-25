@@ -85,7 +85,7 @@ public static class UnyoDuties
 
         // 行路番号: 運行番号の順に 道1, 道2, …（特急に乗る行路は 駒1, 駒2, …）
         var named = chains.Select(c => (Chain: c, Unyo: rail.Turns.UnyoOf(c[0].Dia), Express: c.Any(IsExpress)))
-            .OrderBy(x => x.Unyo ?? int.MaxValue).ThenBy(x => x.Chain[0].Dep).ToList();
+            .OrderBy(x => x.Unyo, Gokko.Common.Unyo.Comparer).ThenBy(x => x.Chain[0].Dep).ToList();
         int nDo = 0, nKoma = 0;
         var csv = new StringBuilder();
         var window = $"{Hm(from)}〜{Hm(to)}";

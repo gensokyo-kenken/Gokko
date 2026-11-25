@@ -63,7 +63,9 @@ public sealed class TempTrains
 
     public sealed class TrainSpec
     {
-        public int Unyo { get; set; }
+        /// <summary>運行番号（"24"・"24S"）。前の形の数字も読む。</summary>
+        [System.Text.Json.Serialization.JsonConverter(typeof(UnyoJsonConverter))]
+        public string Unyo { get; set; } = "";
         public string Number { get; set; } = "";
         public string Type { get; set; } = "";
         /// <summary>種別表記（出発信号機の列選に出す。C特1・急行 など）。空なら種別。</summary>
@@ -391,6 +393,7 @@ public sealed class TempTrains
         foreach (var t in trains)
         {
             t.Number = RailData.NormalizeTrain(t.Number);
+            t.Unyo = Gokko.Common.Unyo.Normalize(t.Unyo) ?? "";
             t.Type = (t.Type ?? "").Trim();
             t.Label = (t.Label ?? "").Trim();
             t.Dest = (t.Dest ?? "").Trim();
@@ -407,7 +410,7 @@ public sealed class TempTrains
                 s.Dep = NormTime(s.Dep) ?? (string.IsNullOrWhiteSpace(s.Dep) ? null : s.Dep);
             }
         }
-        return trains.OrderBy(t => t.Unyo).ThenBy(t => t.Stops.Select(s => DaySec(s.Dep ?? s.Arr)).FirstOrDefault(x => x != null) ?? 0).ToList();
+        return trains.OrderBy(t => t.Unyo, Gokko.Common.Unyo.Comparer).ThenBy(t => t.Stops.Select(s => DaySec(s.Dep ?? s.Arr)).FirstOrDefault(x => x != null) ?? 0).ToList();
     }
 
     /// <summary>種別に合う列番の形か（末尾の文字・回送の「回」）。</summary>
@@ -438,7 +441,7 @@ public sealed class TempTrains
             if (n.Length == 0) { errors.Add("列番が空の列車があります"); continue; }
             if (!seen.Add(n)) errors.Add($"{n}: 同じ列番が2本あります");
             if (_rail.BaseDia.ContainsKey(n)) errors.Add($"{n}: 所定の時刻表にある列番です");
-            if (t.Unyo <= 0) errors.Add($"{n}: 運行番号を入れてください");
+            if (t.Unyo.Length == 0) errors.Add($"{n}: 運行番号を入れてください（24・24S など）");
             if (!types.Contains(t.Type)) { errors.Add($"{n}: 種別を選んでください"); continue; }
             if (NumberTypeError(t) is { } te) errors.Add(te);
             if (t.Stops.Count < 2) { errors.Add($"{n}: 駅を2つ以上入れてください"); continue; }
@@ -578,7 +581,7 @@ public sealed class TempTrains
     private List<DiaTrain> Build(List<TrainSpec> trains)
     {
         var list = new List<DiaTrain>();
-        var byUnyo = trains.GroupBy(t => t.Unyo).ToList();
+        var byUnyo = trains.Where(t => t.Unyo.Length > 0).GroupBy(t => t.Unyo).ToList();
         foreach (var g in byUnyo)
         {
             var ordered = g.OrderBy(t => DaySec(t.Stops.FirstOrDefault()?.Dep) ?? 0).ToList();
