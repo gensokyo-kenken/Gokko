@@ -137,6 +137,52 @@ public sealed class AiTrains : BackgroundService
         _log.Note(on ? "にぎやかし: 自動運転列車アリにしました（ダイヤの列車を時刻に合わせて出します）" : "にぎやかし: 自動運転列車ナシにしました（走っていた列車は消しました）");
     }
 
+    /// <summary>試運転の運行番号ごとの列車（列番・最初の駅と発車時刻・最後の駅と着時刻）。司令用管理画面などのプルダウンの項目。</summary>
+    public sealed record TrialView(int Unyo, List<string> Trains, string From, string? Dep, string To, string? Arr);
+
+    public List<TrialView> Trials()
+    {
+        var list = new List<TrialView>();
+        foreach (var unyo in _rail.TrialUnyos())
+        {
+            var trains = _rail.Dia.Values.Where(d => RailData.IsTrial(d) && d.Unyo == unyo && d.Stops.Count > 0)
+                .OrderBy(d => DayTime(d.Stops[0].Dep ?? d.Stops[0].Arr) ?? TimeSpan.MaxValue).ToList();
+            if (trains.Count == 0) continue;
+            var (first, last) = (trains[0].Stops[0], trains[^1].Stops[^1]);
+            list.Add(new TrialView(unyo, trains.Select(d => d.Number).ToList(), first.Name, Hm(first.Dep ?? first.Arr), last.Name, Hm(last.Arr ?? last.Dep)));
+        }
+        return list;
+
+        static TimeSpan? DayTime(string? hms) => Time(hms) is { } t && t < TimeSpan.FromHours(4) ? t + TimeSpan.FromDays(1) : Time(hms);
+        static string? Hm(string? hms) => hms is { Length: >= 5 } ? hms[..5] : hms;
+    }
+
+    /// <summary>
+    /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
+    /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
+    /// </summary>
+    public string SetTrials(IEnumerable<int> unyos)
+    {
+        _rail.SetTrialsOn(unyos);
+        var on = _rail.TrialsOn.Order().ToList();
+        List<string> removed = new();
+        lock (_lock)
+        {
+            foreach (var t in _trains.Values.Where(t => RailData.IsTrial(t.Dia) && _rail.IsIdleTrial(t.Dia)).ToList())
+            {
+                _trains.Remove(t.Id);
+                removed.Add(t.Shown ?? t.Number);
+            }
+            // 選び直したら、時刻の範囲の中ならもう一度出せるように
+            _spawned.RemoveWhere(n => n.StartsWith("試"));
+        }
+
+        var message = on.Count == 0 ? "試運転: なし（1本も出しません）" : $"試運転: 運行 {string.Join("・", on)} を走らせます";
+        if (removed.Count > 0) message += $"（走っていた {string.Join("・", removed)} は消しました）";
+        _log.Note(message);
+        return message;
+    }
+
     public List<View> List()
     {
         lock (_lock)
@@ -152,6 +198,7 @@ public sealed class AiTrains : BackgroundService
         number = RailData.NormalizeTrain(number);
         if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
         if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
+        if (!auto && takesOver == null && _rail.IsIdleTrial(dia)) return (false, $"{number} は走らせない試運転です（試運転のプルダウンで運行 {dia.Unyo} を選んでください）");
         var dir = _routes.DirOfTrain(number);
         if (dir == null) return (false, $"{number}: 列車番号の形が違います");
         cars = Math.Clamp(cars <= 0 ? 6 : cars, 1, 10);
@@ -212,7 +259,7 @@ public sealed class AiTrains : BackgroundService
             foreach (var s in dia.Stops.Skip(from))
             {
                 if (s.StationId == null || !InArea(s.StationId)) continue;
-                train.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停" || s == start, s.Track, Time(s.Arr), Time(s.Dep)));
+                train.Plan.Add(s == start ? new PlanStop(s.Name, s.StationId, true, s.Track, Time(s.Arr), Time(s.Dep)) : PlanOf(dia, s));
             }
 
             // 最初の道筋: 出す番線の軌道回路。停止位置は、番線ごとの表（出発信号機の手前）から
@@ -462,6 +509,7 @@ public sealed class AiTrains : BackgroundService
     {
         if (!_clock.IsRunning) dt = 0; // ロープレ時刻が止まっている間は止まる
         Extend(t);
+        if (!t.Shunting) RefreshEventStops(t);
         var nowGame = _clock.Now;
 
         // 次に止まる駅
@@ -734,7 +782,7 @@ public sealed class AiTrains : BackgroundService
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
             var isFirst = t.Plan.Count == 0;
-            t.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停" || isFirst, s.Track, isFirst ? null : Time(s.Arr), Time(s.Dep) ?? (isFirst ? Time(turn.Time) : null)));
+            t.Plan.Add(isFirst ? new PlanStop(s.Name, s.StationId, true, s.Track, null, Time(s.Dep) ?? Time(turn.Time)) : PlanOf(nd, s));
         }
 
         // 今いる軌道回路（引上線）から、反対向きに道筋を作り直す
@@ -827,7 +875,7 @@ public sealed class AiTrains : BackgroundService
         foreach (var s in nd.Stops.Skip(i + 1))
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
-            t.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
+            t.Plan.Add(PlanOf(nd, s));
         }
 
         var before = (FindStop(first.Name, dir, track) ?? FindStop(st.Name, dir, track))?.Before ?? 20;
@@ -874,7 +922,7 @@ public sealed class AiTrains : BackgroundService
         foreach (var s in nd.Stops.Skip(i + 1))
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
-            t.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
+            t.Plan.Add(PlanOf(nd, s));
         }
 
         t.Dia = nd;
@@ -1469,7 +1517,7 @@ public sealed class AiTrains : BackgroundService
                 if (s.StationId == null || !InArea(s.StationId)) continue;
                 var zone = _rail.Line.ZoneOfStation(s.StationId);
                 if (front >= 0 && (zone - front) * step < 0) continue;
-                train.Plan.Add(new PlanStop(s.Name, s.StationId, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep)));
+                train.Plan.Add(PlanOf(dia, s));
             }
 
             train.Info = new PlayerInfo
@@ -1548,6 +1596,7 @@ public sealed class AiTrains : BackgroundService
             {
                 var number = RailData.NormalizeTrain(dia.Number);
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
                 if (stops.Count < 2) continue;
                 // 時刻がまだ過ぎていない最初の駅（30秒の遅れまで）。終着と、番線を使わずに通過する駅には出さない
@@ -1721,6 +1770,44 @@ public sealed class AiTrains : BackgroundService
     private static TimeSpan? Time(string? hms) =>
         hms != null && TimeSpan.TryParseExact(hms, [@"hh\:mm\:ss", @"h\:mm\:ss", @"hh\:mm", @"h\:mm"], CultureInfo.InvariantCulture, out var t) ? t : null;
 
+    /// <summary>
+    /// 時刻表の1駅 → 停車・通過の一覧の1駅。催物用臨停設定で臨時停車になる駅（時刻表では通過）は止まる
+    /// （着＝通過時刻 − 停車時間、発＝通過時刻。EventStops.Times）。
+    /// </summary>
+    private PlanStop PlanOf(DiaTrain dia, DiaStop s) =>
+        _routes.EventStops.Times(dia, dia.Stops.IndexOf(s)) is { } ev
+            ? new PlanStop(s.Name, s.StationId!, true, s.Track, Time(ev.Arr), Time(ev.Dep), dia, s)
+            : new PlanStop(s.Name, s.StationId!, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep), dia, s);
+
+    /// <summary>
+    /// 催物用臨停設定が変わったら、これから通る駅の停車・通過を作り直す（止まっている駅は変えない）。
+    /// 新しく止まる駅が、今の速さではもう止まりきれない所なら、通過のままにする。
+    /// </summary>
+    private void RefreshEventStops(Train t)
+    {
+        var version = _routes.EventStops.Version;
+        if (t.EventVersion == version) return;
+        t.EventVersion = version;
+        var changed = false;
+        for (var i = t.Dwelling ? t.DwellIndex + 1 : t.PlanIndex; i < t.Plan.Count; i++)
+        {
+            var p = t.Plan[i];
+            if (p.Dia is not { } dia || p.Src is not { Stop: "通" } src) continue;
+            var np = PlanOf(dia, src);
+            if (np.Stops == p.Stops) continue;
+            if (np.Stops)
+            {
+                var braking = t.Speed * t.Speed / (2 * Decel) + 10;
+                if ((StopX(t, np) is { } x ? x - t.Head : EstimateDistance(t, np)) is { } dist && dist < braking) continue;
+            }
+            t.Plan[i] = np;
+            changed = true;
+            _log.Note($"にぎやかし: {t.Number} {p.Name} を{(np.Stops ? "臨時停車" : "通過")}にしました（催物用臨停設定）");
+        }
+        if (changed && t.Info != null)
+            t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
+    }
+
     // =========================================================================================
     // 型
     // =========================================================================================
@@ -1729,7 +1816,8 @@ public sealed class AiTrains : BackgroundService
     private sealed record StopSpec(string Station, Dir Dir, int Track, string Signal, double Before, double? After, double? CoupleBefore = null, double? StopBBefore = null);
     private sealed record SegCircuit(string Name, double Start, double End);
     private sealed record Seg(string? Signal, RouteDef? Route, double Start, double End, List<SegCircuit> Circuits);
-    private sealed record PlanStop(string Name, string StationId, bool Stops, int? Track, TimeSpan? Arr, TimeSpan? Dep);
+    /// <summary>停車・通過の一覧の1駅。Dia・Src は、時刻表のどの駅から作ったか（催物用臨停設定が変わったら作り直す。出す駅・折り返しの最初の駅は null）。</summary>
+    private sealed record PlanStop(string Name, string StationId, bool Stops, int? Track, TimeSpan? Arr, TimeSpan? Dep, DiaTrain? Dia = null, DiaStop? Src = null);
 
     private sealed class Train
     {
@@ -1777,5 +1865,6 @@ public sealed class AiTrains : BackgroundService
         public bool ShuntMoved { get; set; }      // 引上線から番線へ、道筋が延びた
         public bool FromShunt { get; set; }       // 引上線から折り返した（ホームへの入換を待つ。発車時刻まで止まらずに番線へ入る）
         public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
+        public long EventVersion { get; set; } = -1; // 停車・通過の一覧に入れた催物用臨停設定の版（EventStops.Version）
     }
 }

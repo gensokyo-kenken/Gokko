@@ -703,8 +703,10 @@
         y = bottom + c.stationPx;
       }
       const height = y - c.stationPx + BOTTOM;
-      // 駅と駅の間（駅の線・番線の段にかからない所）。上の駅のいちばん下の段から、下の駅の線まで
-      const ordered = stations.map((s) => band[s.y]);
+      // 駅と駅の間（駅の線・番線の段にかからない所）。上の駅のいちばん下の段から、下の駅の線まで。
+      // 通常表示は駅の間隔が狭いので、進路を扱わない駅（細い線）はまたいでよいことにし、扱う駅と扱う駅の間で数える
+      const ordered = stations.map((s) => band[s.y])
+        .filter((b, i, all) => view.split || b.s.control || i === 0 || i === all.length - 1);
       const pad = (b) => (Object.keys(b.rows).length ? c.trackPx / 2 : 0); // 番線の段のある駅は、段を囲む帯の外から
       const gaps = ordered.slice(1).map((b, i) => [ordered[i].bottom + pad(ordered[i]), b.top - pad(b)]);
       const zones = stations.map((s) => s.y);
@@ -945,7 +947,7 @@
         marks.push(`<rect x="${x1}" y="${cy - h / 2}" width="${Math.max(4, x2 - x1)}" height="${h}" rx="3" fill="rgba(229,57,53,.25)" stroke="#e53935" stroke-width="1.5" pointer-events="none"/>`);
       }
 
-      const obstacles = [], labelQueue = []; // 列番を置くときに避けるもの（◆・番線の数字）と、置く列番
+      const obstacles = [], labelQueue = []; // 列番を置くときに避けるもの（◆・ほかの列番）と、置く列番
       d.trains.forEach((tr, ti) => {
         if (simple || !visible(tr)) return;
         const color = TYPE_COLORS[tr.type] || "var(--text)";
@@ -963,23 +965,19 @@
         tr.markers.forEach((m, mi) => {
           const x = L.x(m.t), y = L.y(m.y, m.track);
           const fill = m.held ? "#c62828" : !m.editable ? "#999" : m.departAt ? "#e0a800" : "#3aa0d8";
-          const trackText = m.track == null ? "通" : String(m.track);
-          const trackColor = m.trackSource === "集中" || m.trackSource === "駅扱い" ? "#e07000" : m.trackSource === "待避" ? "#b04fd0" : color;
           const dep = m.departAt ? `・発車時刻 ${hhmm(new Date(m.departAt).getTime(), true)}` : "";
           const tipText = `${tr.train} ${m.name}: ${m.track == null ? "通過" : m.track + "番線"}（${m.trackSource}）・${m.source} ${hhmm(new Date(m.t).getTime(), true)}${dep}（${m.status}）`
             + "　押すと別ウィンドウで番線・停車／通過・駅扱い・抑止・順序" + (m.draggable ? "　横にずらすと発車時刻（ダブルクリックで解除）" : "") + (view.split && m.changeable ? "　縦にずらすと番線" : "");
-          obstacles.push({ x1: x, y1: y, x2: x, y2: y, r: 7 });
-          if (!view.split) {
-            parts.push(`<text x="${x + 8}" y="${y + 4}" font-size="11" font-weight="700" fill="${trackColor}" pointer-events="none">${esc(trackText)}</text>`);
-            obstacles.push({ x1: x + 9, y1: y, x2: x + 15, y2: y, r: 6 });
-          }
-          if (readOnly) return; // 読むだけの図は◆を出さない（番線の数字だけ）
+          obstacles.push({ x1: x, y1: y, x2: x, y2: y, r: 3.5 }); // 小さい◆の大きさ（線から少し離した列番なら、◆の横を通れる）
+          if (readOnly) return; // 読むだけの図は◆を出さない
           // ◆の窓（別ウィンドウ）で選んでいる◆は、丸で囲む
           if (popupOpen() && popup.train === tr.train && popup.stationId === m.stationId)
-            parts.push(`<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2" pointer-events="none"/>`);
-          parts.push(`<path d="M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z" fill="${fill}" stroke="var(--panel, #fff)" stroke-width="1"
-            data-train="${esc(tr.train)}" data-station="${esc(m.stationId)}" data-ti="${ti}" data-mi="${mi}" data-drag="${m.draggable ? 1 : 0}"
-            data-x="${x}" data-y="${y}" data-tip="${esc(tipText)}" style="cursor:${view.split && m.changeable ? "move" : m.draggable ? "ew-resize" : "pointer"}"/>`);
+            parts.push(`<circle cx="${x}" cy="${y}" r="8" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2" pointer-events="none"/>`);
+          // ◆は小さく描き、押せる所（透明な◆）は前の大きさのまま。ずらすときは g ごと動かす
+          parts.push(`<g data-train="${esc(tr.train)}" data-station="${esc(m.stationId)}" data-ti="${ti}" data-mi="${mi}" data-drag="${m.draggable ? 1 : 0}"
+            data-x="${x}" data-y="${y}" data-tip="${esc(tipText)}" style="cursor:${view.split && m.changeable ? "move" : m.draggable ? "ew-resize" : "pointer"}">`
+            + `<path d="M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z" fill="transparent"/>`
+            + `<path d="M${x},${y - 4.5} L${x + 3.8},${y} L${x},${y + 4.5} L${x - 3.8},${y} Z" fill="${fill}" stroke="var(--panel, #fff)" stroke-width="0.8" pointer-events="none"/></g>`);
         });
       });
       for (const q of labelQueue) parts.push(placeLabel(q, L, obstacles));
@@ -1021,7 +1019,7 @@
     }
 
     // 列番の置き場所: 線に沿って斜めに、駅と駅の間（駅の線・番線の段にかからない所）。今の時刻に近い所から探し、
-    // ほかの列番・◆・番線の数字と重ならない所に置く。どこにも置けなければ、今いる所のそばに置く
+    // ほかの列番・◆と重ならない所に置く。どこにも置けなければ、今いる所のそばに置く
     const textW = (t) => [...t].reduce((w, ch) => w + (ch.charCodeAt(0) > 255 ? 11 : 6.8), 0);
     function segDist(a, b) {
       const d = (px, py, s) => {
@@ -1039,7 +1037,19 @@
       const text = (x, y, ang) => `<text transform="translate(${x.toFixed(1)},${y.toFixed(1)})${ang ? ` rotate(${ang.toFixed(1)})` : ""}" text-anchor="middle" dominant-baseline="central"`
         + ` font-size="11" font-weight="600" fill="${q.color}" paint-order="stroke" stroke="var(--panel, #fff)" stroke-width="3" pointer-events="none">${esc(q.train)}</text>`;
       const cands = [];
-      const P = q.pts;
+      // ほぼ一直線に続く所（駅を通過するだけの所など）は、つないで1本のまっすぐな所とみなす
+      // （通常表示は駅の間隔が狭く、駅と駅の間の1区切りだけでは列番が収まらないことが多いため）
+      const src = q.pts, P = src.length ? [src[0]] : [];
+      const off = (p, a, b) => {
+        const vx = b.x - a.x, vy = b.y - a.y, l = Math.hypot(vx, vy);
+        return l ? Math.abs((p.x - a.x) * vy - (p.y - a.y) * vx) / l : Math.hypot(p.x - a.x, p.y - a.y);
+      };
+      for (let e = 2, s = 0; e < src.length; e++) {
+        let straight = e - s <= 40; // 長く続く所は区切る（調べる手間を抑える）
+        for (let k = s + 1; straight && k < e; k++) if (off(src[k], src[s], src[e]) > 1.5) straight = false;
+        if (!straight) { P.push(src[e - 1]); s = e - 1; }
+      }
+      if (src.length > 1) P.push(src[src.length - 1]);
       for (let i = 1; i < P.length; i++) {
         const a = P[i - 1], b = P[i];
         if (Math.max(a.x, b.x) < L.left || Math.min(a.x, b.x) > L.w - RIGHT) continue;
@@ -1047,13 +1057,14 @@
         if (len < 2 * half + 4) continue; // 1本のまっすぐな所に収まるときだけ
         const ux = dx / len, uy = dy / len, nx = uy, ny = -ux; // 線の向きと、線の上側
         for (let k = half + 2; k <= len - half - 2; k += 8) {
-          const cx = a.x + ux * k + nx * 7, cy = a.y + uy * k + ny * 7;
+          const cx = a.x + ux * k + nx * 10, cy = a.y + uy * k + ny * 10; // 線から少し離す（線の上の◆にかからないように）
           const c = { cx, cy, x1: cx - ux * half, y1: cy - uy * half, x2: cx + ux * half, y2: cy + uy * half, ang: Math.atan2(dy, dx) * 180 / Math.PI };
           if (Math.min(c.x1, c.x2) < L.left + 2 || Math.max(c.x1, c.x2) > L.w - RIGHT - 2) continue;
           const top = Math.min(c.y1, c.y2) - r, bottom = Math.max(c.y1, c.y2) + r;
           const inGap = L.gaps.some(([g1, g2]) => top >= g1 + 1 && bottom <= g2 - 1);
-          if (!inGap) continue;
-          c.score = Math.abs(cx - nowX) + (cx < nowX ? 40 : 0); // 今より先（見込みの線）を少し優先
+          // 通常表示は駅の間隔が狭く、斜めの列番が駅の間に収まらないことが多いので、駅の線にかかる所にも置く（駅の間に収まる所を先に）
+          if (!inGap && view.split) continue;
+          c.score = Math.abs(cx - nowX) + (cx < nowX ? 40 : 0) + (inGap ? 0 : 150); // 今より先（見込みの線）を少し優先。駅の線にかかる所は、近くに駅の間がなければ
           cands.push(c);
         }
       }
@@ -1149,13 +1160,13 @@
             : `${d.label}: ${rowName(t.label)}には変えられません`;
         }
       } else if (tip) {
-        const m = ev.target.closest("path[data-train]");
+        const m = ev.target.closest("g[data-train]");
         tip.textContent = m ? m.dataset.tip : "";
       }
     });
     box.addEventListener("pointerdown", (ev) => {
       if (ev.button !== undefined && ev.button !== 0) return; // 左ボタンだけ
-      const m = ev.target.closest("path[data-train]");
+      const m = ev.target.closest("g[data-train]");
       if (!m) {
         // 終日表示: 図の何もない所をつかんで横に動かす
         if (dayOn() && ev.target.closest("svg[data-dg-main]")) {
@@ -1219,7 +1230,7 @@
       await act("POST", "/route/open-at", { train: d.train, station: d.station, time });
     });
     box.addEventListener("dblclick", (ev) => {
-      const m = ev.target.closest("path[data-train]");
+      const m = ev.target.closest("g[data-train]");
       if (!m || m.dataset.drag !== "1") return;
       act("POST", "/route/open-at", { train: m.dataset.train, station: m.dataset.station, time: null });
     });
@@ -1547,6 +1558,11 @@
         <label><input type="radio" name="${name}" value="off"> ナシ</label>
         <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
       </div>
+      <div class="row"><b>試運転</b>
+        <span data-ai="trialNone"></span>
+        <span class="muted">所定の臨時列車です。普段は「なし」（1本も出しません）。走らせる運行番号に印を付けると（いくつでも）、その試運転を、自動運転列車アリのときに時刻に合わせて出します。再起動すると「なし」に戻ります。</span>
+      </div>
+      <div data-ai="trial" style="margin:0 0 8px 1.5em"></div>
       <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は6両）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
       <div class="row">
         <input data-ai="train" placeholder="列番（例: 1651）" size="12">
@@ -1557,12 +1573,29 @@
       </div>
       <div data-ai="list"></div>`;
     const q = (k) => el.querySelector(`[data-ai="${k}"]`);
-    let last = "";
+    let last = "", lastTrials = "";
+
+    // 試運転: 運行番号ごとの印（いくつでも選べる。どれも付いていなければ「なし」）
+    let trialBusy = false;
+    function showTrials(trials, on) {
+      const box = q("trial");
+      const key = JSON.stringify(trials);
+      if (key !== lastTrials) {
+        box.innerHTML = trials.length === 0 ? `<div class="muted">時刻表に試運転はありません</div>` : trials.map((t) =>
+          `<div><label><input type="checkbox" data-trial="${t.unyo}"> <b>運行${t.unyo}</b> ${esc(t.trains.join("・"))}`
+          + ` <span class="muted">${esc(t.from)} ${esc(t.dep || "")}発〜${esc(t.to)} ${esc(t.arr || "")}着</span></label></div>`).join("");
+        lastTrials = key;
+      }
+      q("trialNone").textContent = on.length === 0 ? "なし" : `運行 ${[...on].sort((a, b) => a - b).join("・")}`;
+      if (trialBusy) return; // 送っている最中は書き換えない
+      for (const c of box.querySelectorAll("input[data-trial]")) c.checked = on.includes(Number(c.dataset.trial));
+    }
 
     async function refresh() {
       try {
         const d = await api("GET", "/ai-trains");
         for (const r of el.querySelectorAll(`input[name="${name}"]`)) r.checked = (r.value === "on") === !!d.enabled;
+        showTrials(d.trials || [], d.trialsOn || []);
         const list = d.trains || [];
         const html = list.length === 0 ? `<div class="muted">走っていません</div>`
           : `<table>${list.map((t) => `<tr><td><b>${esc(t.train)}</b>${t.auto ? ` <span class="muted">自動</span>` : ""}</td><td class="muted">${t.cars}両</td>`
@@ -1578,6 +1611,12 @@
       refresh();
     }
 
+    q("trial").addEventListener("change", async () => {
+      const unyos = [...q("trial").querySelectorAll("input[data-trial]:checked")].map((c) => Number(c.dataset.trial));
+      trialBusy = true;
+      try { await call("POST", "/ai-trains/trial", { unyos }); } finally { trialBusy = false; }
+      refresh();
+    });
     el.addEventListener("change", async (ev) => {
       if (ev.target.name !== name) return;
       const on = ev.target.value === "on";
