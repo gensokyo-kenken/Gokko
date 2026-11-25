@@ -3564,7 +3564,99 @@ public sealed partial class RouteEngine
                     unyo = r.Dia != null ? _data.Turns.UnyoOf(r.Dia) : null,
                     turn = DiaMode && r.Dia != null ? _data.Turns.View(r.Dia) : null
                 };
-            }).ToList();
+            }).Cast<object>().Concat(PendingDiagram(now, runs)).ToList();
+        }
+    }
+
+    /// <summary>出現前の列車（自動運転の列車として、これから始発駅に出すもの）。AiTrains が作る。</summary>
+    public Func<IReadOnlyList<AiTrains.PendingTrain>> PendingTrains { get; set; } = () => [];
+
+    /// <summary>
+    /// ダイヤグラムに出す、出現前の列車（ダイヤ運転中だけ）。線はダイヤの時刻（◆で決めた発車時刻・遅れの分だけずらす）、◆は始発駅だけ。
+    /// ◆の窓で、出る前から発車時刻・抑止・番線を入れておける（CentralControl は列番で覚えるので、出たあともそのまま効く）。
+    /// _lock の中で呼ぶ（PendingTrains はロックを取らずに読める）
+    /// </summary>
+    private IEnumerable<object> PendingDiagram(DateTime now, List<TrainRun> runs)
+    {
+        if (!DiaMode) yield break;
+        var nowSec = NowSec();
+        var speed = ClockSpeed;
+        DateTime UtcOf(double daySec) => now.AddSeconds((daySec - nowSec) / speed);
+        foreach (var p in PendingTrains())
+        {
+            if (runs.Any(r => r.Train == p.Number) || _data.DiaOf(p.Number) is not { } dia || TrainInfo(p.Number) is not { } info) continue;
+            if (!_data.Stations.TryGetValue(p.Station, out var st)) continue;
+            var from = dia.Stops.FindIndex(x => x.StationId == p.Station);
+            if (from < 0 || DaySec(dia.Stops[from].Dep ?? dia.Stops[from].Arr) is not { } diaDep) continue;
+            var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
+            var leave = Math.Max(due, nowSec); // 時刻を過ぎても出せていなければ、今から
+            var shift = leave - diaDep;
+
+            // 線: 始発駅の発車から、ダイヤの時刻をずらして
+            var forecast = new List<object>();
+            var tracks = new List<object>();
+            for (var i = from; i < dia.Stops.Count; i++)
+            {
+                var s = dia.Stops[i];
+                if (s.StationId == null || _data.Line.ZoneOfStation(s.StationId) is var z && z < 0) continue;
+                if (i == from) forecast.Add(new { t = UtcOf(leave), y = (double)z });
+                else
+                {
+                    if (DaySec(s.Arr) is { } arr) forecast.Add(new { t = UtcOf(arr + shift), y = (double)z });
+                    if (DaySec(s.Dep) is { } dep && dep != DaySec(s.Arr)) forecast.Add(new { t = UtcOf(dep + shift), y = (double)z });
+                }
+                var track = i == from ? p.Track : s.Track;
+                if (track != null) tracks.Add(new { y = z, track });
+            }
+            if (forecast.Count < 2) continue;
+
+            string? next = dia.Stops.Skip(from + 1).Select(x => x.StationId)
+                .FirstOrDefault(id => id != null && _data.Stations.TryGetValue(id, out var nd) && nd.RouteControl);
+            var options = st.Routes[info.Dir].Depart.Keys.Order().ToList();
+            var status = p.Held ? "出現前（抑止中なので出しません。外すと出します）"
+                : p.Late ? "出現前（時刻を過ぎましたが、番線があかないので出せていません）"
+                : $"出現前（{_clock.TextAt(UtcOf(leave).AddSeconds(-120 / speed))}ごろ出します）";
+            var hold = _central.Hold(p.Number, p.Station);
+            var marker = new
+            {
+                stationId = p.Station,
+                name = st.Name,
+                passingStation = _data.PassingStations.ContainsKey(p.Station),
+                y = (double)_data.Line.ZoneOfStation(p.Station),
+                t = (DateTime?)UtcOf(leave),
+                source = "出現前・発車",
+                openAt = (DateTime?)null,
+                openSource = "見込み",
+                editable = true,
+                draggable = true,
+                departAt = _central.OpenAt(p.Number, p.Station),
+                held = hold != HoldKind.None,
+                holdArrive = (hold & HoldKind.Arrive) != 0,
+                holdDepart = (hold & HoldKind.Depart) != 0,
+                stopOverride = (string?)null,
+                terminal = false,
+                stopType = dia.Stops[from].Stop == "停" ? "停車" : "通過",
+                manual = new List<object>(),
+                singleNext = next != null && _data.IsSingleTrack(p.Station, next) ? next : null,
+                status,
+                track = p.Track,
+                trackSource = p.TrackFixed ? "集中" : "ダイヤ",
+                options,
+                changeable = options.Count > 1
+            };
+            yield return new
+            {
+                train = p.Number,
+                type = info.Type,
+                direction = info.Dir.Label(),
+                pending = true,
+                history = new List<object>(),
+                forecast,
+                tracks,
+                markers = new[] { marker },
+                unyo = _data.Turns.UnyoOf(dia),
+                turn = _data.Turns.View(dia)
+            };
         }
     }
 
