@@ -166,6 +166,7 @@
         <div class="row">
           運行番号: <input id="tUnyo" type="text" size="4" inputmode="numeric">
           列番: <input id="tNumber" type="text" size="10">
+          両数: <input id="tCars" type="text" size="2" inputmode="numeric" placeholder="6" title="空なら運行番号ごとの既定（ふつう6両）">
           種別: <select id="tType"></select>
           種別表記: <select id="tLabel"></select>
           行先: <input id="tDest" type="text" size="8" placeholder="終点">
@@ -186,6 +187,7 @@
             <option value="発">そのまま折返</option>
             <option value="入換">入換して折返</option>
             <option value="種別変更">種別変更（そのまま続けて走る）</option>
+            <option value="連結">増結車（この駅で待って、後運用の列車に連結）</option>
           </select>
           <span id="tTurnNextBox">後運用: <select id="tTurnNext"></select></span>
           <span id="tTurnShuntBox">入換の線: <select id="tTurnVia"></select>
@@ -367,6 +369,7 @@
     if (!t) return;
     const ed = editable();
     $("tUnyo").value = t.unyo || "";
+    $("tCars").value = t.cars || "";
     $("tNumber").value = t.number;
     $("tType").innerHTML = base.types.map((x) => `<option ${x.type === t.type ? "selected" : ""}>${esc(x.type)}</option>`).join("");
     drawLabels(t);
@@ -374,7 +377,7 @@
     $("tFrom").innerHTML = stationOpts(t.stops[0]?.st);
     $("tTo").innerHTML = stationOpts(t.stops[t.stops.length - 1]?.st || base.stations[base.stations.length - 1].id);
     $("tDep").value = short(t.stops[0]?.dep);
-    for (const id of ["tUnyo", "tNumber", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill", "tTurnHow", "tTurnNext", "tTurnVia", "tTurnTime"]) $(id).disabled = !ed;
+    for (const id of ["tUnyo", "tNumber", "tCars", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill", "tTurnHow", "tTurnNext", "tTurnVia", "tTurnTime"]) $(id).disabled = !ed;
     drawHint(t);
     drawTurn(t);
     drawStops(t);
@@ -383,9 +386,15 @@
   // ---- 終点のあと（後運用・入換） ----
   // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）。
   // 種別変更なら同じ向き、折返（そのまま・入換）なら逆の向きの列車
+  // 増結車（連結）なら、その駅（終点）に停車する列車（着く順）
   function turnCandidates(t) {
     const end = t.stops[t.stops.length - 1];
     if (!end) return [];
+    if (t.turnHow === "連結") {
+      const at = (x) => x.stops.find((s) => s.st === end.st);
+      return cur.trains.filter((x) => x !== t && at(x) && at(x).stop === "停" && x.stops[x.stops.length - 1] !== at(x))
+        .sort((a, b) => (sec(at(a).arr || at(a).dep) ?? 0) - (sec(at(b).arr || at(b).dep) ?? 0));
+    }
     const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
     return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr)
         && (!d || !dirOf(x) || (dirOf(x) === d) === same))
@@ -423,21 +432,32 @@
     const nexts = [...cands.map((x) => x.number || ""), ...(t.turnNext && !cands.some((x) => x.number === t.turnNext) ? [t.turnNext] : [])];
     $("tTurnNext").innerHTML = `<option value="">（選ぶ）</option>` + nexts.filter((n) => n).map((n) => {
       const x = cands.find((y) => y.number === n);
-      return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${x ? ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行` : "（終点から出ない列車）"}</option>`;
+      const endSt = t.stops[t.stops.length - 1]?.st, xs = x && x.stops.find((s) => s.st === endSt);
+      const info = !x ? (how === "連結" ? "（この駅に止まらない列車）" : "（終点から出ない列車）")
+        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
+      return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${info}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
     $("tTurnVia").innerHTML = `<option value="">${outs.length ? `既定（${esc(viaName(outs[0]))}）` : "入換できる線がありません"}</option>`
       + outs.map((o) => `<option value="${esc(o)}" ${o === t.turnVia ? "selected" : ""}>${esc(viaName(o))}</option>`).join("");
     $("tTurnTime").value = short(t.turnTime);
-    $("tTurnNextBox").hidden = !(how === "発" || how === "入換" || how === "種別変更");
+    $("tTurnNextBox").hidden = !(how === "発" || how === "入換" || how === "種別変更" || how === "連結");
     $("tTurnShuntBox").hidden = how !== "入換";
   }
   for (const [id, key] of [["tTurnHow", "turnHow"], ["tTurnNext", "turnNext"], ["tTurnVia", "turnVia"], ["tTurnTime", "turnTime"]]) {
     $(id).onchange = () => {
       const t = cur.trains[curTrain];
       t[key] = $(id).value.trim() || (key === "turnTime" ? null : "");
-      if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換" || t.turnHow === "種別変更") && !turnCandidates(t).some((x) => x.number === t.turnNext)) t.turnNext = turnCandidates(t)[0]?.number || "";
+      if (key === "turnHow" && (t.turnHow === "発" || t.turnHow === "入換" || t.turnHow === "種別変更" || t.turnHow === "連結") && !turnCandidates(t).some((x) => x.number === t.turnNext)) t.turnNext = turnCandidates(t)[0]?.number || "";
       sameTrack(t);
+      // 増結車: 列番は「連＋連結する列車の列番」、種別は回送、待つ番線は連結する列車が着く番線に合わせる
+      if (t.turnHow === "連結" && t.turnNext) {
+        if (!t.number || t.number.startsWith("連")) t.number = "連" + t.turnNext;
+        t.type = "回送";
+        const end = t.stops[t.stops.length - 1], p = cur.trains.find((x) => x.number === t.turnNext), ps = p && end && p.stops.find((s) => s.st === end.st);
+        if (ps && ps.track != null) end.track = ps.track;
+        drawTrain();
+      }
       dirty = true;
       drawTurn(t);
       drawTrains();
@@ -453,7 +473,7 @@
   function drawHint(t) {
     const type = base.types.find((x) => x.type === t.type);
     const d = dirOf(t);
-    const hint = t.type === "回送" ? "列番は「回」で始める" : type && type.suffix ? `列番の末尾は ${type.suffix}` : "列番の末尾に種別の文字を付けない";
+    const hint = t.turnHow === "連結" ? "増結車の列番は「連＋連結する列車の列番」" : t.type === "回送" ? "列番は「回」で始める" : type && type.suffix ? `列番の末尾は ${type.suffix}` : "列番の末尾に種別の文字を付けない";
     $("tHint").textContent = `${hint}・数字の最後は${d === "上り" ? "偶数（上り）" : d === "下り" ? "奇数（下り）" : "奇数＝下り／偶数＝上り"}`;
     $("tDir").textContent = d ? `${d}` : "";
   }
@@ -548,6 +568,7 @@
       drawTrains();
     };
   };
+  field("tCars", "cars", (v) => Math.min(10, parseInt(v.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), 10) || 0));
   field("tUnyo", "unyo", (v) => parseInt(v.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), 10) || 0);
   field("tNumber", "number", (v) => v.trim());
   field("tType", "type");
@@ -562,7 +583,15 @@
   $("lay").onclick = () => {
     const t = cur.trains[curTrain];
     const a = stById[$("tFrom").value], b = stById[$("tTo").value];
-    if (!a || !b || a.id === b.id) { alert("発駅と終点を別の駅にしてください"); return; }
+    // 増結車は、待つ駅の1駅だけ（発駅と終点に同じ駅を選ぶ）
+    if (a && b && a.id === b.id && t.turnHow === "連結") {
+      const o = t.stops.find((s) => s.st === a.id);
+      t.stops = [{ st: a.id, stop: "停", arr: null, dep: (o && o.dep) || $("tDep").value.trim() || null, track: (o && o.track) ?? defTrack(a.id, "下り", "停") }];
+      dirty = true;
+      drawTrain(); drawTrains();
+      return;
+    }
+    if (!a || !b || a.id === b.id) { alert("発駅と終点を別の駅にしてください（増結車は、終点のあとを「増結車」にしてから同じ駅を選びます）"); return; }
     const inc = b.zone > a.zone;
     const list = base.stations.filter((s) => inc ? s.zone >= a.zone && s.zone <= b.zone : s.zone <= a.zone && s.zone >= b.zone);
     if (!inc) list.reverse();
@@ -788,12 +817,13 @@
     const mine = cur.trains.map((t, i) => ({
       i, t, name: t.number || "（列番なし）", type: t.type, unyo: t.unyo,
       sh: shape(t.stops.filter((s) => zoneOf(s.st) != null).map((s) => ({ y: zoneOf(s.st), stop: s.stop, arr: s.arr, dep: s.dep, track: s.track })))
-    })).filter((m) => m.sh.pts.length >= 2);
+    })).filter((m) => m.sh.pts.length >= 2 || (m.t.turnHow === "連結" && m.sh.pts.length >= 1)); // 増結車は待つ駅の1点だけでもよい
     const shownPlan = plan.filter((p) => dv.trial || !p.trial); // 試運転は「試運転を表示」のときだけ
     // 関係する列車（このグループのほかの列車も相手にする）
     const rel = new Set(); const lines = [];
     for (const m of mine) {
-      for (const r of relations(m, [...shownPlan, ...mine.filter((x) => x !== m)])) {
+      if (m.sh.pts.length < 2) continue;
+      for (const r of relations(m, [...shownPlan, ...mine.filter((x) => x !== m && x.sh.pts.length >= 2)])) {
         rel.add(r.o.name);
         for (const w of r.why) lines.push({ me: m.name, o: r.o, w });
       }
@@ -860,10 +890,18 @@
       }
       mineP.push(link(L, a, b, DC[m.type] || "#e6e8eb", 1.4, shunt));
     }
+    // 増結車: 待つ番線で、連結する列車が着くまで点線で待つ（そこで連結）
+    for (const m of mine) {
+      if (m.t.turnHow !== "連結") continue;
+      const p = mine.find((x) => x !== m && x.t.number && x.t.number === m.t.turnNext), a = m.sh.pts[m.sh.pts.length - 1];
+      const pt = p && timeAt(p.sh, a.z, true);
+      if (pt == null || pt < a.t) continue;
+      mineP.push(`<polyline points="${L.x(a.t)},${L.y(a.z, a.track)} ${L.x(pt)},${L.y(a.z, a.track)}" fill="none" stroke="${DC[m.type] || "#a0a0a0"}" stroke-width="1.6" stroke-dasharray="2 3"/>`);
+    }
     const ed = editable();
     for (const m of mine) {
       const color = DC[m.type] || "#e6e8eb", sel = m.i === curTrain;
-      mineP.push(`<polyline points="${ptsStr(L, m.sh.pts)}" fill="none" stroke="${color}" stroke-width="${sel ? 2.4 : 1.6}"/>`);
+      if (m.sh.pts.length >= 2) mineP.push(`<polyline points="${ptsStr(L, m.sh.pts)}" fill="none" stroke="${color}" stroke-width="${sel ? 2.4 : 1.6}"/>`);
       const a = m.sh.pts[0];
       mineP.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 5}" font-size="11" font-weight="600" fill="${color}" paint-order="stroke" stroke="#2b2f36" stroke-width="3">${esc(m.name)}</text>`);
     }
@@ -874,7 +912,7 @@
       m.t.stops.forEach((s, si) => {
         const z = zoneOf(s.st), first = si === 0, last = si === m.t.stops.length - 1;
         if (z == null) return;
-        const marks = last ? [{ k: "a", tm: sec(s.arr || s.dep), shape: "full" }]
+        const marks = last && !first ? [{ k: "a", tm: sec(s.arr || s.dep), shape: "full" }]
           : s.stop === "停" && !first ? [{ k: "a", tm: sec(s.arr || s.dep), shape: "left" }, { k: "d", tm: sec(s.dep), shape: "right" }]
           : [{ k: "d", tm: sec(s.dep || s.arr), shape: "full" }];
         const y = L.y(z, s.track), stopFill = s.stop === "停";
