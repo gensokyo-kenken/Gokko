@@ -17,7 +17,8 @@ public static class AdminEndpoints
 
     public sealed record RandomRequest(bool? Enabled, int? RollIntervalSeconds, double? Probability, int? AutoReleaseSeconds, int? MaxConcurrent);
 
-    public sealed record ClockRequest(string? Time, bool? Running, bool? Clear, double? Speed);
+    /// <summary>Hour: 時だけの簡易設定（0〜23）。分・秒は今の日本時間のまま、時だけをずらした時刻にする。</summary>
+    public sealed record ClockRequest(string? Time, bool? Running, bool? Clear, double? Speed, int? Hour = null);
 
     /// <param name="Kind">抑止の種類（"arrive" 場内・"depart" 出発。省くと両方）。</param>
     public sealed record TrainStationRequest(string Train, string Station, int? Track, bool? Hold, string? Kind);
@@ -769,6 +770,22 @@ public static class AdminEndpoints
             {
                 clock.SetSpeed(sp);
                 incidents.Note($"ロープレ時刻: 進む速さ {clock.Speed}倍");
+            }
+
+            // 時だけの簡易設定: 分・秒は今の日本時間のまま（日本時間との差がちょうど何時間かになる）。
+            // 日本時間とずれないように、進む速さは実時間と同じ（1倍）に戻す。時刻は1日の中で回るので、日付をまたぐ差でもそのまま
+            if (req.Hour is { } hour)
+            {
+                if (hour is < 0 or > 23)
+                    return Results.BadRequest(new { ok = false, message = "時は 0〜23 で入力してください" });
+                var jst = DateTime.UtcNow.AddHours(9).TimeOfDay; // 日本時間（夏時間なし）
+                var t = TimeSpan.FromHours(hour) + (jst - TimeSpan.FromHours(jst.Hours));
+                if (clock.Speed != 1) clock.SetSpeed(1);
+                clock.Set(t, true);
+                var diff = hour - jst.Hours;
+                incidents.Note($"ロープレ時刻: 時だけ {hour}時 に設定（{t:hh\\:mm\\:ss}、日本時間{(diff >= 0 ? "+" : "")}{diff}時間）");
+                ResetDia();
+                return Results.Ok(new { ok = true, gameTime = clock.NowText, running = clock.IsRunning, speed = clock.Speed });
             }
 
             if (!string.IsNullOrWhiteSpace(req.Time))
