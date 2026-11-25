@@ -436,6 +436,9 @@ public sealed partial class RouteEngine
 
     private sealed class StationRun
     {
+        /// <summary>手前の駅での打ち切りで扱わなくなったことを、進路の記録に書いた。</summary>
+        public bool CutOffLogged { get; set; }
+
         /// <summary>出発停止の番線に入る（場内進路が解除されるまで出発を開通させない。停車種別は「停車」で送る）。</summary>
         public bool DepartStop { get; set; }
 
@@ -766,7 +769,7 @@ public sealed partial class RouteEngine
                 var owner = g.ConnectionId[PlayerRegistry.GhostPrefix.Length..g.ConnectionId.LastIndexOf('/')];
                 if (!_runs.ContainsKey(g.ConnectionId) && snapshot.All(p => p.ConnectionId != owner) && _runs.TryGetValue(owner, out var r0)
                     && r0.Player.TrainNumber == g.TrainNumber)
-                    MoveRun(owner, g.ConnectionId);
+                    MoveRun(owner, g.ConnectionId, "継続乗務の在線へ移す", now);
             }
 
             // 引き継ぎ: 継続乗務の在線を、ほかの列車（自動運転の列車）が同じ列番で引き継いだら、その列車（進路・駅の状態）を移す
@@ -774,11 +777,15 @@ public sealed partial class RouteEngine
             {
                 var from = p.TakesOver!;
                 if (snapshot.All(q => q.ConnectionId != from) && _runs.TryGetValue(from, out var r1) && r1.Player.TrainNumber == p.TrainNumber)
-                    MoveRun(from, p.ConnectionId);
+                    MoveRun(from, p.ConnectionId, "継続乗務の在線を自動運転の列車が引き継いだ", now);
             }
 
             // 列車の入れ替わり
-            foreach (var id in _runs.Keys.Where(id => snapshot.All(p => p.ConnectionId != id)).ToList()) _runs.Remove(id);
+            foreach (var id in _runs.Keys.Where(id => snapshot.All(p => p.ConnectionId != id)).ToList())
+            {
+                RunLog(now, _runs[id], "扱いを外しました（参加者の一覧からいなくなった）");
+                _runs.Remove(id);
+            }
             foreach (var id in _mirroredTo.Keys.Where(id => !_runs.ContainsKey(id)).ToList()) _mirroredTo.Remove(id);
             _mirrorLeftoverLogged.RemoveWhere(x => !_runs.ContainsKey(x.Conn));
             // 列番の読み替え（途中駅で列番が変わる列車）は、運転画面を出た・ゲームの列番が変わったら忘れる
@@ -800,6 +807,8 @@ public sealed partial class RouteEngine
 
                 // 出現待ち: 継続乗務の開始番線が違う、または他の列車がいる・他の列車の進路が開通している軌道回路に現れた列車は、
                 // その回路が空く（先の列車が抜ける）まで、サーバーの列車として扱わない（進路を作らず、在線位置にも出さない）
+                if (existing != null)
+                    RunLog(now, existing, $"扱いを外しました（列番が {number} になったので、その列番の列車として作り直す）");
                 _runs.Remove(p.ConnectionId);
                 if (p.AppearReason != null)
                 {
@@ -987,9 +996,10 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>列車（進路・駅の状態）を別の接続IDへ移す（継続乗務）。</summary>
-    private void MoveRun(string from, string to)
+    private void MoveRun(string from, string to, string why, DateTime now)
     {
         if (!_runs.Remove(from, out var run)) return;
+        RunLog(now, run, $"扱いを移しました（{why}）");
         run.ConnId = to;
         _runs[to] = run;
         if (_renumber.Remove(from, out var rn)) _renumber[to] = rn;
@@ -1389,7 +1399,24 @@ public sealed partial class RouteEngine
             if (terminalZone >= 0 && (zone - terminalZone) * step > 0) continue;
             run.Stations.Add(NewStationRun(run, st, zone, terminalId));
         }
+        RunLog(DateTime.UtcNow, run, $"扱いを始めました（{StationsText(run)}）");
     }
+
+    /// <summary>
+    /// 列車の扱い（サーバーの列車と、その駅の一覧）の移り変わりを、進路の記録に残す。
+    /// 扱いを始めた・作り直した・外した・駅の扱いを終えたときに書く。自動進路構成がある駅の進路をもう取らなくなったとき、
+    /// どこで扱いが外れたかを、あとから追えるように。いる場所（区間と軌道回路）も書く。
+    /// </summary>
+    private void RunLog(DateTime now, TrainRun run, string what)
+    {
+        var where = _data.Line.DescribeZones(run.Player.Zones) ?? "位置不明";
+        RouteLogLine(now, $"{run.Train} {what}（いる場所: {where} {string.Join(" ", run.Player.TrackCircuits)}）");
+    }
+
+    /// <summary>駅の一覧（扱いを終えた駅・始発・終着の印つき）。</summary>
+    private static string StationsText(TrainRun run) =>
+        run.Stations.Count == 0 ? "扱う駅なし"
+            : string.Join(" ", run.Stations.Select(s => s.St.Name + (s.Done ? "［済］" : "") + (s.IsStart ? "［始発］" : "") + (s.Terminal ? "［終着］" : "")));
 
     /// <summary>
     /// 終着駅: ダイヤにあればダイヤ（江原検 → 江ノ原信号場 など、ゲームの停車駅にない入庫も分かる）、なければゲームの停車駅の最後。
@@ -1496,6 +1523,10 @@ public sealed partial class RouteEngine
         _log.Note($"停車駅の更新: {run.Train} 終着 {(terminalId != null ? _data.Line.StationName(terminalId) : "なし")}"
                   + (removed.Count > 0 ? $"（外した駅: {string.Join("・", removed)}）" : "")
                   + (added.Count > 0 ? $"（足した駅: {string.Join("・", added)}）" : ""));
+        if (removed.Count > 0 || added.Count > 0)
+            RunLog(now, run, "駅の一覧を作り直しました（ゲームの停車駅が変わった"
+                             + (removed.Count > 0 ? $"。外した駅: {string.Join("・", removed)}" : "")
+                             + (added.Count > 0 ? $"。足した駅: {string.Join("・", added)}" : "") + $"）（{StationsText(run)}）");
     }
 
     /// <summary>
@@ -1588,6 +1619,9 @@ public sealed partial class RouteEngine
                 st.Done = true;
                 st.DoneUtc = now;
                 foreach (var req in run.Requests.Where(r => r.Station == st && !r.Seen)) req.Released = true;
+                // 通過駅は数が多いので書かない（止まる駅・始発・終着だけ）
+                if (st.IsStart || st.Terminal || st.StopType != "通過")
+                    RunLog(now, run, $"{st.St.Name} の扱いを終えました（最後尾が駅を抜けたと判断）");
                 continue;
             }
 
@@ -1602,7 +1636,17 @@ public sealed partial class RouteEngine
                 st.Partners.Clear();
                 (st.Arrive, st.ArriveWait) = (GroupState.None, "");
                 (st.Depart, st.DepartWait) = (GroupState.None, "");
+                if (!st.CutOffLogged)
+                {
+                    st.CutOffLogged = true;
+                    RunLog(now, run, $"{st.St.Name} を扱わなくなりました（手前の駅で打ち切り）");
+                }
                 continue;
+            }
+            if (st.CutOffLogged)
+            {
+                st.CutOffLogged = false;
+                RunLog(now, run, $"{st.St.Name} をまた扱います（打ち切りが外れた）");
             }
 
             if (_central.TakeManual(run.Train, st.St.Id) is { } manual) ApplyManual(run, st, manual, now);
